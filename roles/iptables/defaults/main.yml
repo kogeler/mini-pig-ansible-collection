@@ -1,0 +1,22 @@
+iptables_inf_ext: "{{ ansible_default_ipv4.interface }}"
+iptables_inf_trusted:
+  - "wg0"
+iptables_ipv4_forward_enable: false
+iptables_ports:
+  - port: 22
+    protocol: tcp
+#  - port: 80
+#    protocol: tcp
+#    src_v4: 0.0.0.0/0
+#    src_v6:
+
+iptables_lxd_enable: false
+
+iptables_forwarded_ports: []
+#  - forwarded_inf: eth0
+#    forwarded_port: 22
+#    protocol: tcp
+#    dst_port: 22
+#    dst_address: 192.168.1.1
+
+iptables_docker_ports: []

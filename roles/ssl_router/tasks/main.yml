@@ -1,0 +1,46 @@
+- block:
+
+  - name: ssl-route | create directory
+    file:
+      path: "{{ item.path }}"
+      state: directory
+      mode: "{{ item.mode | default('0755') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { path: "{{ ssl_router_base_dir }}" }
+
+  - name: ssl-route | copy templates
+    template:
+      src: "{{ item.dst }}.j2"
+      dest: "{{ ssl_router_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
+      mode: "{{ item.mode | default('600') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { dst: 'nginx.conf', dst_path: '.' }
+    notify: restart ssl-router
+
+  - name: ssl-route | create docker network
+    docker_network:
+      name: "{{ ssl_router_docker_network_name }}"
+
+  - name: ssl-route | copy docker-compose
+    template:
+      src: "docker-compose.yml.j2"
+      dest: "{{ ssl_router_base_dir }}/docker-compose.yml"
+      mode: "600"
+      owner: "root"
+      group: "root"
+
+  - name: ssl-route | flush handlers before service start
+    meta: flush_handlers
+
+  - name: ssl-route | run services
+    docker_compose:
+      project_src: "{{ ssl_router_base_dir }}"
+      state: present
+      pull: yes
+    ignore_errors: "{{ ansible_check_mode }}"
+
+  tags: ["ssl-router", "ssl_router"]

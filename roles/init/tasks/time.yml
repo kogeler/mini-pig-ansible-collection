@@ -1,0 +1,11 @@
+---
+
+- name: init | set localtime to "{{ init_time_zone }}"
+  community.general.timezone:
+    hwclock: "UTC"
+    name: "{{ init_time_zone }}"
+
+- name: init | set /etc/timezone to "{{ init_time_zone }}"
+  ansible.builtin.copy:
+    dest: "/etc/timezone"
+    content: "{{ init_time_zone }}\n"

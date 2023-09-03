@@ -1,0 +1,20 @@
+[Interface]
+Address = {{ item.value.internal_ip }}
+SaveConfig = false
+PrivateKey = {{ item.value.priv_key }}
+MTU = {{ wireguard_interface_mtu }}
+
+{% for key, value in hostvars.items() | sort %}
+{% if value.wireguard_internal_ip is defined and value.wireguard_internal_ip != '' and
+   value.wireguard_external_ip is defined and value.wireguard_external_ip != '' and
+   value.wireguard_public_key is defined and value.wireguard_public_key != '' and
+   value.wireguard_priv_key is defined and value.wireguard_priv_key != ''
+%}
+#{{ key }}
+[Peer]
+Endpoint = {{ value.wireguard_external_ip }}:{{ value.wireguard_port | default(wireguard_port) }}
+PersistentKeepalive = {{ wireguard_persistent_keep_alive }}
+PublicKey = {{ value.wireguard_public_key }}
+AllowedIPs = {{ value.wireguard_internal_ip }}/32{% if value.wireguard_nated_networks is defined and value.wireguard_nated_networks | length > 0 %},{{ value.wireguard_nated_networks | join(',') }}{% endif +%}
+{% endif %}
+{% endfor %}

@@ -1,0 +1,64 @@
+monitoring_base_dir: "/opt/monitoring"
+monitoring_data_dir: "/opt/monitoring/data"
+
+monitoring_restart_policy: "always"
+monitoring_traefik_network_name: ""
+
+monitoring_dns_servers:
+  - '8.8.8.8'
+  - '1.1.1.1'
+
+monitoring_influxdb_enable: false
+monitoring_influxdb_image_name: "influxdb"
+monitoring_influxdb_image_version: "1.8.10-alpine"
+monitoring_influxdb_bind_host: "0.0.0.0"
+monitoring_influxdb_port: "8086"
+monitoring_influxdb_external_host: ""
+monitoring_influxdb_db_name: "monitoring"
+monitoring_influxdb_admin_name: "admin"
+monitoring_influxdb_admin_pass: ""
+monitoring_influxdb_write_name: "write"
+monitoring_influxdb_write_pass: ""
+
+monitoring_influxdb2_enable: false
+monitoring_influxdb2_image_name: "influxdb"
+monitoring_influxdb2_image_version: "2.0.4-alpine"
+monitoring_influxdb2_bind_host: "0.0.0.0"
+monitoring_influxdb2_port: "8087"
+monitoring_influxdb2_external_host: ""
+monitoring_influxdb2_org_name: "lab"
+monitoring_influxdb2_bucket_name: "monitoring"
+monitoring_influxdb2_admin_name: "admin"
+monitoring_influxdb2_admin_pass: ""
+monitoring_influxdb2_admin_token: ""
+
+monitoring_grafana_enable: false
+monitoring_grafana_image_name: "grafana/grafana"
+monitoring_grafana_image_version: "8.3.2"
+monitoring_grafana_bind_host: "127.0.0.1"
+monitoring_grafana_port: "3000"
+monitoring_grafana_external_host: ""
+monitoring_grafana_admin_name: "admin"
+monitoring_grafana_admin_pass: ""
+monitoring_grafana_auth_github_enable: false
+monitoring_grafana_auth_github_allow_sign_up: true
+monitoring_grafana_auth_github_allowed_organizations: []
+monitoring_grafana_auth_github_client_id: ""
+monitoring_grafana_auth_github_client_secret: ""
+monitoring_grafana_auth_github_admin_group: ""
+
+monitoring_matrix_webhook_enable: false
+monitoring_matrix_webhook_image_name: "nim65s/matrix-webhook"
+monitoring_matrix_webhook_image_version: "master"
+monitoring_matrix_webhook_port: "4785"
+monitoring_matrix_webhook_matrix_url: "https://matrix.org"
+monitoring_matrix_webhook_matrix_id: ""
+monitoring_matrix_webhook_matrix_pw: ""
+monitoring_matrix_webhook_api_key: ""
+
+monitoring_telegraf_enable: true
+monitoring_telegraf_image_name: "telegraf"
+monitoring_telegraf_image_version: "1.20.4"
+monitoring_telegraf_prometheus_urls: []
+monitoring_telegraf_influxdb_url: ""
+monitoring_telegraf_influxdb2_url: ""

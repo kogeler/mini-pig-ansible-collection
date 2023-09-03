@@ -1,0 +1,47 @@
+---
+
+- block:
+
+  - name: Create directories
+    file:
+      path: "{{ item.path }}"
+      state: directory
+      mode: "{{ item.mode | default('0700') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { path: "{{ monitoring_base_dir }}" }
+      - { path: "{{ monitoring_data_dir }}" }
+      - { path: "{{ monitoring_data_dir }}/grafana", owner: 472, group: 472 }
+      - { path: "{{ monitoring_data_dir }}/influxdb2", owner: 1000, group: 0 }
+    tags: ["monitoring"]
+
+  - name: Copy templates
+    template:
+      src: "{{ item.dst }}.j2"
+      dest: "{{ monitoring_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
+      mode: "{{ item.mode | default('0600') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { dst: 'docker-compose.yml', dst_path: '.'}
+    tags: ["monitoring"]
+
+  - name: Copy telegraf.conf config
+    template:
+      src: "telegraf.conf.j2"
+      dest: "{{ monitoring_base_dir }}/telegraf.conf"
+      mode: "0600"
+      owner: "root"
+      group: "root"
+    notify: restart telegraf
+    when: monitoring_telegraf_enable | bool
+    tags: ["monitoring"]
+
+  - name: Run monitoring
+    docker_compose:
+      project_src: "{{ monitoring_base_dir }}"
+      state: present
+      pull: yes
+
+  tags: ["monitoring"]

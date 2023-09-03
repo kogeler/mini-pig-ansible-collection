@@ -1,0 +1,25 @@
+---
+
+- name: wireguard | machine
+  ansible.builtin.include_tasks:
+    file: machine.yml
+    apply:
+      tags: ["wireguard", "wireguard-machine"]
+  when: wireguard_instance_type == 'machine'
+  tags: ["wireguard", "wireguard-machine"]
+
+- name: wireguard | mikrotik
+  ansible.builtin.include_tasks:
+    file: mikrotik.yml
+    apply:
+      tags: ["wireguard", "wireguard-mikrotik"]
+  when: wireguard_instance_type == 'mikrotik'
+  tags: ["wireguard", "wireguard-mikrotik"]
+
+- name: wireguard | client configs
+  ansible.builtin.include_tasks:
+    file: client-configs.yml
+    apply:
+      tags: ["wireguard", "wireguard-client-configs"]
+  when: wireguard_instance_type == 'local'
+  tags: ["wireguard", "wireguard-client-configs"]

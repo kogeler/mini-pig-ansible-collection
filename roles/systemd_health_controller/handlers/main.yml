@@ -1,0 +1,9 @@
+---
+
+- name: restart systemd-health-controller
+  ansible.builtin.systemd:
+    name: "{{ _systemd_health_controller_name }}"
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+  ignore_errors: "{{ ansible_check_mode }}"

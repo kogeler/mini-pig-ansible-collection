@@ -1,0 +1,18 @@
+---
+
+- name: restart ssh
+  ansible.builtin.systemd:
+    name: "ssh"
+    state: restarted
+    enabled: yes
+
+- name: update-grub
+  ansible.builtin.shell:
+    cmd: "update-grub"
+  changed_when: False
+
+- name: restart journald
+  ansible.builtin.systemd:
+    name: "systemd-journald.service"
+    state: restarted
+    enabled: yes

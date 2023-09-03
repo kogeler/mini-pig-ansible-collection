@@ -1,0 +1,38 @@
+---
+
+- block:
+
+  - name: mount | Create FS
+    community.general.filesystem:
+      fstype: "btrfs"
+      dev: "/dev/{{ init_block_dev }}"
+      force: no
+
+  - name: mount | Reread artifacts
+    ansible.builtin.setup:
+
+  - name: mount | Create mount point
+    ansible.builtin.file:
+      path: "{{ init_mount_point }}"
+      state: directory
+      owner: "root"
+      group: "root"
+      mode: '0755'
+
+  - name: mount | Mount and create mount points
+    ansible.posix.mount:
+      path: "{{ init_mount_point }}"
+      src: "UUID={{ volume_uuid }}"
+      fstype: "btrfs"
+      opts: "{{ volume_opts }}"
+      state: "mounted"
+    vars:
+      volume_uuid: "{{ ansible_device_links.uuids[init_block_dev][0] }}"
+      volume_opts: "defaults{% if init_block_dev_ssd | bool %},ssd{% endif %},relatime,nodiratime,compress-force=zstd"
+
+  - name: mount | Resize FS
+    ansible.builtin.command: "btrfs filesystem resize max {{ init_mount_point }}"
+    changed_when: false
+
+  when: init_block_dev != ''
+  tags: ['init', 'init-mount']

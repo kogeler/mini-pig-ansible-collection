@@ -1,0 +1,86 @@
+---
+
+- name: wireguard | calculate wireguard interface
+  ansible.builtin.set_fact:
+    _wireguard_interface: '{{ [{
+                                "name": wireguard_interface_name,
+                                "listen-port": wireguard_port | int,
+                                "mtu": wireguard_interface_mtu | int,
+                                "private-key": "{{ wireguard_priv_key }}"
+                              }]
+                          }}'
+
+- name: wireguard | create wireguard interface
+  community.routeros.api_modify:
+    hostname: "{{ wireguard_mikrotik_addr }}"
+    username: "{{ wireguard_mikrotik_login }}"
+    password: "{{ wireguard_mikrotik_password }}"
+    path: interface wireguard
+    handle_absent_entries: remove
+    handle_entries_content: remove
+    ensure_order: true
+    data: "{{ _wireguard_interface }}"
+
+- name: wireguard | create wireguard interface address
+  community.routeros.api_modify:
+    hostname: "{{ wireguard_mikrotik_addr }}"
+    username: "{{ wireguard_mikrotik_login }}"
+    password: "{{ wireguard_mikrotik_password }}"
+    path: ip address
+    handle_absent_entries: ignore
+    handle_entries_content: remove
+    ensure_order: false
+    data:
+      - interface: "{{ wireguard_interface_name }}"
+        address: "{{ _wireguard_host_ip }}"
+        network: "{{ _wireguard_host_ip | ansible.utils.ipaddr('network') }}"
+  vars:
+    _wireguard_host_ip: "{{ wireguard_internal_ip }}/{{ wireguard_network_mask }}"
+
+- name: wireguard | calculate wireguard peers 1
+  ansible.builtin.set_fact:
+    _wireguard_mikrotik_peers: '{{ (_wireguard_mikrotik_peers | default([])) + [{ "interface": wireguard_interface_name, 
+                                                                                  "endpoint-port": item.value.wireguard_port | default(wireguard_port) | int,
+                                                                                  "endpoint-address": item.value.wireguard_external_ip,
+                                                                                  "persistent-keepalive": wireguard_persistent_keep_alive + "s",
+                                                                                  "public-key": item.value.wireguard_public_key,
+                                                                                  "allowed-address": item.value.wireguard_internal_ip + "/32",
+                                                                                  "comment": item.key
+                                                                                }] }}'
+  loop: "{{ hostvars | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.key != inventory_hostname
+    - item.value.wireguard_internal_ip is defined
+    - item.value.wireguard_internal_ip != ''
+    - item.value.wireguard_external_ip is defined
+    - item.value.wireguard_external_ip != ''
+    - item.value.wireguard_public_key is defined
+    - item.value.wireguard_public_key != ''
+    - item.value.wireguard_priv_key is defined
+    - item.value.wireguard_priv_key != ''
+
+- name: wireguard | calculate wireguard peers 2
+  ansible.builtin.set_fact:
+    _wireguard_mikrotik_peers: '{{ (_wireguard_mikrotik_peers | default([])) + [{ "interface": wireguard_interface_name, 
+                                                                                  "persistent-keepalive": wireguard_persistent_keep_alive + "s",
+                                                                                  "public-key": item.value.public_key,
+                                                                                  "allowed-address": item.value.internal_ip + "/32",
+                                                                                  "comment": item.key
+                                                                                }] }}'
+  loop: "{{ wireguard_clients | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+
+- name: wireguard | create wireguard peers
+  community.routeros.api_modify:
+    hostname: "{{ wireguard_mikrotik_addr }}"
+    username: "{{ wireguard_mikrotik_login }}"
+    password: "{{ wireguard_mikrotik_password }}"
+    path: interface wireguard peers
+    handle_absent_entries: remove
+    handle_entries_content: remove
+    ensure_order: true
+    data: "{{ _wireguard_mikrotik_peers | sort(attribute='comment') }}"
