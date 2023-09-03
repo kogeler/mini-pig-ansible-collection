@@ -45,7 +45,7 @@ dependencies:
 repository: "https://github.com/kogeler/mini-pig-ansible-collection.git"
 
 # The URL to any online docs
-documentation: https://github.com/kogeler/mini-pig-ansible-collection
+documentation: https://github.com/kogeler/mini-pig-ansible-collection/blob/main/README.md
 
 # The URL to the homepage of the collection/project
 homepage: https://github.com/kogeler/mini-pig-ansible-collection
@@ -59,4 +59,3 @@ issues: https://github.com/kogeler/mini-pig-ansible-collection/issues
 # and '.git' are always filtered
 build_ignore:
   - .idea
-

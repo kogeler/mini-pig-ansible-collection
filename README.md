@@ -9,7 +9,7 @@ As a result, you will have a not-very-big nimble pig. :)
 Create `requirements.yml` file in your playbook repository (or add to the existing file):
 ```yaml
 collections:
-  - name: git@github.com:kogeler/mini-pig-ansible-collection.git
+  - name: https://github.com/kogeler/mini-pig-ansible-collection.git
     type: git
     version: main
 ```
