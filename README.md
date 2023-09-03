@@ -1,5 +1,9 @@
 # Ansible Collection - kogeler.mini_pig
 
+It's a small Ansible role collection that can be used to set up small infrastructure using bare-metal servers.
+
+As a result, you will have a not-very-big nimble pig. :)
+
 ## Install Ansible collections
 
 Create `requirements.yml` file in your playbook repository (or add to the existing file):
