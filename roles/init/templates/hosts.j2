@@ -1,0 +1,17 @@
+127.0.0.1       localhost
+127.0.0.1       {{ init_hostname }}
+
+{% for key, value in hostvars.items() | sort %}
+{% if key != inventory_hostname and value.init_int_ip is defined and value.init_int_ip != '' %}
+{{ value.init_int_ip }}   {{ key }}
+{% endif %}
+{% endfor %}
+
+{% for host in init_custom_hosts %}
+{{ host.ip }}   {{ host.host }}
+{% endfor %}
+
+# The following lines are desirable for IPv6 capable hosts
+::1     localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters

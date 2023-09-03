@@ -1,0 +1,58 @@
+---
+
+init_packages:
+  - "apt-transport-https"
+  - "apt-file"
+  - "sudo"
+  - "htop"
+  - "bash-completion"
+  - "iotop"
+  - "net-tools"
+  - "nano"
+  - "tmux"
+  - "mosh"
+  - "rsync"
+  - "curl"
+  - "haveged"
+  - "btrfs-progs"
+  - "btrfs-compsize"
+  - "python3-pip"
+  - "python3-setuptools"
+  - "gpg"
+  - "vlan"
+
+# to create password hash
+# apt install whois
+# mkpasswd --method=sha-512
+
+init_users: []
+#  - name: "user"
+#    shell: "/bin/bash"
+#    groups: ["adm", "sudo"]
+#    password: ""
+#    ssh_keys: ""
+# "!" locks the root login completely
+init_root_password: "!"
+# sda, etc.
+init_block_dev: ""
+init_mount_point: "/data"
+init_block_dev_ssd: true
+init_aws_access_key_id: ""
+init_aws_secret_access_key: ""
+
+init_apt_upgrade: false
+
+init_apt_xanmod_kernel_enable: false
+init_apt_xanmod_kernel: "linux-xanmod-x64v3"
+
+init_apt_google_cloud_sdk_enable: false
+
+init_cmdline_linux: ""
+
+init_hostname: "{{ inventory_hostname }}"
+# specify custom hosts to add them to /etc/hosts
+init_custom_hosts: []
+#  - ip: "1.1.1.1"
+#    host: "server1"
+
+init_time_zone: "Etc/UTC"

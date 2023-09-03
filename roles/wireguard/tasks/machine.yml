@@ -1,0 +1,33 @@
+---
+
+- name: wireguard | install linux-headers
+  ansible.builtin.apt:
+    name:
+      - "{{ wireguard_linux_headers }}"
+      - "dkms"
+    state: present
+    update_cache: yes
+  when: ansible_facts['distribution_version'] is version('10.12', '<=')
+
+- name: wireguard | install wireguard
+  ansible.builtin.apt:
+    name: "wireguard"
+    state: present
+
+- name: wireguard | copy config
+  ansible.builtin.template:
+    src: "server.conf.j2"
+    dest: "/etc/wireguard/{{ wireguard_interface_name }}.conf"
+    mode: "600"
+    owner: "root"
+    group: "root"
+  notify: restart wireguard
+
+- name: wireguard | flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: wireguard | start
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ wireguard_interface_name }}"
+    state: started
+    enabled: yes

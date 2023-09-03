@@ -1,0 +1,22 @@
+[Unit]
+Description={{ _systemd_health_controller_name }} systemd service
+
+[Service]
+Environment="PYTHONUNBUFFERED=True"
+Environment="SHC_LOG_LEVEL={{ systemd_health_controller_log_level }}"
+Environment="SHC_CHECK_INTERVAL={{ systemd_health_controller_check_interval }}"
+Environment="SHC_RESTART_INTERVAL={{ systemd_health_controller_restart_interval }}"
+Environment="SHC_MAX_ATTEMPTS={{ systemd_health_controller_max_attempts }}"
+Environment="SHC_PROMETHEUS_URL={{ systemd_health_controller_prometheus_url }}"
+Environment="SHC_PROMETHEUS_METRIC_NAME={{ systemd_health_controller_prometheus_metric_name }}"
+Environment="SHC_PROMETHEUS_METRIC_LABEL={{ systemd_health_controller_prometheus_metric_label }}"
+Environment="SHC_PROMETHEUS_MAPPING={% for key, value in systemd_health_controller_prometheus_mapping.items() | sort %}{{ key }}={{ value }}{% if not loop.last %},{% endif %}{% endfor %}"
+
+ExecStart={{ _systemd_health_controller_venv }}/bin/python3 {{ _systemd_health_controller_file }}
+
+Restart=always
+User={{ systemd_health_controller_user }}
+Group={{ systemd_health_controller_user }}
+
+[Install]
+WantedBy=multi-user.target

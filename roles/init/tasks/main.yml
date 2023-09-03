@@ -1,0 +1,47 @@
+---
+
+- user:
+    name: "{{ ansible_user }}"
+    state: present
+  register: _init_user_info
+  tags: ['init']
+
+- name: init | time
+  ansible.builtin.include_tasks:
+    file: time.yml
+    apply:
+      tags: ['init', 'init-time']
+  tags: ['init', 'init-time']
+
+- name: init | kernel
+  ansible.builtin.include_tasks:
+    file: kernel.yml
+    apply:
+      tags: ['init', 'init-kernel']
+  when: init_cmdline_linux != ''
+  tags: ['init', 'init-kernel']
+
+- name: init | hosts
+  import_tasks: hosts.yml
+
+- name: init | SSH
+  import_tasks: ssh.yml
+
+- name: init | apt
+  ansible.builtin.include_tasks:
+    file: apt.yml
+    apply:
+      tags: ['init', 'init-apt']
+  tags: ['init', 'init-apt']
+
+- name: init | users
+  import_tasks: users.yml
+
+- name: init | mount
+  import_tasks: mount.yml
+
+- name: init | s3
+  import_tasks: s3.yml
+
+- name: init | logs
+  import_tasks: logs.yml

@@ -1,0 +1,10 @@
+---
+
+- name: wireguard | Copy client configs
+  ansible.builtin.template:
+    src: "client.conf.j2"
+    dest: "{{ inventory_dir }}/wireguard_configs/{{ item.key }}.conf"
+    mode: "600"
+  run_once: yes
+  become: no
+  loop: "{{ wireguard_clients | dict2items }}"

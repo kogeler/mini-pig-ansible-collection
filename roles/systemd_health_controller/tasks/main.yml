@@ -1,0 +1,78 @@
+---
+
+- block:
+
+  - name: systemd_health_controller | install apt packages
+    ansible.builtin.package:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+      install_recommends: no
+    vars:
+      packages:
+        - "python3-venv"
+        - "python3-setuptools"
+        - "libpython3-dev"
+        - "pkg-config"
+        - "gcc"
+        - "libsystemd-dev"
+
+  - name: systemd_health_controller | create base directory
+    ansible.builtin.file:
+      path: "{{ systemd_health_controller_base_path }}"
+      state: directory
+      mode: 0755
+      owner: "root"
+      group: "root"
+
+  - name: systemd_health_controller | copy exporter
+    ansible.builtin.copy:
+      src: "systemd-health-controller-exporter.py"
+      dest: "{{ _systemd_health_controller_file }}"
+      mode: 0755
+      owner: "root"
+      group: "root"
+    notify: restart systemd-health-controller
+
+  - name: systemd_health_controller | install Python modules
+    ansible.builtin.pip:
+      name:
+        - "prometheus-client==0.17.1"
+        - "apscheduler==3.10.4"
+        - "environs==9.5.0"
+        - "pystemd==0.13.2"
+        - "requests==2.31.0 "
+      virtualenv: "{{ _systemd_health_controller_venv }}"
+      virtualenv_command: "python3 -m venv"
+    notify: restart systemd-health-controller
+
+  - name: systemd_health_controller | set root as owner of the venv directory
+    ansible.builtin.file:
+      path: "{{ _systemd_health_controller_venv }}"
+      state: directory
+      recurse: true
+      owner: "root"
+      group: "root"
+
+  - name: systemd_health_controller | copy exporter systemd unit file
+    ansible.builtin.template:
+      src: ".service.j2"
+      dest: "/etc/systemd/system/{{ _systemd_health_controller_name }}.service"
+      owner: "root"
+      group: "root"
+      mode: "0600"
+    notify: restart systemd-health-controller
+
+    # to avoid 2 restarts during the first deploy
+  - name: systemd_health_controller | flush handlers
+    ansible.builtin.meta: flush_handlers
+
+  - name: systemd_health_controller | start exporter service
+    ansible.builtin.systemd:
+      name: "{{ _systemd_health_controller_name }}"
+      state: started
+      enabled: yes
+      daemon_reload: yes
+    ignore_errors: "{{ ansible_check_mode }}"
+
+  tags: ['systemd_health_controller', 'systemd-health-controller']

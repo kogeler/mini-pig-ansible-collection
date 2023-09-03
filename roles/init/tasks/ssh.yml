@@ -1,0 +1,38 @@
+---
+
+- block:
+
+  - name: SSH | Check scw-fetch-ssh-keys systemd unit file exists
+    ansible.builtin.stat:
+      path: "/lib/systemd/system/scw-fetch-ssh-keys.service"
+    register: _init_scw_fetch_ssh_keys_file_stat
+
+  - name: SSH | disable scw-fetch-ssh-keys
+    ansible.builtin.systemd:
+      name: "scw-fetch-ssh-keys"
+      state: stopped
+      enabled: no
+    ignore_errors: "{{ not _init_scw_fetch_ssh_keys_file_stat.stat.exists }}"
+
+  - name: SSH | Set PermitRootLogin
+    replace:
+      path: "/etc/ssh/sshd_config"
+      regexp: '^.{0,1}(PermitRootLogin).*$'
+      replace: '\g<1> no'
+    notify: restart ssh
+
+  - name: SSH | Set PasswordAuthentication
+    replace:
+      path: "/etc/ssh/sshd_config"
+      regexp: '^.{0,1}(PasswordAuthentication).*$'
+      replace: '\g<1> no'
+    notify: restart ssh
+
+  - name: SSH | Set X11Forwarding
+    replace:
+      path: "/etc/ssh/sshd_config"
+      regexp: '^.{0,1}(X11Forwarding).*$'
+      replace: '\g<1> no'
+    notify: restart ssh
+
+  tags: ['init', 'init-ssh']

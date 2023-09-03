@@ -1,0 +1,20 @@
+#telegraf_version: "1.21.1-1"
+telegraf_distribution: "{{ ansible_distribution | lower }}"
+telegraf_distribution_release: "{{ ansible_distribution_release }}"
+telegraf_disk_smart_enable: true
+telegraf_docker_enable: false
+telegraf_rpi_temp_enable: false
+telegraf_rpi_gpu_temp_enable: false
+telegraf_apcupsd_enable: false
+telegraf_postgresql_enable: false
+telegraf_postgresql_user: "postgres"
+telegraf_postgresql_password: ""
+telegraf_prometheus_urls: []
+telegraf_node_urls: []
+telegraf_health_check_urls: []
+telegraf_ping_hosts: []
+telegraf_influxdb_url: ""
+telegraf_influxdb_db_name: "monitoring"
+telegraf_influxdb_name: "write"
+telegraf_influxdb_pass: ""
+telegraf_debug_enable: false

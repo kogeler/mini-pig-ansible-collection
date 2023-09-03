@@ -1,0 +1,220 @@
+version: "2.4"
+services:
+
+{% if monitoring_influxdb_enable %}
+  influxdb:
+    image: {{ monitoring_influxdb_image_name }}:{{ monitoring_influxdb_image_version }}
+    container_name: influxdb
+    healthcheck:
+      test: ["CMD-SHELL", "bash", "-c", 'exec 4<>/dev/tcp/127.0.0.1/8086 && echo -e "GET /ping HTTP/1.0\n\n" >&4 && cat <&4 | grep "204 No Content"']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    environment:
+      - "INFLUXDB_DB={{ monitoring_influxdb_db_name }}"
+      - "INFLUXDB_ADMIN_USER={{ monitoring_influxdb_admin_name }}"
+      - "INFLUXDB_ADMIN_PASSWORD={{ monitoring_influxdb_admin_pass }}"
+      - "INFLUXDB_WRITE_USER={{ monitoring_influxdb_write_name }}"
+      - "INFLUXDB_WRITE_USER_PASSWORD={{ monitoring_influxdb_write_pass }}"
+{% if monitoring_traefik_network_name != '' and monitoring_influxdb_external_host != '' %}
+    labels:
+      - "traefik.docker.network={{ monitoring_traefik_network_name }}"
+      - "traefik.enable=true"
+      - "traefik.port=8086"
+      - "traefik.frontend.rule=Host:{{ monitoring_influxdb_external_host }}"
+{% endif %}
+    dns:
+{% for server in monitoring_dns_servers %}
+      - {{ server }}
+{% endfor %}
+    volumes:
+      - "{{ monitoring_data_dir }}/influxdb:/var/lib/influxdb"
+{% if monitoring_influxdb_bind_host != '' %}
+    ports:
+      - "{{ monitoring_influxdb_bind_host }}:{{ monitoring_influxdb_port }}:8086"
+{% endif %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    networks:
+      monitoring:
+{% if monitoring_traefik_network_name != '' and monitoring_influxdb_external_host != '' %}
+      {{ monitoring_traefik_network_name }}:
+{% endif %}
+    restart: "{{ monitoring_restart_policy }}"
+{% endif %}
+
+{% if monitoring_influxdb2_enable %}
+  influxdb2:
+    image: {{ monitoring_influxdb2_image_name }}:{{ monitoring_influxdb2_image_version }}
+    container_name: influxdb2
+    healthcheck:
+      test: ["CMD-SHELL", "bash", "-c", 'exec 4<>/dev/tcp/127.0.0.1/8086 && echo -e "GET /ping HTTP/1.0\n\n" >&4 && cat <&4 | grep "204 No Content"']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    environment:
+      - "DOCKER_INFLUXDB_INIT_MODE=setup"
+      - "DOCKER_INFLUXDB_INIT_USERNAME={{ monitoring_influxdb2_admin_name }}"
+      - "DOCKER_INFLUXDB_INIT_PASSWORD={{ monitoring_influxdb2_admin_pass }}"
+      - "DOCKER_INFLUXDB_INIT_ORG={{ monitoring_influxdb2_org_name }}"
+      - "DOCKER_INFLUXDB_INIT_BUCKET={{ monitoring_influxdb2_bucket_name }}"
+      - "DOCKER_INFLUXDB_INIT_ADMIN_TOKEN={{ monitoring_influxdb2_admin_token }}"
+      - "DOCKER_INFLUXDB_INIT_RETENTION=2w"
+{% if monitoring_traefik_network_name != '' and monitoring_influxdb2_external_host != '' %}
+    labels:
+      - "traefik.docker.network={{ monitoring_traefik_network_name }}"
+      - "traefik.enable=true"
+      - "traefik.port=8086"
+      - "traefik.frontend.rule=Host:{{ monitoring_influxdb2_external_host }}"
+{% endif %}
+    dns:
+{% for server in monitoring_dns_servers %}
+      - {{ server }}
+{% endfor %}
+    volumes:
+      - "{{ monitoring_data_dir }}/influxdb2:/var/lib/influxdb"
+{% if monitoring_influxdb2_bind_host != '' %}
+    ports:
+      - "{{ monitoring_influxdb2_bind_host }}:{{ monitoring_influxdb2_port }}:8086"
+{% endif %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    networks:
+      monitoring:
+{% if monitoring_traefik_network_name != '' and monitoring_influxdb2_external_host != '' %}
+      {{ monitoring_traefik_network_name }}:
+{% endif %}
+    restart: "{{ monitoring_restart_policy }}"
+{% endif %}
+
+{% if monitoring_grafana_enable %}
+  grafana:
+    image: {{ monitoring_grafana_image_name }}:{{ monitoring_grafana_image_version }}
+    container_name: grafana
+    healthcheck:
+      test: ["CMD-SHELL", "bash", "-c", 'exec 4<>/dev/tcp/127.0.0.1/3000 && echo -e "GET /api/health HTTP/1.0\n\n" >&4 && cat <&4 | grep "200 OK"']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    environment:
+      - "GF_DEFAULT_INSTANCE_NAME={{ monitoring_grafana_external_host }}"
+      - "GF_SERVER_ROOT_URL=https://{{ monitoring_grafana_external_host }}"
+      - "GF_SECURITY_ADMIN_USER={{ monitoring_grafana_admin_name }}"
+      - "GF_SECURITY_ADMIN_PASSWORD={{ monitoring_grafana_admin_pass }}"
+{% if monitoring_grafana_auth_github_enable %}
+      - "GF_AUTH_GITHUB_ENABLED=true"
+      - "GF_AUTH_GITHUB_ALLOW_SIGN_UP={{ monitoring_grafana_auth_github_allow_sign_up }}"
+      - "GF_AUTH_GITHUB_CLIENT_ID={{ monitoring_grafana_auth_github_client_id }}"
+      - "GF_AUTH_GITHUB_CLIENT_SECRET={{ monitoring_grafana_auth_github_client_secret }}"
+      - "GF_AUTH_GITHUB_ALLOW_ASSIGN_GRAFANA_ADMIN=true"
+      - "GF_AUTH_GITHUB_ROLE_ATTRIBUTE_PATH=contains(groups[*], '{{ monitoring_grafana_auth_github_admin_group }}') && 'GrafanaAdmin' || 'Viewer'"
+      - "GF_AUTH_GITHUB_SCOPES=user:email,read:org"
+      - "GF_AUTH_GITHUB_AUTH_URL=https://github.com/login/oauth/authorize"
+      - "GF_AUTH_GITHUB_TOKEN_URL=https://github.com/login/oauth/access_token"
+      - "GF_AUTH_GITHUB_API_URL=https://api.github.com/user"
+{% if monitoring_grafana_auth_github_allowed_organizations | length > 0 %}
+      - "GF_AUTH_GITHUB_ALLOWED_ORGANIZATIONS={{ monitoring_grafana_auth_github_allowed_organizations | join(' ') }}"
+{% endif %}
+{% endif %}
+{% if monitoring_traefik_network_name != '' and monitoring_grafana_external_host != '' %}
+    labels:
+      - "traefik.docker.network={{ monitoring_traefik_network_name }}"
+      - "traefik.enable=true"
+      - "traefik.port=3000"
+      - "traefik.frontend.rule=Host:{{ monitoring_grafana_external_host }}"
+{% endif %}
+
+    dns:
+{% for server in monitoring_dns_servers %}
+      - {{ server }}
+{% endfor %}
+    volumes:
+      - "{{ monitoring_data_dir }}/grafana:/var/lib/grafana"
+{% if monitoring_grafana_bind_host != '' %}
+    ports:
+      - "{{ monitoring_grafana_bind_host }}:{{ monitoring_grafana_port }}:3000"
+{% endif %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    networks:
+      monitoring:
+{% if monitoring_traefik_network_name != '' and monitoring_grafana_external_host != '' %}
+      {{ monitoring_traefik_network_name }}:
+{% endif %}
+    restart: "{{ monitoring_restart_policy }}"
+{% endif %}
+
+{% if monitoring_matrix_webhook_enable %}
+  matrix-webhook:
+    image: {{ monitoring_matrix_webhook_image_name }}:{{ monitoring_matrix_webhook_image_version }}
+    container_name: matrix-webhook
+    environment:
+      - "PORT={{ monitoring_matrix_webhook_port }}"
+      - "MATRIX_URL={{ monitoring_matrix_webhook_matrix_url }}"
+      - "MATRIX_ID={{ monitoring_matrix_webhook_matrix_id }}"
+      - "MATRIX_PW={{ monitoring_matrix_webhook_matrix_pw }}"
+      - "API_KEY={{ monitoring_matrix_webhook_api_key }}"
+    dns:
+{% for server in monitoring_dns_servers %}
+      - {{ server }}
+{% endfor %}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    networks:
+      monitoring:
+    restart: "{{ monitoring_restart_policy }}"
+{% endif %}
+
+
+
+{% if monitoring_telegraf_enable %}
+  telegraf:
+    image: {{ monitoring_telegraf_image_name }}:{{ monitoring_telegraf_image_version }}
+    container_name: telegraf
+    privileged: true
+    network_mode: "host"
+    environment:
+      - "HOST_ETC=/hostfs/etc"
+      - "HOST_PROC=/hostfs/proc"
+      - "HOST_SYS=/hostfs/sys"
+      - "HOST_VAR=/hostfs/var"
+      - "HOST_RUN=/hostfs/run"
+      - "HOST_MOUNT_PREFIX=/hostfs"
+    dns:
+{% for server in monitoring_dns_servers %}
+      - {{ server }}
+{% endfor %}
+    volumes:
+      - "./telegraf.conf:/etc/telegraf/telegraf.conf:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/:/hostfs:ro"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    restart: "{{ monitoring_restart_policy }}"
+{% endif %}
+
+{% if monitoring_traefik_network_name != '' %}
+networks:
+  monitoring:
+  {{ monitoring_traefik_network_name }}:
+    external:
+      name: {{ monitoring_traefik_network_name }}
+{% endif %}

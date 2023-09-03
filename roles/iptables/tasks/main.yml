@@ -1,0 +1,49 @@
+---
+
+- block:
+
+  - name: iptables | Enable ipv4 forward
+    sysctl:
+      name: net.ipv4.ip_forward
+      value: '1'
+      sysctl_set: yes
+    when: iptables_ipv4_forward_enable | bool
+
+  - name: iptables | Install packages
+    apt:
+      name: "{{ packages }}"
+      update_cache: yes
+    vars:
+      packages:
+        - "iptables-persistent"
+
+  - name: iptables | Copy templates
+    template:
+      src: "{{ item }}.j2"
+      dest: "/etc/iptables/{{ item }}"
+      mode: "600"
+      owner: "root"
+      group: "root"
+    loop:
+      - "rules.v4"
+      - "rules.v6"
+
+  - name: iptables | Restore ipv6 firewall state
+    community.general.iptables_state:
+      state: restored
+      ip_version: "ipv6"
+      path: "/etc/iptables/rules.v6"
+      noflush: false
+    ignore_errors: "{{ ansible_check_mode }}"
+    notify: restart docker
+
+  - name: iptables | Restore ipv4 firewall state
+    community.general.iptables_state:
+      state: restored
+      ip_version: "ipv4"
+      path: "/etc/iptables/rules.v4"
+      noflush: false
+    ignore_errors: "{{ ansible_check_mode }}"
+    notify: restart docker
+
+  tags: ["iptables"]

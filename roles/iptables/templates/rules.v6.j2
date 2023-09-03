@@ -1,0 +1,18 @@
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [668:39156]
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m state --state INVALID -j DROP
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+{% for port in iptables_ports %}
+-A INPUT -s {{ port.src_v6 | default('::/0') }} -i {{ iptables_inf_ext }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
+{% endfor %}
+{% for inf in iptables_inf_trusted %}
+-A INPUT -i {{ inf }} -m state --state NEW -j ACCEPT
+{% endfor %}
+-A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp -j ACCEPT
+-A INPUT -i {{ iptables_inf_ext }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
+-A OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
+-A OUTPUT -p udp -m udp --dport 547 -j DROP
+COMMIT

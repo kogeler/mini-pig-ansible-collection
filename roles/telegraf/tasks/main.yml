@@ -1,0 +1,135 @@
+---
+
+- block:
+
+  - name: Add GPG key
+    ansible.builtin.apt_key:
+      id: "D8FF8E1F7DF8B07E"
+      keyserver: keyserver.ubuntu.com
+      keyring: "/etc/apt/trusted.gpg.d/influxdb.gpg"
+      state: present
+    tags: ["telegraf-apt-gpg"]
+
+  - name: remove old repository
+    ansible.builtin.file:
+      path: "/etc/apt/sources.list.d/influxdata.list"
+      state: absent
+
+  - name: Add repository
+    apt_repository:
+      repo: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} {{ telegraf_distribution_release }} stable"
+      update_cache: yes
+      filename: "influx-data"
+
+  - name: Unhold telegraf
+    dpkg_selections:
+      name: "telegraf"
+      selection: install
+    check_mode: no
+    changed_when: False
+
+  - name: Install telegraf
+    apt:
+      name: "telegraf"
+      install_recommends: no
+      state: latest
+      update_cache: yes
+
+  - name: Hold telegraf
+    dpkg_selections:
+      name: "telegraf"
+      selection: hold
+    check_mode: no
+    changed_when: False
+
+  - name: Install smartmontools
+    apt:
+      name:
+        - "smartmontools"
+        - "nvme-cli"
+    when: telegraf_disk_smart_enable | bool
+
+  - name: Install libraspberrypi-bin
+    apt:
+      name:
+        - "libraspberrypi-bin"
+    when: telegraf_rpi_gpu_temp_enable | bool
+
+  - name: Add telegraf user to the sudo group
+    user:
+      name: "telegraf"
+      groups: "sudo"
+      append: yes
+    when: telegraf_disk_smart_enable | bool
+
+  - name: Add telegraf user to the "docker" group
+    user:
+      name: "telegraf"
+      groups: "docker"
+      append: yes
+    notify: restart telegraf on host
+    when: telegraf_docker_enable | bool
+
+  - name: Add telegraf user to the "video" group
+    user:
+      name: "telegraf"
+      groups: "video"
+      append: yes
+    notify: restart telegraf on host
+    when: telegraf_rpi_gpu_temp_enable | bool
+
+  - name: Add telegraf user to sudoers.d
+    lineinfile:
+      path: /etc/sudoers.d/telegraf
+      line: "{{ item }}"
+      state: "{% if telegraf_disk_smart_enable | bool %}present{% else %}absent{% endif %}"
+      mode: 0600
+      create: yes
+      validate: 'visudo -cf %s'
+    loop:
+      - 'telegraf ALL = NOPASSWD: /usr/sbin/smartctl'
+      - 'Defaults!/usr/sbin/smartctl !logfile, !syslog, !pam_session'
+      - 'telegraf ALL = NOPASSWD: /usr/sbin/nvme'
+      - 'Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session'
+    notify: restart telegraf on host
+
+  - name: Copy telegraf.conf config
+    template:
+      src: "telegraf.conf.j2"
+      dest: "/etc/telegraf/telegraf.conf"
+      mode: "0600"
+      owner: "telegraf"
+      group: "telegraf"
+    notify: restart telegraf on host
+    tags: ["telegraf-config"]
+
+  - name: Copy telegraf.service systemd unit file
+    ansible.builtin.template:
+      src: "telegraf.service.j2"
+      dest: "/lib/systemd/system/telegraf.service"
+      owner: "root"
+      group: "root"
+      mode: "0644"
+    notify: restart telegraf on host
+
+  - name: Add vchiq udev rule
+    lineinfile:
+      path: "/etc/udev/rules.d/99-input.rules"
+      line: 'SUBSYSTEM=="vchiq", GROUP="video", MODE="0660"'
+      mode: 0644
+      create: yes
+      owner: "root"
+      group: "root"
+    when: telegraf_rpi_gpu_temp_enable | bool
+
+  - name: Flush handlers
+    ansible.builtin.meta: flush_handlers
+
+  - name: Start telegraf service
+    ansible.builtin.systemd:
+      name: "telegraf"
+      state: started
+      enabled: yes
+      daemon_reload: yes
+
+  tags: ["telegraf"]

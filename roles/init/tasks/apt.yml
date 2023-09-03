@@ -1,0 +1,103 @@
+---
+
+- name: apt | install dependencies
+  ansible.builtin.apt:
+    name:
+      - "gpg"
+      - "aptitude"
+      - "dirmngr"
+    update_cache: no
+    force_apt_get: yes
+  check_mode: no
+  changed_when: False
+
+- name: apt | add GPG key of GCP tools
+  ansible.builtin.apt_key:
+    id: "B53DC80D13EDEF05"
+    keyserver: keyserver.ubuntu.com
+    keyring: "/etc/apt/trusted.gpg.d/google-cloud-sdk.gpg"
+    state: present
+
+- name: apt | add GPG key of xanmod
+  ansible.builtin.apt_key:
+    state: present
+    url: "https://dl.xanmod.org/gpg.key"
+    keyring: "/etc/apt/trusted.gpg.d/xanmod.gpg"
+  when: init_apt_xanmod_kernel_enable | bool
+
+- name: apt | copy base sources.list
+  ansible.builtin.template:
+    src: "debian/sources.list.j2"
+    dest: "/etc/apt/sources.list"
+    owner: root
+    group: root
+    mode: 0644
+
+- name: apt | remove old google-cloud-sdk repository
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/gce_sdk.list"
+    state: absent
+  when: init_apt_google_cloud_sdk_enable | bool
+
+- name: apt | add google-cloud-sdk repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/trusted.gpg.d/google-cloud-sdk.gpg] http://packages.cloud.google.com/apt cloud-sdk-{{ ansible_distribution_release }} main"
+    filename: "google-cloud-sdk"
+  when: init_apt_google_cloud_sdk_enable | bool
+
+- name: apt | remove old xanmod repository
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/xanmod.list"
+    state: absent
+  when: init_apt_xanmod_kernel_enable | bool
+
+- name: apt | add xanmod repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/trusted.gpg.d/xanmod.gpg] http://deb.xanmod.org releases main"
+    state: present
+    filename: "xanmod-kernel"
+  register: _init_add_xanmod_repo_register
+  when: init_apt_xanmod_kernel_enable | bool
+
+- name: apt | upgrade all packages
+  ansible.builtin.apt:
+    upgrade: full
+    update_cache: yes
+  when: init_apt_upgrade | bool
+
+- name: apt | add xanmod kernel package
+  set_fact:
+    init_packages: "{{ init_packages + [init_apt_xanmod_kernel] }}"
+  when: init_apt_xanmod_kernel_enable | bool
+
+- name: apt | add google-cloud-sdk package
+  set_fact:
+    init_packages: "{{ init_packages + ['google-cloud-sdk'] }}"
+  when: init_apt_google_cloud_sdk_enable | bool
+
+- name: apt | remove google-cloud-sdk package
+  ansible.builtin.apt:
+    name: "google-cloud-sdk"
+    state: absent
+    purge: yes
+    update_cache: no
+  when: not (init_apt_google_cloud_sdk_enable | bool)
+
+- name: apt | install packages
+  ansible.builtin.apt:
+    name: "{{ init_packages }}"
+    update_cache: yes
+    install_recommends: no
+
+- name: apt | remove x64v1 xanmod kernel package
+  ansible.builtin.apt:
+    name:
+      - "linux-xanmod"
+      - "linux-xanmod-x64v1"
+    update_cache: no
+    state: "absent"
+    purge: yes
+    autoremove: yes
+  when: init_apt_xanmod_kernel_enable | bool
+
+  tags: ['init', 'init-apt']

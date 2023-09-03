@@ -1,0 +1,8 @@
+---
+
+- name: restart telegraf
+  docker_compose:
+    project_src: "{{ monitoring_base_dir }}"
+    restarted: yes
+    services:
+      - "telegraf"

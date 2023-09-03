@@ -1,0 +1,21 @@
+#jinja2: trim_blocks:False
+[Unit]
+Description=Telegraf
+Documentation=https://github.com/influxdata/telegraf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+AmbientCapabilities=CAP_NET_RAW
+Type=notify
+EnvironmentFile=-/etc/default/telegraf
+User=telegraf
+ExecStart=/usr/bin/telegraf -config /etc/telegraf/telegraf.conf -config-directory /etc/telegraf/telegraf.d $TELEGRAF_OPTS{% if telegraf_debug_enable == True %} --test{% endif %}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartForceExitStatus=SIGPIPE
+KillMode=control-group
+LimitMEMLOCK=8M:8M
+
+[Install]
+WantedBy=multi-user.target

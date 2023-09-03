@@ -1,0 +1,8 @@
+---
+
+- name: restart telegraf on host
+  ansible.builtin.systemd:
+    name: "telegraf"
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

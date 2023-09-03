@@ -1,0 +1,21 @@
+wireguard_persistent_keep_alive: "20"
+wireguard_linux_headers: "linux-headers-amd64"
+wireguard_interface_name: "wg0"
+wireguard_interface_mtu: 1370
+wireguard_port: "3902"
+wireguard_network_mask: "24"
+
+wireguard_internal_ip: ""
+wireguard_external_ip: ""
+wireguard_public_key: ""
+wireguard_priv_key: ""
+wireguard_nated_networks: []
+
+wireguard_clients: {}
+
+# can be 'local', 'machine', 'mikrotik'
+wireguard_instance_type: ""
+
+wireguard_mikrotik_addr: ""
+wireguard_mikrotik_login: ""
+wireguard_mikrotik_password: ""
