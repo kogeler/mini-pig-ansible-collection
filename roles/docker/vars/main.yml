@@ -1,0 +1,6 @@
+docker_default_versions:
+  xenial: "18.06.3~ce~3-0~ubuntu"
+  bionic: "5:19.03.12~3-0~ubuntu-bionic"
+  focal: "5:20.10.1~3-0~ubuntu-focal"
+  buster: "5:20.10.6~3-0~debian-buster"
+  bullseye: "5:20.10.21~3-0~debian-bullseye"

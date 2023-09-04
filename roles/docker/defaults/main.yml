@@ -1,0 +1,4 @@
+docker_version: "{{ docker_default_versions[ansible_distribution_release] }}"
+docker_compose_version: "1.29.2"
+docker_docker_pip_version: "6.1.3"
+docker_schedule_cleanup_state: absent

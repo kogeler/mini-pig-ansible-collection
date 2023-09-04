@@ -1,0 +1,17 @@
+---
+- block:
+
+  - name: install/upgrade Docker
+    import_tasks: install-docker.yml
+
+  - name: install/upgrade Docker Compose
+    import_tasks: install-compose.yml
+
+  - name: Schedule a cleanup (every day)
+    cron:
+      name: Docker cleanup
+      special_time: daily
+      job: "docker system prune --force"
+      state: "{{ docker_schedule_cleanup_state }}"
+
+  tags: ["docker"]

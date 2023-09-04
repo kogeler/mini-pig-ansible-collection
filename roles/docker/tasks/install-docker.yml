@@ -1,0 +1,62 @@
+---
+
+- block:
+
+  - name: Purge old Docker versions if any {{ packages }}
+    apt:
+      name: "{{ packages }}"
+      purge: yes
+      state: absent
+    vars:
+      packages:
+        - docker
+        - docker-engine
+        - docker.io
+
+  - name: Remove GPG key
+    ansible.builtin.apt_key:
+      path: "/etc/apt/trusted.gpg.d/docker.gpg"
+      state: absent
+
+  - name: Add GPG key
+    ansible.builtin.apt_key:
+      url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+      keyring: "/usr/share/keyrings/docker.gpg"
+      state: present
+
+  - name: Add repository
+    apt_repository:
+      repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+      update_cache: yes
+      filename: docker
+
+  - name: Unhold docker
+    dpkg_selections:
+      name: "{{ item }}"
+      selection: install
+    loop:
+      - "docker-ce"
+      - "docker-ce-cli"
+    check_mode: no
+    changed_when: False
+
+  - name: Install docker packages {{ packages }}
+    apt:
+      name: "{{ packages }}"
+      install_recommends: no
+    vars:
+      packages:
+        - "docker-ce={{ docker_version }}"
+        - "docker-ce-cli={{ docker_version }}"
+
+  - name: Hold docker
+    dpkg_selections:
+      name: "{{ item }}"
+      selection: hold
+    loop:
+      - "docker-ce"
+      - "docker-ce-cli"
+    check_mode: no
+    changed_when: False
+
+  tags: ["docker"]
