@@ -1,0 +1,21 @@
+---
+
+- block:
+
+  - name: Install packages {{ packages }}
+    apt:
+      name: "{{ packages }}"
+      install_recommends: no
+    vars:
+      packages:
+        - python3-pip
+
+  - name: Install docker python modules {{ packages }}
+    pip:
+      name: "{{ packages }}"
+    vars:
+      packages:
+        - "docker-compose=={{ docker_compose_version }}"
+        - "docker=={{ docker_docker_pip_version }}"
+
+  tags: ["docker"]
