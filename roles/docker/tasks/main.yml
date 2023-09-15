@@ -2,13 +2,13 @@
 - block:
 
   - name: install/upgrade Docker
-    import_tasks: install-docker.yml
+    ansible.builtin.import_tasks: install-docker.yml
 
   - name: install/upgrade Docker Compose
-    import_tasks: install-compose.yml
+    ansible.builtin.import_tasks: install-compose.yml
 
   - name: Schedule a cleanup (every day)
-    cron:
+    ansible.builtin.cron:
       name: Docker cleanup
       special_time: daily
       job: "docker system prune --force"
