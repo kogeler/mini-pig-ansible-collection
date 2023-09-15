@@ -2,8 +2,19 @@
 
 - block:
 
+  - name: Install dependencies
+    ansible.builtin.apt:
+      name: "{{ packages }}"
+      install_recommends: no
+      update_cache: yes
+    vars:
+      packages:
+        - "gpg"
+        - "gpg-agent"
+        - "python3-pip"
+
   - name: Purge old Docker versions if any {{ packages }}
-    apt:
+    ansible.builtin.apt:
       name: "{{ packages }}"
       purge: yes
       state: absent
@@ -14,7 +25,7 @@
         - docker.io
 
   - name: Remove GPG key
-    ansible.builtin.apt_key:
+    ansible.builtin.file:
       path: "/etc/apt/trusted.gpg.d/docker.gpg"
       state: absent
 
@@ -25,13 +36,13 @@
       state: present
 
   - name: Add repository
-    apt_repository:
+    ansible.builtin.apt_repository:
       repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
       update_cache: yes
       filename: docker
 
   - name: Unhold docker
-    dpkg_selections:
+    ansible.builtin.dpkg_selections:
       name: "{{ item }}"
       selection: install
     loop:
@@ -41,16 +52,17 @@
     changed_when: False
 
   - name: Install docker packages {{ packages }}
-    apt:
+    ansible.builtin.apt:
       name: "{{ packages }}"
       install_recommends: no
+      update_cache: yes
     vars:
       packages:
         - "docker-ce={{ docker_version }}"
         - "docker-ce-cli={{ docker_version }}"
 
   - name: Hold docker
-    dpkg_selections:
+    ansible.builtin.dpkg_selections:
       name: "{{ item }}"
       selection: hold
     loop:
