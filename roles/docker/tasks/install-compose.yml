@@ -2,12 +2,13 @@
 
 - block:
 
-  - name: Install docker python modules {{ packages }}
-    ansible.builtin.pip:
+  - name: Install docker-compose
+    ansible.builtin.apt:
       name: "{{ packages }}"
+      install_recommends: no
+      update_cache: no
     vars:
       packages:
-        - "docker-compose=={{ docker_compose_version }}"
-        - "docker=={{ docker_docker_pip_version }}"
+        - docker-compose
 
   tags: ["docker"]

@@ -10,6 +10,7 @@ AmbientCapabilities=CAP_NET_RAW
 Type=notify
 EnvironmentFile=-/etc/default/telegraf
 User=telegraf
+ImportCredential=telegraf.*
 ExecStart=/usr/bin/telegraf -config /etc/telegraf/telegraf.conf -config-directory /etc/telegraf/telegraf.d $TELEGRAF_OPTS{% if telegraf_debug_enable == True %} --test{% endif %}
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -17,6 +18,7 @@ RestartForceExitStatus=SIGPIPE
 KillMode=mixed
 TimeoutStopSec=5
 LimitMEMLOCK=8M:8M
+PrivateMounts=true
 
 [Install]
 WantedBy=multi-user.target

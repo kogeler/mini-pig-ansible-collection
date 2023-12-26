@@ -110,6 +110,7 @@ services:
       - "GF_SERVER_ROOT_URL=https://{{ monitoring_grafana_external_host }}"
       - "GF_SECURITY_ADMIN_USER={{ monitoring_grafana_admin_name }}"
       - "GF_SECURITY_ADMIN_PASSWORD={{ monitoring_grafana_admin_pass }}"
+      - "GF_SERVER_HTTP_PORT=3000"
 {% if monitoring_grafana_auth_github_enable %}
       - "GF_AUTH_GITHUB_ENABLED=true"
       - "GF_AUTH_GITHUB_ALLOW_SIGN_UP={{ monitoring_grafana_auth_github_allow_sign_up }}"
@@ -132,16 +133,17 @@ services:
       - "traefik.port=3000"
       - "traefik.frontend.rule=Host:{{ monitoring_grafana_external_host }}"
 {% endif %}
-
+{% if monitoring_dns_servers | length > 0 %}
     dns:
 {% for server in monitoring_dns_servers %}
       - {{ server }}
 {% endfor %}
+{% endif %}
     volumes:
       - "{{ monitoring_data_dir }}/grafana:/var/lib/grafana"
 {% if monitoring_grafana_bind_host != '' %}
     ports:
-      - "{{ monitoring_grafana_bind_host }}:{{ monitoring_grafana_port }}:3000"
+      - "{{ monitoring_grafana_bind_host }}:{{ monitoring_grafana_bind_port }}:3000"
 {% endif %}
     logging:
       driver: "json-file"
@@ -211,9 +213,9 @@ services:
     restart: "{{ monitoring_restart_policy }}"
 {% endif %}
 
-{% if monitoring_traefik_network_name != '' %}
 networks:
   monitoring:
+{% if monitoring_traefik_network_name != '' %}
   {{ monitoring_traefik_network_name }}:
     external:
       name: {{ monitoring_traefik_network_name }}

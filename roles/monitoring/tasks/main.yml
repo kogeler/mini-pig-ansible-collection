@@ -43,5 +43,6 @@
       project_src: "{{ monitoring_base_dir }}"
       state: present
       pull: yes
+    ignore_errors: "{{ ansible_check_mode }}"
 
   tags: ["monitoring"]
