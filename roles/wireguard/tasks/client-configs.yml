@@ -8,3 +8,17 @@
   run_once: yes
   become: no
   loop: "{{ wireguard_clients | dict2items }}"
+
+- name: wireguard | Copy client QR configs
+  ansible.builtin.command:
+    argv:
+      - qrencode
+      - -s
+      - 5
+      - -r
+      - "{{ inventory_dir }}/wireguard_configs/{{ item.key }}.conf"
+      - -o
+      - "{{ inventory_dir }}/wireguard_configs/{{ item.key }}.png"
+  run_once: yes
+  become: no
+  loop: "{{ wireguard_clients | dict2items }}"

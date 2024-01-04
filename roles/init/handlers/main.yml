@@ -6,7 +6,7 @@
     state: restarted
     enabled: yes
 
-- name: update-grub
+- name: update grub
   ansible.builtin.shell:
     cmd: "update-grub"
   changed_when: False
