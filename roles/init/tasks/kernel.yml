@@ -5,4 +5,4 @@
     path: "/etc/default/grub"
     regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=".*"$'
     replace: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ init_cmdline_linux }}"'
-  notify: update-grub
+  notify: update grub
