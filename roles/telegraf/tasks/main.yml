@@ -10,16 +10,19 @@
       state: present
     tags: ["telegraf-apt-gpg"]
 
-  - name: remove old repository
+  - name: Remove old repository list files
     ansible.builtin.file:
-      path: "/etc/apt/sources.list.d/influxdata.list"
+      path: "{{ item }}"
       state: absent
+    loop:
+      - /etc/apt/sources.list.d/influxdata.list
+      - /etc/apt/sources.list.d/influx-data.list
 
   - name: Add repository
-    apt_repository:
-      repo: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} {{ telegraf_distribution_release }} stable"
+    ansible.builtin.apt_repository:
+      repo: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} stable main"
       update_cache: yes
-      filename: "influx-data"
+      filename: "influxdata_v2"
 
   - name: Unhold telegraf
     dpkg_selections:

@@ -8,6 +8,7 @@ Wants=network-online.target
 [Service]
 AmbientCapabilities=CAP_NET_RAW
 Type=notify
+NotifyAccess=all
 EnvironmentFile=-/etc/default/telegraf
 User=telegraf
 ImportCredential=telegraf.*

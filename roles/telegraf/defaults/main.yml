@@ -1,6 +1,5 @@
 #telegraf_version: "1.21.1-1"
 telegraf_distribution: "{{ ansible_distribution | lower }}"
-telegraf_distribution_release: "{{ ansible_distribution_release }}"
 telegraf_disk_smart_enable: true
 telegraf_docker_enable: false
 telegraf_rpi_temp_enable: false
