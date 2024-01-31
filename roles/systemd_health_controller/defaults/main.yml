@@ -11,7 +11,7 @@ systemd_health_controller_max_attempts: 3
 
 systemd_health_controller_prometheus_url: "http://127.0.0.1:8001/metrics"
 systemd_health_controller_prometheus_metric_name: "wss_alive"
-systemd_health_controller_prometheus_metric_label: "url"
+systemd_health_controller_prometheus_metric_label: "ws_alive_url"
 systemd_health_controller_prometheus_mapping: {}
 #  "kusama.service": "ws://127.0.0.1:9933"
 

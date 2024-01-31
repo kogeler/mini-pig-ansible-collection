@@ -23,7 +23,7 @@ app_config = {
     'max_attempts': 3,
     'prometheus_url': 'http://127.0.0.1:8001/metrics',
     'prometheus_metric_name': 'wss_alive',
-    'prometheus_metric_label': 'url',
+    'prometheus_metric_label': 'ws_alive_url',
     'prometheus_mapping': {},
 }
 
@@ -90,7 +90,7 @@ def parse_prometheus_metric(url, metric_name, metric_label):
     for family in text_string_to_metric_families(metrics.decode()):
         for sample in family.samples:
             if getattr(sample, 'name') == metric_name and metric_label in getattr(sample, 'labels'):
-                results[getattr(sample, 'labels')['url']] = getattr(sample, 'value')
+                results[getattr(sample, 'labels')[metric_label]] = getattr(sample, 'value')
     logging.debug(f'Prometheus metrics were parsed: { results }')
     return results
 
