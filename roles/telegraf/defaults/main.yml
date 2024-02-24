@@ -1,4 +1,6 @@
 #telegraf_version: "1.21.1-1"
+telegraf_metric_batch_size: 3000
+telegraf_metric_buffer_limit: 300000
 telegraf_distribution: "{{ ansible_distribution | lower }}"
 telegraf_disk_smart_enable: true
 telegraf_docker_enable: false
@@ -16,4 +18,8 @@ telegraf_influxdb_url: ""
 telegraf_influxdb_db_name: "monitoring"
 telegraf_influxdb_name: "write"
 telegraf_influxdb_pass: ""
+telegraf_influxdb2_url: ""
+telegraf_influxdb2_token: ""
+telegraf_prometheusremotewrite_url: ""
+telegraf_prometheusremotewrite_token: ""
 telegraf_debug_enable: false
