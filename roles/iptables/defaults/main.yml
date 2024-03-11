@@ -11,6 +11,9 @@ iptables_ports:
 #    src_v6:
 
 iptables_lxd_enable: false
+iptables_external_ping_enable: false
+# per minute
+iptables_external_ping_limit: 10
 
 iptables_forwarded_ports: []
 #  - forwarded_inf: eth0
