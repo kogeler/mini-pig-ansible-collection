@@ -609,7 +609,7 @@
 #
 #   ## List of urls to query.
 #   # urls = ["http://localhost"]
-      urls = [{% for url in telegraf_node_urls %}"{{ url }}"{% if not loop.last %},{% endif %}{% endfor %}]
+  urls = [{% for url in telegraf_node_urls %}"{{ url }}"{% if not loop.last %},{% endif %}{% endfor %}]
 #
 #   ## Set http_proxy.
 #   ## Telegraf uses the system wide proxy settings if it's is not set.
@@ -620,7 +620,7 @@
 #
 #   ## HTTP Request Method
 #   # method = "GET"
-      method = "POST"
+  method = "{{ telegraf_node_method }}"
 #
 #   ## Whether to follow redirects from the server (defaults to false)
 #   # follow_redirects = false
@@ -637,7 +637,7 @@
 #   # body = '''
 #   # {'fake':'data'}
 #   # '''
-      body = '''{"id":1, "jsonrpc":"2.0", "method": "system_health", "params":[]}'''
+  body = '''{{ telegraf_node_body }}'''
 #
 #   ## Optional HTTP Request Body Form
 #   ## Key value pairs to encode and set at URL form. Can be used with the POST
@@ -660,7 +660,7 @@
 #   # response_string_match = "\"service_status\": \"up\""
 #   # response_string_match = "ok"
 #   # response_string_match = "\".*_status\".?:.?\"up\""
-      response_string_match = ".*\"isSyncing\":false.*"
+  response_string_match = "{{ telegraf_node_response_string_match }}"
 #
 #   ## Expected response status code.
 #   ## The status code of the response is compared to this value. If they match,
@@ -668,6 +668,7 @@
 #   ## If the expected status code is 0, the check is disabled and the field
 #   ## won't be added.
 #   # response_status_code = 0
+  response_status_code = {{ telegraf_node_response_code }}
 #
 #   ## Optional TLS Config
 #   # tls_ca = "/etc/telegraf/ca.pem"
@@ -683,8 +684,12 @@
 #   ## HTTP Request Headers (all values must be strings)
 #   # [inputs.http_response.headers]
 #   #   Host = "github.com"
-      [inputs.http_response.headers]
-        Content-Type = "application/json"
+{% if telegraf_node_response_headers.items() | length > 0 %}
+  [inputs.http_response.headers]
+{% for key, value in telegraf_node_response_headers.items() | sort %}
+    {{ key }} = "{{ value }}"
+{% endfor %}
+{% endif %}
 #
 #   ## Optional setting to map response http headers into tags
 #   ## If the http header is not present on the request, no corresponding tag will
@@ -704,12 +709,14 @@
 {% endif %}
 
 
+{% if telegraf_mdstat_enable %}
 # # Get kernel statistics from /proc/mdstat
 # # This plugin ONLY supports Linux
 [[inputs.mdstat]]
 #   ## Sets file path
 #   ## If not specified, then default is /proc/mdstat
 #   # file_name = "/proc/mdstat"
+{% endif %}
 
 
 # # Read metrics about network interface usage
@@ -752,11 +759,12 @@
 #   ## Number of ping packets to send per interval.  Corresponds to the "-c"
 #   ## option of the ping command.
 #   # count = 1
-  count = 3
+  count = {{ telegraf_ping_count }}
 #
 #   ## Time to wait between sending ping packets in seconds.  Operates like the
 #   ## "-i" option of the ping command.
 #   # ping_interval = 1.0
+  ping_interval = {{ telegraf_ping_interval }}
 #
 #   ## If set, the time to wait for a ping response in seconds.  Operates like
 #   ## the "-W" option of the ping command.

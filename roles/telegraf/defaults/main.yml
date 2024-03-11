@@ -2,6 +2,18 @@
 telegraf_metric_batch_size: 3000
 telegraf_metric_buffer_limit: 300000
 telegraf_distribution: "{{ ansible_distribution | lower }}"
+
+telegraf_debug_enable: false
+
+telegraf_influxdb_url: ""
+telegraf_influxdb_db_name: "monitoring"
+telegraf_influxdb_name: "write"
+telegraf_influxdb_pass: ""
+telegraf_influxdb2_url: ""
+telegraf_influxdb2_token: ""
+telegraf_prometheusremotewrite_url: ""
+telegraf_prometheusremotewrite_token: ""
+
 telegraf_disk_smart_enable: true
 telegraf_docker_enable: false
 telegraf_rpi_temp_enable: false
@@ -11,15 +23,15 @@ telegraf_postgresql_enable: false
 telegraf_postgresql_user: "postgres"
 telegraf_postgresql_password: ""
 telegraf_prometheus_urls: []
-telegraf_node_urls: []
 telegraf_health_check_urls: []
+telegraf_node_urls: []
+telegraf_node_response_code: 200
+telegraf_node_method: "POST"
+telegraf_node_body: '{"id":1, "jsonrpc":"2.0", "method": "system_health", "params":[]}'
+telegraf_node_response_string_match: '.*\"isSyncing\":false.*'
+telegraf_node_response_headers:
+  Content-Type: "application/json"
 telegraf_ping_hosts: []
-telegraf_influxdb_url: ""
-telegraf_influxdb_db_name: "monitoring"
-telegraf_influxdb_name: "write"
-telegraf_influxdb_pass: ""
-telegraf_influxdb2_url: ""
-telegraf_influxdb2_token: ""
-telegraf_prometheusremotewrite_url: ""
-telegraf_prometheusremotewrite_token: ""
-telegraf_debug_enable: false
+telegraf_ping_count: 1
+telegraf_ping_interval: 10.0
+telegraf_mdstat_enable: false

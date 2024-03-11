@@ -3,6 +3,10 @@
 :FORWARD DROP [0:0]
 :OUTPUT ACCEPT [668:39156]
 -A INPUT -i lo -j ACCEPT
+{% if iptables_external_ping_enable | bool %}
+-A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+-A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp -j DROP
+{% endif %}
 -A INPUT -m state --state INVALID -j DROP
 -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 {% for port in iptables_ports %}
