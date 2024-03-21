@@ -2,6 +2,11 @@
 
 - block:
 
+  - name: iptables | Check docker systemd unit file exists
+    ansible.builtin.stat:
+      path: "/lib/systemd/system/docker.service"
+    register: _iptables_docker_systemd_file_stat
+
   - name: iptables | Enable ipv4 forward
     sysctl:
       name: net.ipv4.ip_forward

@@ -20,6 +20,7 @@ init_packages:
   - "python3-setuptools"
   - "gpg"
   - "vlan"
+init_packages_extra: []
 
 # to create password hash
 # apt install whois

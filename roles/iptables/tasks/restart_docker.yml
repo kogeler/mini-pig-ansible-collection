@@ -1,9 +1,3 @@
-
-- name: iptables | Check docker systemd unit file exists
-  ansible.builtin.stat:
-    path: "/lib/systemd/system/docker.service"
-  register: _iptables_docker_systemd_file_stat
-
 - name: iptables | Restart docker service
   ansible.builtin.systemd:
     name: "docker"

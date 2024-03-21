@@ -11,7 +11,7 @@ COMMIT
 :INPUT DROP [4397:404879]
 :FORWARD DROP [1:328]
 :DOCKER-USER - [0:0]
-{% if iptables_docker_ports | length > 0 %}
+{% if _iptables_docker_systemd_file_stat.stat.exists | bool %}
 {% for port in iptables_docker_ports %}
 -A DOCKER-USER -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ iptables_inf_ext }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j RETURN
 {% endfor %}
