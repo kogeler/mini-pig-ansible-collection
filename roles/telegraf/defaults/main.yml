@@ -1,6 +1,12 @@
 #telegraf_version: "1.21.1-1"
+
+telegraf_flush_interval: 60s
+telegraf_flush_jitter: 10s
 telegraf_metric_batch_size: 3000
+
+telegraf_collection_interval: 30s
 telegraf_metric_buffer_limit: 300000
+
 telegraf_distribution: "{{ ansible_distribution | lower }}"
 
 telegraf_debug_enable: false
@@ -32,6 +38,10 @@ telegraf_node_response_string_match: '.*\"isSyncing\":false.*'
 telegraf_node_response_headers:
   Content-Type: "application/json"
 telegraf_ping_hosts: []
-telegraf_ping_count: 1
-telegraf_ping_interval: 10.0
+telegraf_ping_count: 2
+# seconds
+telegraf_ping_interval: 5.0
+telegraf_ping_timeout: 0.5
+telegraf_ping_deadline: 20
+
 telegraf_mdstat_enable: false
