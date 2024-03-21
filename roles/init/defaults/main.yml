@@ -32,6 +32,7 @@ init_users: []
 #    password: ""
 #    ssh_keys: ""
 # "!" locks the root login completely
+init_users_extra: []
 init_root_password: "!"
 # sda, etc.
 init_block_dev: ""

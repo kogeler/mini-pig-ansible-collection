@@ -17,6 +17,7 @@
     keyserver: keyserver.ubuntu.com
     keyring: "/etc/apt/trusted.gpg.d/google-cloud-sdk.gpg"
     state: present
+  when: init_apt_google_cloud_sdk_enable | bool
 
 - name: apt | add GPG key of xanmod
   ansible.builtin.apt_key:
@@ -32,6 +33,7 @@
     owner: root
     group: root
     mode: 0644
+  when: ansible_distribution == 'Debian'
 
 - name: apt | remove old google-cloud-sdk repository
   ansible.builtin.file:
@@ -77,7 +79,9 @@
 
 - name: apt | remove google-cloud-sdk package
   ansible.builtin.apt:
-    name: "google-cloud-sdk"
+    name:
+      - google-cloud-sdk
+      - google-cloud-cli
     state: absent
     purge: yes
     update_cache: no
