@@ -15,7 +15,6 @@
 {% for inf in iptables_inf_trusted %}
 -A INPUT -i {{ inf }} -m state --state NEW -j ACCEPT
 {% endfor %}
--A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp -j ACCEPT
 -A INPUT -i {{ iptables_inf_ext }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
 -A OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
 -A OUTPUT -p udp -m udp --dport 547 -j DROP

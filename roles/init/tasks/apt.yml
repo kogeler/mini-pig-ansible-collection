@@ -89,7 +89,7 @@
 
 - name: apt | install packages
   ansible.builtin.apt:
-    name: "{{ init_packages }}"
+    name: "{{ init_packages + init_packages_extra }}"
     update_cache: yes
     install_recommends: no
 
