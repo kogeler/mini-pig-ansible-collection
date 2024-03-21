@@ -24,7 +24,7 @@
 # Configuration for telegraf agent
 [agent]
   ## Default data collection interval for all inputs
-  interval = "10s"
+  interval = "{{ telegraf_collection_interval }}"
   ## Rounds collection interval to 'interval'
   ## ie, if interval="10s" then always collect on :00, :10, :20, etc.
   round_interval = true
@@ -52,11 +52,11 @@
 
   ## Default flushing interval for all outputs. Maximum flush_interval will be
   ## flush_interval + flush_jitter
-  flush_interval = "10s"
+  flush_interval = "{{ telegraf_flush_interval }}"
   ## Jitter the flush interval by a random amount. This is primarily to avoid
   ## large write spikes for users running a large number of telegraf instances.
   ## ie, a jitter of 5s and interval 10s means flushes will happen every 10-15s
-  flush_jitter = "0s"
+  flush_jitter = "{{ telegraf_flush_jitter }}"
 
   ## Collected metrics are rounded to the precision specified. Precision is
   ## specified as an interval with an integer + unit (e.g. 0s, 10ms, 2us, 4s).
@@ -769,10 +769,12 @@
 #   ## If set, the time to wait for a ping response in seconds.  Operates like
 #   ## the "-W" option of the ping command.
 #   # timeout = 1.0
+  timeout = {{ telegraf_ping_timeout }}
 #
 #   ## If set, the total ping deadline, in seconds.  Operates like the -w option
 #   ## of the ping command.
 #   # deadline = 10
+  deadline = {{ telegraf_ping_deadline }}
 #
 #   ## Interface or source address to send ping from.  Operates like the -I or -S
 #   ## option of the ping command.
