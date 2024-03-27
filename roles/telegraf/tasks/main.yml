@@ -29,7 +29,8 @@
       name: "telegraf"
       selection: install
     check_mode: no
-    changed_when: False
+    changed_when: false
+    ignore_errors: true
 
   - name: Install telegraf
     apt:
