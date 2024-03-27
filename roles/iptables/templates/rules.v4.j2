@@ -21,6 +21,7 @@ COMMIT
 -A INPUT -i lo -j ACCEPT
 {% if iptables_external_ping_enable | bool %}
 -A INPUT -i {{ iptables_inf_ext }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+-A INPUT -i {{ iptables_inf_ext }} -p icmp --icmp-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 -A INPUT -i {{ iptables_inf_ext }} -p icmp -j DROP
 {% endif %}
 -A INPUT -m state --state INVALID -j DROP
