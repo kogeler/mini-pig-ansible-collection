@@ -53,6 +53,8 @@ init_cmdline_linux: ""
 
 init_hostname: "{{ inventory_hostname }}"
 # specify custom hosts to add them to /etc/hosts
+init_add_all_hosts: true
+init_block_hosts_file: true
 init_custom_hosts: []
 #  - ip: "1.1.1.1"
 #    host: "server1"
