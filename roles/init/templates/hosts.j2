@@ -1,11 +1,13 @@
 127.0.0.1       localhost
 127.0.0.1       {{ init_hostname }}
 
+{% if init_add_all_hosts %}
 {% for key, value in hostvars.items() | sort %}
 {% if key != inventory_hostname and value.init_int_ip is defined and value.init_int_ip != '' %}
 {{ value.init_int_ip }}   {{ key }}
 {% endif %}
 {% endfor %}
+{% endif %}
 
 {% for host in init_custom_hosts %}
 {{ host.ip }}   {{ host.host }}
