@@ -22,7 +22,7 @@
 - name: apt | add GPG key of xanmod
   ansible.builtin.apt_key:
     state: present
-    url: "https://dl.xanmod.org/gpg.key"
+    url: "{{ init_apt_xanmod_kernel_apt_gpg_url }}"
     keyring: "/etc/apt/trusted.gpg.d/xanmod.gpg"
   when: init_apt_xanmod_kernel_enable | bool
 

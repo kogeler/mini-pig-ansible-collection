@@ -46,6 +46,7 @@ init_apt_upgrade: false
 
 init_apt_xanmod_kernel_enable: false
 init_apt_xanmod_kernel: "linux-xanmod-x64v3"
+init_apt_xanmod_kernel_apt_gpg_url: "https://dl.xanmod.org/archive.key"
 
 init_apt_google_cloud_sdk_enable: false
 
