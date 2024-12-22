@@ -1,25 +1,27 @@
 iptables_inf_ext: "{{ ansible_default_ipv4.interface }}"
-iptables_inf_trusted:
-  - "wg0"
-iptables_ipv4_forward_enable: false
+
 iptables_ports:
   - port: 22
     protocol: tcp
 #  - port: 80
 #    protocol: tcp
 #    src_v4: 0.0.0.0/0
-#    src_v6:
-
-iptables_lxd_enable: false
-iptables_external_ping_enable: false
-# per minute
-iptables_external_ping_limit: 10
-
+#    src_v6: ::/0
+#    skip_v6: false 
 iptables_forwarded_ports: []
 #  - forwarded_inf: eth0
 #    forwarded_port: 22
 #    protocol: tcp
 #    dst_port: 22
 #    dst_address: 192.168.1.1
-
 iptables_docker_ports: []
+#  - port: 80
+#    protocol: tcp
+#    src_v4: 0.0.0.0/0
+
+iptables_external_ping_enable: false
+# per minute
+iptables_external_ping_limit: 10
+iptables_ipv4_forward_enable: false
+iptables_exclude_local_ips: true
+iptables_ext_inf_masquerade: false

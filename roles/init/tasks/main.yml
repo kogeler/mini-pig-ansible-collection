@@ -6,6 +6,9 @@
   register: _init_user_info
   tags: ['init']
 
+- name: init | users
+  import_tasks: users.yml
+
 - name: init | time
   ansible.builtin.include_tasks:
     file: time.yml
@@ -33,9 +36,6 @@
     apply:
       tags: ['init', 'init-apt']
   tags: ['init', 'init-apt']
-
-- name: init | users
-  import_tasks: users.yml
 
 - name: init | mount
   import_tasks: mount.yml
