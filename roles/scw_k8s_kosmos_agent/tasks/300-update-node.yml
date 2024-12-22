@@ -1,0 +1,14 @@
+---
+
+- name: scw_k8s_kosmos_agent | update node | run agent
+  ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -loglevel 0 -no-controller -self-update"
+  environment:
+    POOL_REGION: "{{ scw_k8s_kosmos_agent_pool_region }}"
+    POOL_ID: "{{ scw_k8s_kosmos_agent_pool_id }}"
+    SCW_SECRET_KEY: "{{ scw_k8s_kosmos_agent_secret_key }}"
+  register: _scw_k8s_kosmos_agent_update_node_register
+
+- name: scw_k8s_kosmos_agent | update node | run agent (print output)
+  ansible.builtin.debug:
+    msg: "{{ _scw_k8s_kosmos_agent_update_node_register.stdout.split('\n') }}"
+  when: _scw_k8s_kosmos_agent_update_node_register.stdout is defined

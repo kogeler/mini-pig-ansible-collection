@@ -1,0 +1,64 @@
+---
+
+- name: scw_k8s_kosmos_agent | collect service facts
+  ansible.builtin.service_facts:
+  tags:
+    - scw_k8s_kosmos_agent
+    - scw-k8s-kosmos-agent
+    - scw_k8s_kosmos_agent_add_node
+    - scw-k8s-kosmos-agent-add-node
+    - scw_k8s_kosmos_agent_update_node
+    - scw-k8s-kosmos-agent-update-node
+
+- name: scw_k8s_kosmos_agent | binary 
+  ansible.builtin.include_tasks:
+    file: 100-binary.yml
+    apply:
+      tags:
+        - scw_k8s_kosmos_agent
+        - scw-k8s-kosmos-agent
+        - scw_k8s_kosmos_agent_binary
+        - scw-k8s-kosmos-agent-binary
+  tags:
+    - scw_k8s_kosmos_agent
+    - scw-k8s-kosmos-agent
+    - scw_k8s_kosmos_agent_binary
+    - scw-k8s-kosmos-agent-binary
+    
+- name: scw_k8s_kosmos_agent | add node
+  ansible.builtin.include_tasks:
+    file: 200-add-node.yml
+    apply:
+      tags:
+        - scw_k8s_kosmos_agent
+        - scw-k8s-kosmos-agent
+        - scw_k8s_kosmos_agent_add_node
+        - scw-k8s-kosmos-agent-add-node
+  tags:
+    - scw_k8s_kosmos_agent
+    - scw-k8s-kosmos-agent
+    - scw_k8s_kosmos_agent_add_node
+    - scw-k8s-kosmos-agent-add-node
+  when: 
+    - not (scw_k8s_kosmos_agent_flow_update_node | bool)
+    - ansible_facts.services['kubelet.service'] is defined
+    - ansible_facts.services['kubelet.service'].state != 'running'
+    
+- name: scw_k8s_kosmos_agent | update node
+  ansible.builtin.include_tasks:
+    file: 300-update-node.yml
+    apply:
+      tags:
+        - scw_k8s_kosmos_agent
+        - scw-k8s-kosmos-agent
+        - scw_k8s_kosmos_agent_update_node
+        - scw-k8s-kosmos-agent-update-node
+  tags:
+    - scw_k8s_kosmos_agent
+    - scw-k8s-kosmos-agent
+    - scw_k8s_kosmos_agent_update_node
+    - scw-k8s-kosmos-agent-update-node
+  when: 
+    - scw_k8s_kosmos_agent_flow_update_node | bool
+    - ansible_facts.services['kubelet.service'] is defined
+    - ansible_facts.services['kubelet.service'].state == 'running'

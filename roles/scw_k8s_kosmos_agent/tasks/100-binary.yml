@@ -1,0 +1,40 @@
+---
+
+- name: scw_k8s_kosmos_agent | binary 
+  block:
+
+    - name: scw_k8s_kosmos_agent | binary | create temporary directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: scw_k8s_kosmos_agent
+      register: _scw_k8s_kosmos_agent_temp_dir_register
+      check_mode: false
+      changed_when: false
+      
+    - name: scw_k8s_kosmos_agent | binary | download binary
+      ansible.builtin.get_url:
+        url: "{{ scw_k8s_kosmos_agent_binary_url }}"
+        dest: "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+        mode: "0755"
+        owner: root
+        group: root
+        timeout: 30
+      check_mode: false
+      changed_when: false
+
+    - name: scw_k8s_kosmos_agent | binary | copy binary
+      ansible.builtin.copy:
+        src: "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+        dest: "{{ _scw_k8s_kosmos_agent_binary_path }}"
+        remote_src: true
+        mode: "0755"
+        owner: "root"
+        group: "root"
+
+  always:
+    - name: scw_k8s_kosmos_agent | binary | remove temp folders
+      ansible.builtin.file:
+        path: "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}"
+        state: absent
+      check_mode: false
+      changed_when: false
