@@ -41,8 +41,7 @@
     - scw-k8s-kosmos-agent-add-node
   when: 
     - not (scw_k8s_kosmos_agent_flow_update_node | bool)
-    - ansible_facts.services['kubelet.service'] is defined
-    - ansible_facts.services['kubelet.service'].state != 'running'
+    - ansible_facts.services['kubelet.service'] is not defined or ansible_facts.services['kubelet.service'].state != 'running'
     
 - name: scw_k8s_kosmos_agent | update node
   ansible.builtin.include_tasks:
