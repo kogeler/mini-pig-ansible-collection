@@ -22,5 +22,10 @@ iptables_docker_ports: []
 iptables_external_ping_enable: false
 # per minute
 iptables_external_ping_limit: 10
+# block outgoing connections to local addresses
+iptables_disable_local_output: false
+iptables_disable_local_excluded_ipv4_ranges: []
+iptables_disable_local_excluded_ipv6_ranges: []
+# for k8s nodes
 iptables_ipv4_forward_enable: false
 iptables_ext_inf_masquerade: false

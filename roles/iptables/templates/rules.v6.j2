@@ -17,7 +17,18 @@
 {% endif %}
 -A INPUT -i {{ iptables_inf_ext }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
 -A INPUT -i {{ iptables_inf_ext }} -m state --state NEW -j DROP
+-A OUTPUT -o lo -j ACCEPT
+-A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A OUTPUT -m state --state INVALID -j DROP
 -A OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
 -A OUTPUT -p udp -m udp --dport 547 -j DROP
+{% if iptables_disable_local_output | bool %}
+{% for range in iptables_disable_local_excluded_ipv6_ranges %}
+-A OUTPUT -d {{ range }} -m state --state NEW -j ACCEPT
+{% endfor %}
+-A OUTPUT -d fe80::/10 -m state --state NEW -j REJECT
+-A OUTPUT -d fc00::/7 -m state --state NEW -j REJECT
+{% endif %}
+
 -A FORWARD -i {{ iptables_inf_ext }} -m state --state NEW -j DROP
 COMMIT

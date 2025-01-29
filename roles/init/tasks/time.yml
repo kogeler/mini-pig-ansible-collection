@@ -1,11 +1,51 @@
 ---
 
-- name: init | set localtime to "{{ init_time_zone }}"
+- name: init | time | set localtime to "{{ init_time_zone }}"
   community.general.timezone:
     hwclock: "UTC"
     name: "{{ init_time_zone }}"
 
-- name: init | set /etc/timezone to "{{ init_time_zone }}"
+- name: init | time | set /etc/timezone to "{{ init_time_zone }}"
   ansible.builtin.copy:
     dest: "/etc/timezone"
     content: "{{ init_time_zone }}\n"
+
+- name: init | time | check "{{ _init_timesyncd_conf_path }}"
+  ansible.builtin.stat:
+    path: "{{ _init_timesyncd_conf_path }}"
+  register: _init_time_timesyncd_conf_register
+
+- name: init | time | insert NTP in "{{ _init_timesyncd_conf_path }}"
+  lineinfile:
+    path: "{{ _init_timesyncd_conf_path }}"
+    regexp: '^NTP='
+    line: 'NTP={{ init_time_ntp_servers }}'
+    insertafter: '^\[Time\]' 
+    backup: false
+  ignore_errors: "{{ not _init_time_timesyncd_conf_register.stat.exists }}"
+  notify: restart systemd-timesyncd
+
+- name: init | time | insert FallbackNTP in "{{ _init_timesyncd_conf_path }}"
+  ansible.builtin.lineinfile:
+    path: "{{ _init_timesyncd_conf_path }}"
+    regexp: '^FallbackNTP='
+    line: 'FallbackNTP={{ init_time_fallback_ntp_servers }}'
+    insertafter: '^\[Time\]' 
+    backup: false
+  ignore_errors: "{{ not _init_time_timesyncd_conf_register.stat.exists }}"
+  notify: restart systemd-timesyncd
+
+- name: init | time | check "{{ _init_timesyncd_unit_path }}"
+  ansible.builtin.stat:
+    path: "{{ _init_timesyncd_unit_path }}"
+  register: _init_time_timesyncd_unit_register
+
+- name: init | time | flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: init | time | start systemd-timesyncd.service
+  ansible.builtin.systemd:
+    name: "systemd-timesyncd.service"
+    state: started
+    enabled: yes
+  ignore_errors: "{{ not _init_time_timesyncd_unit_register.stat.exists }}"
