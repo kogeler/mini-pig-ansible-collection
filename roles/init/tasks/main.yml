@@ -6,8 +6,19 @@
   register: _init_user_info
   tags: ['init']
 
+- name: init | apt
+  ansible.builtin.include_tasks:
+    file: apt.yml
+    apply:
+      tags: ['init', 'init-apt']
+  tags: ['init', 'init-apt']
+
 - name: init | users
-  import_tasks: users.yml
+  ansible.builtin.include_tasks:
+    file: users.yml
+    apply:
+      tags: ['init', 'init-users']
+  tags: ['init', 'init-users']
 
 - name: init | time
   ansible.builtin.include_tasks:
@@ -21,27 +32,41 @@
     file: kernel.yml
     apply:
       tags: ['init', 'init-kernel']
-  when: init_cmdline_linux != ''
   tags: ['init', 'init-kernel']
 
 - name: init | hosts
-  import_tasks: hosts.yml
+  ansible.builtin.include_tasks:
+    file: hosts.yml
+    apply:
+      tags: ['init', 'init-hosts']
+  tags: ['init', 'init-hosts']
 
 - name: init | SSH
-  import_tasks: ssh.yml
-
-- name: init | apt
   ansible.builtin.include_tasks:
-    file: apt.yml
+    file: ssh.yml
     apply:
-      tags: ['init', 'init-apt']
-  tags: ['init', 'init-apt']
+      tags: ['init', 'init-ssh']
+  tags: ['init', 'init-ssh']
 
 - name: init | mount
-  import_tasks: mount.yml
+  ansible.builtin.include_tasks:
+    file: mount.yml
+    apply:
+      tags: ['init', 'init-mount']
+  when: init_block_dev != ''
+  tags: ['init', 'init-mount']
 
 - name: init | s3
-  import_tasks: s3.yml
+  ansible.builtin.include_tasks:
+    file: s3.yml
+    apply:
+      tags: ['init', 'init-s3']
+  when: init_aws_access_key_id != '' and init_aws_secret_access_key != ''
+  tags: ['init', 'init-s3']
 
 - name: init | logs
-  import_tasks: logs.yml
+  ansible.builtin.include_tasks:
+    file: logs.yml
+    apply:
+      tags: ['init', 'init-logs']
+  tags: ['init', 'init-logs']

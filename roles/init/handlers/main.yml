@@ -16,3 +16,17 @@
     name: "systemd-journald.service"
     state: restarted
     enabled: yes
+
+- name: restart sysfsutils
+  ansible.builtin.systemd:
+    name: "sysfsutils.service"
+    state: restarted
+    enabled: yes
+  ignore_errors: "{{ not _init_kernel_sysfsutils_register.stat.exists }}"
+
+- name: restart systemd-timesyncd
+  ansible.builtin.systemd:
+    name: "systemd-timesyncd.service"
+    state: restarted
+    enabled: yes
+  ignore_errors: "{{ not _init_time_timesyncd_unit_register.stat.exists }}"

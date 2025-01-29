@@ -1,8 +1,23 @@
 ---
 
-- name: kernel | set GRUB_CMDLINE_LINUX_DEFAULT
-  replace:
+- name: init | kernel | set GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.replace:
     path: "/etc/default/grub"
     regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=".*"$'
     replace: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ init_cmdline_linux }}"'
   notify: update grub
+  when: init_cmdline_linux != ''
+  
+- name: init | kernel | check /etc/init.d/sysfsutils
+  ansible.builtin.stat:
+    path: "/etc/init.d/sysfsutils"
+  register: _init_kernel_sysfsutils_register
+  
+- name: init | hosts | copy sysfsutils config
+  ansible.builtin.template:
+    src: sysfs.conf.j2
+    dest: /etc/sysfs.d/init_role.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart sysfsutils
