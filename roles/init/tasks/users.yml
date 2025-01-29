@@ -1,45 +1,41 @@
 ---
 
-- block:
+- name: init | users | enable passwordless sudo access for users from the sudo group
+  ansible.builtin.lineinfile:
+    path: '/etc/sudoers'
+    regexp: '^%sudo[\s]+'
+    line: '%sudo    ALL=(ALL)    NOPASSWD:ALL'
+    validate: 'visudo -cf %s'
 
-  - name: users | Enable passwordless sudo access for users from the sudo group
-    ansible.builtin.lineinfile:
-      path: '/etc/sudoers'
-      regexp: '^%sudo[\s]+'
-      line: '%sudo    ALL=(ALL)    NOPASSWD:ALL'
-      validate: 'visudo -cf %s'
+- name: init | users | add {{ item.name }} user
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: "{{ item.shell | default('/bin/bash') }}"
+    groups: "{{ item.groups | default([]) }}"
+    append: yes
+    password: "{{ item.password}}"
+  loop: "{{ init_users + init_users_extra }}"
 
-  - name: users | Add {{ item.name }} user
-    ansible.builtin.user:
-      name: "{{ item.name }}"
-      shell: "{{ item.shell | default('/bin/bash') }}"
-      groups: "{{ item.groups | default([]) }}"
-      append: yes
-      password: "{{ item.password}}"
-    loop: "{{ init_users + init_users_extra }}"
+- name: init | users | copy authorization keys for {{ item.name }} user
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "{{ item.ssh_keys }}"
+    exclusive: true
+  when: item.ssh_keys is defined
+  ignore_errors: "{{ ansible_check_mode }}"
+  loop: "{{ init_users + init_users_extra }}"
 
-  - name: users | Copy authorization keys for {{ item.name }} user
-    ansible.posix.authorized_key:
-      user: "{{ item.name }}"
-      key: "{{ item.ssh_keys }}"
-      exclusive: true
-    when: item.ssh_keys is defined
-    ignore_errors: "{{ ansible_check_mode }}"
-    loop: "{{ init_users + init_users_extra }}"
+- name: init | users | set root password
+  ansible.builtin.user:
+    name: "root"
+    password: "{{ init_root_password }}"
 
-  - name: users | Set root password
-    ansible.builtin.user:
-      name: "root"
-      password: "{{ init_root_password }}"
+- name: init | users | remove root ssh keys
+  ansible.builtin.file:
+    path: "/root/.ssh/authorized_keys"
+    state: absent
 
-  - name: users | Remove root ssh keys
-    ansible.builtin.file:
-      path: "/root/.ssh/authorized_keys"
-      state: absent
-
-  - name: users | remove cloud-init sudoers config
-    ansible.builtin.file:
-      path: "/etc/sudoers.d/90-cloud-init-users"
-      state: absent
-
-  tags: ['init', 'init-users']
+- name: init | users | remove cloud-init sudoers config
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/90-cloud-init-users"
+    state: absent

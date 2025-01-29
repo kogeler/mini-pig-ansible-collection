@@ -1,14 +1,10 @@
 ---
 
-- block:
-
-    - name: logs | Copy config
-      ansible.builtin.template:
-        src: "debian/journald.conf.j2"
-        dest: "/etc/systemd/journald.conf"
-        owner: "root"
-        group: "root"
-        mode: 0644
-      notify: restart journald
-
-  tags: ['init', 'init-logs']
+- name: init | logs | copy journald.conf
+  ansible.builtin.template:
+    src: "debian/journald.conf.j2"
+    dest: "/etc/systemd/journald.conf"
+    owner: "root"
+    group: "root"
+    mode: 0644
+  notify: restart journald

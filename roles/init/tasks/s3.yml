@@ -1,38 +1,33 @@
 ---
 
-- block:
+- name: init | s3 | install python modules {{ packages }}
+  ansible.builtin.pip:
+    name: "{{ packages }}"
+  vars:
+    packages:
+      - "awscli"
+      - "awscli-plugin-endpoint"
 
-  - name: s3 | Install python modules {{ packages }}
-    ansible.builtin.pip:
-      name: "{{ packages }}"
-    vars:
-      packages:
-        - "awscli"
-        - "awscli-plugin-endpoint"
+- name: init | s3 | create aws directory
+  ansible.builtin.file:
+    path: "{{ _init_user_info.home }}/.aws"
+    state: directory
+    mode: 0700
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
 
-  - name: s3 | Create aws directory
-    ansible.builtin.file:
-      path: "{{ _init_user_info.home }}/.aws"
-      state: directory
-      mode: 0700
-      owner: "{{ ansible_user }}"
-      group: "{{ ansible_user }}"
+- name: init | s3 | copy credentials
+  ansible.builtin.template:
+    src: "aws/credentials.j2"
+    dest: "{{ _init_user_info.home }}/.aws/credentials"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: 0600
 
-  - name: s3 | Copy credentials
-    ansible.builtin.template:
-      src: "aws/credentials.j2"
-      dest: "{{ _init_user_info.home }}/.aws/credentials"
-      owner: "{{ ansible_user }}"
-      group: "{{ ansible_user }}"
-      mode: 0600
-
-  - name: s3 | Copy config
-    ansible.builtin.template:
-      src: "aws/config.j2"
-      dest: "{{ _init_user_info.home }}/.aws/config"
-      owner: "{{ ansible_user }}"
-      group: "{{ ansible_user }}"
-      mode: 0600
-
-  when: init_aws_access_key_id != '' and init_aws_secret_access_key != ''
-  tags: ['init', 'init-s3']
+- name: init | s3 | copy config
+  ansible.builtin.template:
+    src: "aws/config.j2"
+    dest: "{{ _init_user_info.home }}/.aws/config"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: 0600
