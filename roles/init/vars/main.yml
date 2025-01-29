@@ -1,0 +1,19 @@
+_init_packages:
+  - "apt-transport-https"
+  - "apt-file"
+  - "sudo"
+  - "bash-completion"
+  - "haveged"
+  - "python3-pip"
+  - "python3-setuptools"
+  - "gpg"
+  - "vlan"
+  - "lvm2"
+  - "btrfs-progs"
+  - "sysfsutils"
+  - "systemd-timesyncd"
+  
+_init_timesyncd_conf_path: "/etc/systemd/timesyncd.conf"
+_init_timesyncd_unit_path: /lib/systemd/system/systemd-timesyncd.service
+
+_init_apt_auto_upgrades_conf_path: "/etc/apt/apt.conf.d/20auto-upgrades"

@@ -1,11 +1,7 @@
 ---
 
 init_packages:
-  - "apt-transport-https"
-  - "apt-file"
-  - "sudo"
   - "htop"
-  - "bash-completion"
   - "iotop"
   - "net-tools"
   - "nano"
@@ -13,13 +9,10 @@ init_packages:
   - "mosh"
   - "rsync"
   - "curl"
-  - "haveged"
-  - "btrfs-progs"
   - "btrfs-compsize"
-  - "python3-pip"
-  - "python3-setuptools"
-  - "gpg"
-  - "vlan"
+  - "wget"
+  - "netcat-openbsd"
+
 init_packages_extra: []
 
 # to create password hash
@@ -45,7 +38,7 @@ init_aws_secret_access_key: ""
 init_apt_upgrade: false
 
 init_apt_xanmod_kernel_enable: false
-init_apt_xanmod_kernel: "linux-xanmod-x64v3"
+init_apt_xanmod_kernel: "linux-xanmod-lts-x64v3"
 init_apt_xanmod_kernel_apt_gpg_url: "https://dl.xanmod.org/archive.key"
 
 init_apt_google_cloud_sdk_enable: false
@@ -61,3 +54,5 @@ init_custom_hosts: []
 #    host: "server1"
 
 init_time_zone: "Etc/UTC"
+init_time_ntp_servers: "time1.google.com time2.google.com time3.google.com time4.google.com"
+init_time_fallback_ntp_servers: "time.cloudflare.com 0.amazon.pool.ntp.org 1.amazon.pool.ntp.org 2.amazon.pool.ntp.org 3.amazon.pool.ntp.org"
