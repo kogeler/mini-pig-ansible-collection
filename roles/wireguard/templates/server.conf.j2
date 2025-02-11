@@ -14,7 +14,7 @@ MTU = {{ wireguard_interface_mtu }}
 %}
 #{{ key }}
 [Peer]
-{% if value.wireguard_external_ip is defined and value.wireguard_external_ip != '' %}
+{% if value.wireguard_disable_endpoint is not defined or not value.wireguard_disable_endpoint | bool %}
 Endpoint = {{ value.wireguard_external_ip }}:{{ value.wireguard_port | default(wireguard_port) }}
 {% endif %}
 PersistentKeepalive = {{ wireguard_persistent_keep_alive }}

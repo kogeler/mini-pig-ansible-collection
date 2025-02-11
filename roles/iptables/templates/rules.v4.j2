@@ -48,6 +48,7 @@ COMMIT
 -A OUTPUT -d 10.0.0.0/8 -m state --state NEW -j REJECT
 -A OUTPUT -d 172.16.0.0/12 -m state --state NEW -j REJECT
 -A OUTPUT -d 192.168.0.0/16 -m state --state NEW -j REJECT
+-A OUTPUT -d 100.64.0.0/10 -m state --state NEW -j REJECT
 {% endif %}
 COMMIT
 *nat

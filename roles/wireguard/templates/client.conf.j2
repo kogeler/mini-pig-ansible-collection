@@ -7,7 +7,8 @@ MTU = {{ wireguard_interface_mtu }}
 {% if value.wireguard_internal_ip is defined and value.wireguard_internal_ip != '' and
    value.wireguard_external_ip is defined and value.wireguard_external_ip != '' and
    value.wireguard_public_key is defined and value.wireguard_public_key != '' and
-   value.wireguard_priv_key is defined and value.wireguard_priv_key != ''
+   value.wireguard_priv_key is defined and value.wireguard_priv_key != '' and
+   (value.wireguard_disable_endpoint is not defined or not value.wireguard_disable_endpoint | bool)
 %}
 #{{ key }}
 [Peer]
