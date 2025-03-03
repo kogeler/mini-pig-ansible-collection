@@ -1,0 +1,16 @@
+---
+
+cf_ddns_image_name: ghcr.io/kogeler/tooling/cf-ddns
+cf_ddns_image_version: latest
+
+cf_ddns_token:
+cf_ddns_zone_id:
+cf_ddns_host:
+# seconds
+cf_ddns_interval: 180
+# seconds
+cf_ddns_ttl: 120
+cf_ddns_proxied: false
+# can be `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+cf_ddns_loglevel: INFO
+cf_ddns_metrics_port: 9101
