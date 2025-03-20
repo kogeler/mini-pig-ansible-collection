@@ -1,3 +1,6 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 _scw_k8s_kosmos_agent_binary_path: "/usr/local/bin/scw-k8s-node-agent"

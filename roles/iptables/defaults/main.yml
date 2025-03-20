@@ -1,3 +1,8 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 iptables_inf_ext: "{{ ansible_default_ipv4.interface }}"
 
 iptables_ports:

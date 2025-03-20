@@ -1,6 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 _systemd_health_controller_name: "systemd-health-controller"
 _systemd_health_controller_file: "{{ systemd_health_controller_base_path }}/exporter.py"
 _systemd_health_controller_venv: "{{ systemd_health_controller_base_path }}/venv"
-

@@ -1,3 +1,8 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 wireguard_persistent_keep_alive: "20"
 wireguard_linux_headers: "linux-headers-amd64"
 wireguard_interface_name: "wg0"

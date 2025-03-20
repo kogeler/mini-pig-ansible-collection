@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: init | logs | copy journald.conf
   ansible.builtin.template:
     src: "debian/journald.conf.j2"

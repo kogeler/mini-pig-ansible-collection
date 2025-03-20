@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: scw_k8s_kosmos_agent | update node | run agent
   ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -loglevel 0 -no-controller -self-update"
   environment:

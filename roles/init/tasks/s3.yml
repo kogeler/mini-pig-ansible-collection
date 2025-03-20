@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: init | s3 | install python modules {{ packages }}
   ansible.builtin.pip:
     name: "{{ packages }}"

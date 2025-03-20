@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: restart telegraf
   docker_compose:
     project_src: "{{ monitoring_base_dir }}"

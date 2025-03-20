@@ -1,3 +1,8 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+-#}
+
 {% if ansible_distribution_release in [ 'bookworm'] %}
 {% set _init_apt_distributions = 'main contrib non-free non-free-firmware' %}
 {% else %}

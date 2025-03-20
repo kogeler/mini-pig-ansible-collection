@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: wireguard | machine
   ansible.builtin.include_tasks:
     file: machine.yml

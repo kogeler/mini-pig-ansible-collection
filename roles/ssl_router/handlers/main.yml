@@ -1,4 +1,8 @@
 ---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: restart ssl-router
   docker_compose:
     project_src: "{{ ssl_router_base_dir }}"

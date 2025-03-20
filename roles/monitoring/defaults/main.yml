@@ -1,3 +1,8 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 monitoring_base_dir: "/opt/monitoring"
 monitoring_data_dir: "/opt/monitoring/data"
 
