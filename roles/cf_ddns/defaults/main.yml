@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 cf_ddns_image_name: ghcr.io/kogeler/tooling/cf-ddns
 cf_ddns_image_version: latest
 

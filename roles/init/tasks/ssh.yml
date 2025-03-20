@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: init | SSH | Check scw-fetch-ssh-keys systemd unit file exists
   ansible.builtin.stat:
     path: "/lib/systemd/system/scw-fetch-ssh-keys.service"

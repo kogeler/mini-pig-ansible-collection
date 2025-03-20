@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: init | apt | check "{{ _init_apt_auto_upgrades_conf_path }}"
   ansible.builtin.stat:
     path: "{{ _init_apt_auto_upgrades_conf_path }}"

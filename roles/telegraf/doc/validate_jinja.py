@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-# filename: check_my_jinja.py
+# -*- coding: utf-8 -*-
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 import sys
 from jinja2 import Environment
 

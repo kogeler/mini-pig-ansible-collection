@@ -1,3 +1,8 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 ssl_router_base_dir: "/opt/ssl-router"
 ssl_router_image: "nginx"
 ssl_router_image_version: "stable-alpine"
@@ -9,5 +14,3 @@ ssl_router_upstream_map: {}
 #    regex: ".*abc.com"
 #    host: abc.abc
 #    port: "5443"
-
-

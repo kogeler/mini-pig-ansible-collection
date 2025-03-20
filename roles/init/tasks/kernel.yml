@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 - name: init | kernel | set GRUB_CMDLINE_LINUX_DEFAULT
   ansible.builtin.replace:
     path: "/etc/default/grub"

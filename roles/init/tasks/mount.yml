@@ -1,5 +1,7 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
 
 - name: init | mount | сreate FS
   community.general.filesystem:

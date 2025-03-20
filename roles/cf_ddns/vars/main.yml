@@ -1,4 +1,7 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 _cf_ddns_container_name: cf-ddns
 _cf_ddns_systemd_unit_name: "podman-{{ _cf_ddns_container_name }}.service"

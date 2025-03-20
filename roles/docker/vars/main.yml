@@ -1,3 +1,8 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 docker_default_versions:
   xenial: "18.06.3~ce~3-0~ubuntu"
   bionic: "5:19.03.12~3-0~ubuntu-bionic"

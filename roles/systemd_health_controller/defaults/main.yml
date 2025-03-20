@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 systemd_health_controller_base_path: "/opt/{{ _systemd_health_controller_name }}"
 
 systemd_health_controller_user: "root"
@@ -14,4 +17,3 @@ systemd_health_controller_prometheus_metric_name: "wss_alive"
 systemd_health_controller_prometheus_metric_label: "ws_alive_url"
 systemd_health_controller_prometheus_mapping: {}
 #  "kusama.service": "ws://127.0.0.1:9933"
-

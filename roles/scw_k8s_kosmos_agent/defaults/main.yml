@@ -1,5 +1,8 @@
 ---
 
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
 scw_k8s_kosmos_agent_binary_url: "https://scwcontainermulticloud.s3.fr-par.scw.cloud/node-agent_linux_amd64"
 
 scw_k8s_kosmos_agent_pool_region: ""
