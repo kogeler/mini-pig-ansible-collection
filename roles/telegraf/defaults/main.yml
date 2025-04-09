@@ -24,6 +24,7 @@ telegraf_influxdb2_url: ""
 telegraf_influxdb2_token: ""
 telegraf_prometheusremotewrite_url: ""
 telegraf_prometheusremotewrite_token: ""
+telegraf_prometheusremotewrite_timeout: "10s"
 
 telegraf_disk_smart_enable: true
 telegraf_docker_enable: false
