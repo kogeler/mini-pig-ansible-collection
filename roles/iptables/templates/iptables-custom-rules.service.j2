@@ -1,0 +1,10 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+-#}
+[Unit]
+Description=Reload custom iptables rules (balance SNAT)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/reload_iptables_custom_rules.sh

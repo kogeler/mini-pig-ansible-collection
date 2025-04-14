@@ -11,14 +11,14 @@
     register: _iptables_docker_systemd_file_stat
 
   - name: iptables | Enable ipv4 forward
-    sysctl:
+    ansible.builtin.sysctl:
       name: net.ipv4.ip_forward
       value: '1'
       sysctl_set: yes
     when: iptables_ipv4_forward_enable | bool
 
   - name: iptables | Install packages
-    apt:
+    ansible.builtin.apt:
       name: "{{ packages }}"
       update_cache: yes
     vars:
@@ -26,7 +26,7 @@
         - "iptables-persistent"
 
   - name: iptables | Copy templates
-    template:
+    ansible.builtin.template:
       src: "{{ item }}.j2"
       dest: "/etc/iptables/{{ item }}"
       mode: "600"
@@ -53,5 +53,34 @@
       noflush: false
     ignore_errors: "{{ ansible_check_mode }}"
     notify: restart docker
+
+  - name: iptables | Copy custom rules script
+    ansible.builtin.template:
+      src: reload_iptables_custom_rules.sh.j2
+      dest: /usr/local/bin/reload_iptables_custom_rules.sh
+      mode: '0755'
+    when: iptables_randomized_ext_ips | length > 0
+  
+  - name: iptables | Copy custom rules systemd service file
+    ansible.builtin.template:
+      src: iptables-custom-rules.service.j2
+      dest: /etc/systemd/system/iptables-custom-rules.service
+      mode: '0644'
+    when: iptables_randomized_ext_ips | length > 0
+  
+  - name: iptables | Copy custom rules systemd timer file
+    ansible.builtin.template:
+      src: iptables-custom-rules.timer.j2
+      dest: /etc/systemd/system/iptables-custom-rules.timer
+      mode: '0644'
+    when: iptables_randomized_ext_ips | length > 0
+  
+  - name: iptables | Enable and start the custom rules systemd timer
+    ansible.builtin.systemd:
+      name: iptables-custom-rules.timer
+      daemon_reload: true
+      enabled: yes
+      state: started
+    when: iptables_randomized_ext_ips | length > 0
 
   tags: ["iptables"]

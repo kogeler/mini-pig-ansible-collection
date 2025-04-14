@@ -1,0 +1,49 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+-#}
+#!/bin/bash
+
+set -e
+
+echo "==> Removing old SNAT rules matching our IPs..."
+
+{% for ip in iptables_randomized_ext_ips %}
+{% if not loop.last %}
+while iptables -t nat -C POSTROUTING -o {{ iptables_inf_ext }} \
+    -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
+    -j SNAT --to-source {{ ip }} 2>/dev/null; do
+    
+    iptables -t nat -D POSTROUTING -o {{ iptables_inf_ext }} \
+        -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
+        -j SNAT --to-source {{ ip }}
+done
+{% else %}
+while iptables -t nat -C POSTROUTING -o {{ iptables_inf_ext }} \
+    -j SNAT --to-source {{ ip }} 2>/dev/null; do
+    
+    iptables -t nat -D POSTROUTING -o {{ iptables_inf_ext }} \
+        -j SNAT --to-source {{ ip }}
+done
+{% endif %}
+{% endfor %}
+
+echo "==> Inserting new SNAT rules..."
+
+{% for ip in iptables_randomized_ext_ips %}
+{% if not loop.last %}
+iptables -t nat \
+    {{ "-I POSTROUTING " ~ loop.index }} \
+    -o {{ iptables_inf_ext }} \
+    -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
+    -j SNAT --to-source {{ ip }}
+{% else %}
+iptables -t nat \
+    {{ "-I POSTROUTING " ~ loop.index }} \
+    -o {{ iptables_inf_ext }} \
+    -j SNAT --to-source {{ ip }}
+{% endif %}
+{% endfor %}
+
+echo "==> Done. Current POSTROUTING rules:"
+iptables -t nat -L POSTROUTING -n -v --line-numbers
