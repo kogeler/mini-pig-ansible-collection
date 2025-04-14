@@ -1,0 +1,13 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+-#}
+[Unit]
+Description=Periodic reload of custom iptables rules
+
+[Timer]
+OnCalendar=*:0/{{ iptables_randomized_ext_ips_timer }}
+Unit=iptables-custom-rules.service
+
+[Install]
+WantedBy=multi-user.target
