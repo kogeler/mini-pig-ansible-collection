@@ -11,18 +11,26 @@ echo "==> Removing old SNAT rules matching our IPs..."
 {% for ip in iptables_randomized_ext_ips %}
 {% if not loop.last %}
 while iptables -t nat -C POSTROUTING -o {{ iptables_inf_ext }} \
+    -p tcp -m multiport --dports 80,443 \
+    -m conntrack --ctstate NEW \
     -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
     -j SNAT --to-source {{ ip }} 2>/dev/null; do
     
     iptables -t nat -D POSTROUTING -o {{ iptables_inf_ext }} \
+        -p tcp -m multiport --dports 80,443 \
+        -m conntrack --ctstate NEW \
         -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
         -j SNAT --to-source {{ ip }}
 done
 {% else %}
 while iptables -t nat -C POSTROUTING -o {{ iptables_inf_ext }} \
+    -p tcp -m multiport --dports 80,443 \
+    -m conntrack --ctstate NEW \
     -j SNAT --to-source {{ ip }} 2>/dev/null; do
     
     iptables -t nat -D POSTROUTING -o {{ iptables_inf_ext }} \
+        -p tcp -m multiport --dports 80,443 \
+        -m conntrack --ctstate NEW \
         -j SNAT --to-source {{ ip }}
 done
 {% endif %}
@@ -35,12 +43,16 @@ echo "==> Inserting new SNAT rules..."
 iptables -t nat \
     {{ "-I POSTROUTING " ~ loop.index }} \
     -o {{ iptables_inf_ext }} \
+    -p tcp -m multiport --dports 80,443 \
+    -m conntrack --ctstate NEW \
     -m statistic --mode random --probability {{ 1.0 / (iptables_randomized_ext_ips | length - loop.index + 1) }} \
     -j SNAT --to-source {{ ip }}
 {% else %}
 iptables -t nat \
     {{ "-I POSTROUTING " ~ loop.index }} \
     -o {{ iptables_inf_ext }} \
+    -p tcp -m multiport --dports 80,443 \
+    -m conntrack --ctstate NEW \
     -j SNAT --to-source {{ ip }}
 {% endif %}
 {% endfor %}
