@@ -1,0 +1,7 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+_ssl_router_container_name: ssl-router
+_ssl_router_systemd_unit_name: "podman-{{ _ssl_router_container_name }}.service"

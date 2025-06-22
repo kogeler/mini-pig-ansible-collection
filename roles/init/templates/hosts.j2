@@ -8,8 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 {% if init_add_all_hosts %}
 {% for key, value in hostvars.items() | sort %}
-{% if key != inventory_hostname and value.init_int_ip is defined and value.init_int_ip != '' %}
-{{ value.init_int_ip }}   {{ key }}
+{% if key != inventory_hostname and value[init_hosts_ip_key] is defined and value[init_hosts_ip_key] != '' %}
+{{ value[init_hosts_ip_key] }}   {{ key }}
 {% endif %}
 {% endfor %}
 {% endif %}

@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 - name: restart ssl-router
-  docker_compose:
-    project_src: "{{ ssl_router_base_dir }}"
-    state: present
-    recreate: always
-  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.systemd:
+    name: "{{ _ssl_router_systemd_unit_name }}"
+    enabled: yes
+    daemon_reload: yes
+    state: restarted

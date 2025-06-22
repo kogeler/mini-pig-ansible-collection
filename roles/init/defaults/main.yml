@@ -3,6 +3,16 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+init_flow_control_apt: true
+init_flow_control_users: true
+init_flow_control_time: true
+init_flow_control_kernel: true
+init_flow_control_hosts: true
+init_flow_control_ssh: true
+init_flow_control_mount: true
+init_flow_control_s3: true
+init_flow_control_logs: true
+
 init_packages:
   - "htop"
   - "iotop"
@@ -52,6 +62,7 @@ init_hostname: "{{ inventory_hostname }}"
 # specify custom hosts to add them to /etc/hosts
 init_add_all_hosts: true
 init_block_hosts_file: true
+init_hosts_ip_key:  "init_int_ip"
 init_custom_hosts: []
 #  - ip: "1.1.1.1"
 #    host: "server1"

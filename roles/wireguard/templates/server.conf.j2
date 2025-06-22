@@ -22,7 +22,9 @@ MTU = {{ wireguard_interface_mtu }}
 {% if value.wireguard_disable_endpoint is not defined or not value.wireguard_disable_endpoint | bool %}
 Endpoint = {{ value.wireguard_external_ip }}:{{ value.wireguard_port | default(wireguard_port) }}
 {% endif %}
+{% if wireguard_persistent_keep_alive | int > 0 %}
 PersistentKeepalive = {{ wireguard_persistent_keep_alive }}
+{% endif %}
 PublicKey = {{ value.wireguard_public_key }}
 AllowedIPs = {{ value.wireguard_internal_ip }}/32
 {% endif %}
@@ -31,7 +33,6 @@ AllowedIPs = {{ value.wireguard_internal_ip }}/32
 {% for key, value in wireguard_clients.items() | sort %}
 #{{ key }}
 [Peer]
-PersistentKeepalive = {{ wireguard_persistent_keep_alive }}
 PublicKey = {{ value.public_key }}
 AllowedIPs = {{ value.internal_ip }}/32
 {% endfor %}
