@@ -3,6 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 - block:
+  
+    - name: ssl-route | install packages
+      ansible.builtin.apt:
+        name:
+          - "podman"
+          - "runc"
+          - "uidmap"
+          - "slirp4netns"
+        update_cache: yes
+        install_recommends: no
+  
     - name: ssl-route | create directory
       file:
         path: "{{ item.path }}"
