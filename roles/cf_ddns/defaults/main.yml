@@ -16,4 +16,5 @@ cf_ddns_ttl: 120
 cf_ddns_proxied: false
 # can be `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 cf_ddns_loglevel: INFO
+cf_ddns_metrics_host: 127.0.0.1
 cf_ddns_metrics_port: 9101

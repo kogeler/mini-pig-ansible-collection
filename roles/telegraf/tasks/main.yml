@@ -5,7 +5,27 @@
 
 - block:
 
-  - name: Add GPG key
+  - name: telegraf | create directory
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      state: directory
+      mode: "{{ item.mode | default('0755') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { path: "{{ telegraf_base_dir }}" }
+
+  - name: telegraf | copy files
+    ansible.builtin.copy:
+      src: "{{ item.dst }}"
+      dest: "{{ telegraf_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
+      mode: "{{ item.mode | default('600') }}"
+      owner: "{{ item.owner | default('root') }}"
+      group: "{{ item.group | default('root') }}"
+    loop:
+      - { dst: 'lvm.py', dst_path: '.', mode: '0755' }
+
+  - name: telegraf | add GPG key
     ansible.builtin.apt_key:
       id: "D8FF8E1F7DF8B07E"
       keyserver: keyserver.ubuntu.com
@@ -13,7 +33,7 @@
       state: present
     tags: ["telegraf-apt-gpg"]
 
-  - name: Remove old repository list files
+  - name: telegraf | remove old repository list files
     ansible.builtin.file:
       path: "{{ item }}"
       state: absent
@@ -21,72 +41,72 @@
       - /etc/apt/sources.list.d/influxdata.list
       - /etc/apt/sources.list.d/influx-data.list
 
-  - name: Add repository
+  - name: telegraf | add repository
     ansible.builtin.apt_repository:
       repo: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} stable main"
       update_cache: yes
       filename: "influxdata_v2"
 
-  - name: Unhold telegraf
-    dpkg_selections:
+  - name: telegraf | unhold telegraf
+    ansible.builtin.dpkg_selections:
       name: "telegraf"
       selection: install
     check_mode: no
     changed_when: false
     ignore_errors: true
 
-  - name: Install telegraf
-    apt:
+  - name: telegraf | install telegraf
+    ansible.builtin.apt:
       name: "telegraf"
       install_recommends: no
       state: latest
       update_cache: yes
 
-  - name: Hold telegraf
-    dpkg_selections:
+  - name: telegraf | hold telegraf
+    ansible.builtin.dpkg_selections:
       name: "telegraf"
       selection: hold
     check_mode: no
     changed_when: False
 
-  - name: Install smartmontools
-    apt:
+  - name: telegraf | install smartmontools
+    ansible.builtin.apt:
       name:
         - "smartmontools"
         - "nvme-cli"
     when: telegraf_disk_smart_enable | bool
 
-  - name: Install libraspberrypi-bin
-    apt:
+  - name: telegraf | install libraspberrypi-bin
+    ansible.builtin.apt:
       name:
         - "libraspberrypi-bin"
     when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: Add telegraf user to the sudo group
-    user:
+  - name: telegraf | add telegraf user to the sudo group
+    ansible.builtin.user:
       name: "telegraf"
       groups: "sudo"
       append: yes
     when: telegraf_disk_smart_enable | bool
 
-  - name: Add telegraf user to the "docker" group
-    user:
+  - name: telegraf | add telegraf user to the "docker" group
+    ansible.builtin.user:
       name: "telegraf"
       groups: "docker"
       append: yes
     notify: restart telegraf on host
     when: telegraf_docker_enable | bool
 
-  - name: Add telegraf user to the "video" group
-    user:
+  - name: telegraf | add telegraf user to the "video" group
+    ansible.builtin.user:
       name: "telegraf"
       groups: "video"
       append: yes
     notify: restart telegraf on host
     when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: Add telegraf user to sudoers.d
-    lineinfile:
+  - name: telegraf | add telegraf user to sudoers.d
+    ansible.builtin.lineinfile:
       path: /etc/sudoers.d/telegraf
       line: "{{ item }}"
       state: "{% if telegraf_disk_smart_enable | bool %}present{% else %}absent{% endif %}"
@@ -100,8 +120,8 @@
       - 'Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session'
     notify: restart telegraf on host
 
-  - name: Copy telegraf.conf config
-    template:
+  - name: telegraf | copy telegraf.conf config
+    ansible.builtin.template:
       src: "telegraf.conf.j2"
       dest: "/etc/telegraf/telegraf.conf"
       mode: "0600"
@@ -110,7 +130,7 @@
     notify: restart telegraf on host
     tags: ["telegraf-config"]
 
-  - name: Copy telegraf.service systemd unit file
+  - name: telegraf | copy telegraf.service systemd unit file
     ansible.builtin.template:
       src: "telegraf.service.j2"
       dest: "/lib/systemd/system/telegraf.service"
@@ -119,8 +139,8 @@
       mode: "0644"
     notify: restart telegraf on host
 
-  - name: Add vchiq udev rule
-    lineinfile:
+  - name: telegraf | add vchiq udev rule
+    ansible.builtin.lineinfile:
       path: "/etc/udev/rules.d/99-input.rules"
       line: 'SUBSYSTEM=="vchiq", GROUP="video", MODE="0660"'
       mode: 0644
@@ -129,10 +149,10 @@
       group: "root"
     when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: Flush handlers
+  - name: telegraf | flush handlers
     ansible.builtin.meta: flush_handlers
 
-  - name: Start telegraf service
+  - name: telegraf | start telegraf service
     ansible.builtin.systemd:
       name: "telegraf"
       state: started

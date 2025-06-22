@@ -14,6 +14,7 @@
     file: apt.yml
     apply:
       tags: ['init', 'init-apt']
+  when: init_flow_control_apt | bool
   tags: ['init', 'init-apt']
 
 - name: init | users
@@ -21,6 +22,7 @@
     file: users.yml
     apply:
       tags: ['init', 'init-users']
+  when: init_flow_control_users | bool
   tags: ['init', 'init-users']
 
 - name: init | time
@@ -28,6 +30,7 @@
     file: time.yml
     apply:
       tags: ['init', 'init-time']
+  when: init_flow_control_time | bool
   tags: ['init', 'init-time']
 
 - name: init | kernel
@@ -35,6 +38,7 @@
     file: kernel.yml
     apply:
       tags: ['init', 'init-kernel']
+  when: init_flow_control_kernel | bool
   tags: ['init', 'init-kernel']
 
 - name: init | hosts
@@ -42,6 +46,7 @@
     file: hosts.yml
     apply:
       tags: ['init', 'init-hosts']
+  when: init_flow_control_hosts | bool
   tags: ['init', 'init-hosts']
 
 - name: init | SSH
@@ -49,6 +54,7 @@
     file: ssh.yml
     apply:
       tags: ['init', 'init-ssh']
+  when: init_flow_control_ssh | bool
   tags: ['init', 'init-ssh']
 
 - name: init | mount
@@ -56,7 +62,7 @@
     file: mount.yml
     apply:
       tags: ['init', 'init-mount']
-  when: init_block_dev != ''
+  when: (init_flow_control_mount | bool) and init_block_dev != ''
   tags: ['init', 'init-mount']
 
 - name: init | s3
@@ -64,7 +70,7 @@
     file: s3.yml
     apply:
       tags: ['init', 'init-s3']
-  when: init_aws_access_key_id != '' and init_aws_secret_access_key != ''
+  when: (init_flow_control_s3 | bool) and init_aws_access_key_id != '' and init_aws_secret_access_key != ''
   tags: ['init', 'init-s3']
 
 - name: init | logs
@@ -72,4 +78,5 @@
     file: logs.yml
     apply:
       tags: ['init', 'init-logs']
+  when: init_flow_control_logs | bool
   tags: ['init', 'init-logs']

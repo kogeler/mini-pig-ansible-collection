@@ -1,51 +1,73 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
 - block:
+    - name: ssl-route | create directory
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode | default('0755') }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { path: "{{ ssl_router_base_dir }}" }
 
-  - name: ssl-route | create directory
-    file:
-      path: "{{ item.path }}"
-      state: directory
-      mode: "{{ item.mode | default('0755') }}"
-      owner: "{{ item.owner | default('root') }}"
-      group: "{{ item.group | default('root') }}"
-    loop:
-      - { path: "{{ ssl_router_base_dir }}" }
+    - name: ssl-route | copy templates
+      template:
+        src: "{{ item.dst }}.j2"
+        dest: "{{ ssl_router_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
+        mode: "{{ item.mode | default('600') }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { dst: "nginx.conf", dst_path: "." }
+      notify: restart ssl-router
 
-  - name: ssl-route | copy templates
-    template:
-      src: "{{ item.dst }}.j2"
-      dest: "{{ ssl_router_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
-      mode: "{{ item.mode | default('600') }}"
-      owner: "{{ item.owner | default('root') }}"
-      group: "{{ item.group | default('root') }}"
-    loop:
-      - { dst: 'nginx.conf', dst_path: '.' }
-    notify: restart ssl-router
+    - name: ssl_router | start the Podman container
+      become: true
+      become_user: "root"
+      containers.podman.podman_container:
+        name: "{{ _ssl_router_container_name }}"
+        image: "{{ ssl_router_image_name }}:{{ ssl_router_image_version }}"
+        state: started
+        rm: true
+        pull: "always"
+        network: "host"
+        volumes:
+          - "{{ ssl_router_base_dir }}/nginx.conf:/etc/nginx/nginx.conf:ro"
 
-  - name: ssl-route | create docker network
-    docker_network:
-      name: "{{ ssl_router_docker_network_name }}"
+    - name: ssl_router | generate systemd unit file for the container
+      ansible.builtin.command: podman generate systemd --name "{{ _ssl_router_container_name }}" --new
+      register: _ssl_router_systemd_unit_register
+      check_mode: false
+      changed_when: false
 
-  - name: ssl-route | copy docker-compose
-    template:
-      src: "docker-compose.yml.j2"
-      dest: "{{ ssl_router_base_dir }}/docker-compose.yml"
-      mode: "600"
-      owner: "root"
-      group: "root"
+    - name: ssl_router | fix the generated systemd unit file content 1
+      ansible.builtin.set_fact:
+        _ssl_router_systemd_unit_file_content: "{{ _ssl_router_systemd_unit_register.stdout | regex_replace('Restart=.+', 'Restart=always') }}"
 
-  - name: ssl-route | flush handlers before service start
-    meta: flush_handlers
+    - name: ssl_router | fix the generated systemd unit file content 2
+      ansible.builtin.set_fact:
+        _ssl_router_systemd_unit_file_content: "{{ _ssl_router_systemd_unit_file_content | regex_replace('(?m)^#.*\\d{2}:\\d{2}:\\d{2}.*\\d{4}\\s*\\n?','') }}"
 
-  - name: ssl-route | run services
-    docker_compose:
-      project_src: "{{ ssl_router_base_dir }}"
-      state: present
-      pull: yes
-    ignore_errors: "{{ ansible_check_mode }}"
+    - name: ssl_router | save the generated systemd unit file
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ _ssl_router_systemd_unit_name }}"
+        content: "{{ _ssl_router_systemd_unit_file_content }}"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: restart ssl-router
+
+    - name: ssl_router | flush handlers before service start
+      ansible.builtin.meta: flush_handlers
+
+    - name: ssl_router | enable and start the systemd unit file for the container
+      ansible.builtin.systemd:
+        name: "{{ _ssl_router_systemd_unit_name }}"
+        enabled: yes
+        state: started
+        daemon_reload: yes
 
   tags: ["ssl-router", "ssl_router"]

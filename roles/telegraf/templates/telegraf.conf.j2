@@ -468,7 +468,6 @@
   ## the near-meaningless DM-0 name.
   # name_templates = ["$ID_FS_LABEL","$DM_VG_NAME/$DM_LV_NAME"]
 
-
 # Plugin to collect various Linux kernel statistics.
 # This plugin ONLY supports Linux
 [[inputs.kernel]]
@@ -699,6 +698,7 @@
 #
 #   ## Interface to use when dialing an address
 #   # interface = "eth0"
+  fieldexclude = ["result_type"]
 {% endif %}
 
 
@@ -706,8 +706,30 @@
 [[inputs.http_response]]
   urls = [{% for url in telegraf_health_check_urls %}"{{ url }}"{% if not loop.last %},{% endif %}{% endfor %}]
   response_status_code = 200
+  fieldexclude = ["result_type"]
 {% endif %}
 
+{% if telegraf_lvm_enable %}
+# # Read metrics about LVM physical volumes, volume groups, logical volumes.
+[[inputs.lvm]]
+#   ## Use sudo to run LVM commands
+  use_sudo = true
+#
+#   ## The default location of the pvs binary can be overridden with:
+#   #pvs_binary = "/usr/sbin/pvs"
+#
+#   ## The default location of the vgs binary can be overridden with:
+#   #vgs_binary = "/usr/sbin/vgs"
+#
+#   ## The default location of the lvs binary can be overridden with:
+#   #lvs_binary = "/usr/sbin/lvs"
+
+[[inputs.exec]]
+  commands = ["sudo {{ telegraf_base_dir }}/lvm.py"]
+  timeout  = "5s"
+  data_format = "influx"
+  interval = "60s"
+{% endif %}
 
 {% if telegraf_mdstat_enable %}
 # # Get kernel statistics from /proc/mdstat

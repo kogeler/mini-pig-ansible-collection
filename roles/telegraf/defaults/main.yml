@@ -5,6 +5,8 @@
 
 #telegraf_version: "1.21.1-1"
 
+telegraf_base_dir: "/opt/telegraf"
+
 telegraf_flush_interval: 60s
 telegraf_flush_jitter: 10s
 telegraf_metric_batch_size: 3000
@@ -27,6 +29,7 @@ telegraf_prometheusremotewrite_token: ""
 telegraf_prometheusremotewrite_timeout: "10s"
 
 telegraf_disk_smart_enable: true
+telegraf_lvm_enable: false
 telegraf_docker_enable: false
 telegraf_rpi_temp_enable: false
 telegraf_rpi_gpu_temp_enable: false

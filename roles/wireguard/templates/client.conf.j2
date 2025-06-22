@@ -18,7 +18,9 @@ MTU = {{ wireguard_interface_mtu }}
 #{{ key }}
 [Peer]
 Endpoint = {{ value.wireguard_external_ip }}:{{ value.wireguard_port | default(wireguard_port) }}
-PersistentKeepalive = {{ wireguard_persistent_keep_alive }}
+{% if wireguard_client_persistent_keep_alive | int > 0 %}
+PersistentKeepalive = {{ wireguard_client_persistent_keep_alive }}
+{% endif %}
 PublicKey = {{ value.wireguard_public_key }}
 AllowedIPs = {{ value.wireguard_internal_ip }}/32{% if value.wireguard_nated_networks is defined and value.wireguard_nated_networks | length > 0 %},{{ value.wireguard_nated_networks | join(',') }}{% endif +%}
 {% endif %}
