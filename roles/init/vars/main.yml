@@ -6,7 +6,6 @@ _init_packages:
   - "apt-file"
   - "sudo"
   - "bash-completion"
-  - "haveged"
   - "python3-pip"
   - "python3-setuptools"
   - "gpg"
