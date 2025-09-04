@@ -40,11 +40,20 @@
   - name: systemd_health_controller | install Python modules
     ansible.builtin.pip:
       name:
-        - "prometheus-client==0.17.1"
-        - "apscheduler==3.10.4"
-        - "environs==9.5.0"
-        - "pystemd==0.13.2"
-        - "requests==2.31.0 "
+        - "APScheduler==3.11.0"
+        - "certifi==2025.8.3"
+        - "charset-normalizer==3.4.3"
+        - "environs==14.3.0"
+        - "idna==3.10"
+        - "lxml==6.0.1"
+        - "marshmallow==4.0.1"
+        - "prometheus_client==0.22.1"
+        - "psutil==7.0.0"
+        - "pystemd==0.13.4"
+        - "python-dotenv==1.1.1"
+        - "requests==2.32.5"
+        - "tzlocal==5.3.1"
+        - "urllib3==2.5.0"
       virtualenv: "{{ _systemd_health_controller_venv }}"
       virtualenv_command: "python3 -m venv"
     notify: restart systemd-health-controller
