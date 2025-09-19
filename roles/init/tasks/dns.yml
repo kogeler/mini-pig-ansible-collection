@@ -1,0 +1,67 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: init | dns | check if dhclient hook directory exists
+  ansible.builtin.stat:
+    path: /etc/dhcp/dhclient-enter-hooks.d
+  register: _init_dhclient_hooks_dir_register
+
+- name: init | dns | install dhclient hook to prevent DNS changes
+  ansible.builtin.copy:
+    dest: /etc/dhcp/dhclient-enter-hooks.d/nodnsupdate
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      make_resolv_conf() {
+          :
+      }
+  when: _init_dhclient_hooks_dir_register.stat.exists
+
+- name: init | dns | ensure systemd-resolved package is present
+  ansible.builtin.apt:
+    name: systemd-resolved
+    state: present
+    update_cache: true
+
+- name: init | dns | ensure drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: init | dns | install DNS-over-TLS drop-in
+  ansible.builtin.template:
+    src: dns_over_tls.conf.j2
+    dest: /etc/systemd/resolved.conf.d/dns_over_tls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart systemd-resolved
+
+- name: init | dns | point /etc/resolv.conf to systemd's stub resolver
+  ansible.builtin.file:
+    src: /run/systemd/resolve/stub-resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+
+- name: init | dns | check "{{ _init_systemd_resolved_unit_path }}"
+  ansible.builtin.stat:
+    path: "{{ _init_systemd_resolved_unit_path }}"
+  register: _init_systemd_resolved_unit_register
+
+- name: init | dns | flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: init | dns | start systemd-resolved.service
+  ansible.builtin.systemd:
+    name: systemd-resolved.service
+    state: started
+    enabled: yes
+  ignore_errors: "{{ not _init_systemd_resolved_unit_register.stat.exists }}"

@@ -16,6 +16,8 @@ _init_packages:
   - "systemd-timesyncd"
   
 _init_timesyncd_conf_path: "/etc/systemd/timesyncd.conf"
-_init_timesyncd_unit_path: /lib/systemd/system/systemd-timesyncd.service
+_init_timesyncd_unit_path: "/lib/systemd/system/systemd-timesyncd.service"
+
+_init_systemd_resolved_unit_path: "/lib/systemd/system/systemd-resolved.service"
 
 _init_apt_auto_upgrades_conf_path: "/etc/apt/apt.conf.d/20auto-upgrades"

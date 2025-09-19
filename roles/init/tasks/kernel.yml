@@ -16,7 +16,7 @@
     path: "/etc/init.d/sysfsutils"
   register: _init_kernel_sysfsutils_register
   
-- name: init | hosts | copy sysfsutils config
+- name: init | kernel | copy sysfsutils config
   ansible.builtin.template:
     src: sysfs.conf.j2
     dest: /etc/sysfs.d/init_role.conf

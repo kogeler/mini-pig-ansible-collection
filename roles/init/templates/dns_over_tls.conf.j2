@@ -1,0 +1,11 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+-#}
+
+# Managed by Ansible
+[Resolve]
+DNS={{ init_resolved_dns | join(' ') }}
+DNSSEC=no
+DNSOverTLS=yes
+Domains=~

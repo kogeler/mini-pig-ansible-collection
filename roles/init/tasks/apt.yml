@@ -120,3 +120,4 @@
     name: "{{ _init_packages + init_packages + init_packages_extra }}"
     update_cache: yes
     install_recommends: no
+  ignore_errors: "{{ ansible_check_mode }}"

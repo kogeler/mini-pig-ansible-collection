@@ -6,65 +6,32 @@
     - name: cf_ddns | install packages
       ansible.builtin.apt:
         name:
-          - "podman"
-          - "runc"
-          - "uidmap"
-          - "slirp4netns"
+          - podman
+          - runc
+          - uidmap
+          - slirp4netns
         update_cache: yes
         install_recommends: no
 
-    - name: cf_ddns | start the Podman container
-      become: true
-      become_user: "root"
-      containers.podman.podman_container:
-        name: "{{ _cf_ddns_container_name }}"
-        image: "{{ cf_ddns_image_name }}:{{ cf_ddns_image_version }}"
-        state: started
-        rm: true
-        pull: "always"
-        ports:
-          - "{{ cf_ddns_metrics_host }}:{{ cf_ddns_metrics_port }}:{{ cf_ddns_metrics_port }}"
-        env:
-          CF_DDNS_TOKEN: "{{ cf_ddns_token }}"
-          CF_DDNS_ZONE_ID: "{{ cf_ddns_zone_id }}"
-          CF_DDNS_HOST: "{{ cf_ddns_host }}"
-          CF_DDNS_INTERVAL: "{{ cf_ddns_interval }}"
-          CF_DDNS_TTL: "{{ cf_ddns_ttl }}"
-          CF_DDNS_PROXIED: "{{ cf_ddns_proxied }}"
-          CF_DDNS_LOGLEVEL: "{{ cf_ddns_loglevel }}"
-          CF_DDNS_METRICS_PORT: "{{ cf_ddns_metrics_port }}"
-
-    - name: cf_ddns | generate systemd unit file for the container
-      ansible.builtin.command: podman generate systemd --name "{{ _cf_ddns_container_name }}" --new
-      register: _cf_ddns_systemd_unit_register
-      check_mode: false
-      changed_when: false
-
-    - name: cf_ddns | fix the generated systemd unit file content 1
-      ansible.builtin.set_fact:
-        _cf_ddns_systemd_unit_file_content: "{{ _cf_ddns_systemd_unit_register.stdout | regex_replace('Restart=.+', 'Restart=always') }}"
-
-    - name: cf_ddns | fix the generated systemd unit file content 2
-      ansible.builtin.set_fact:
-        _cf_ddns_systemd_unit_file_content: "{{ _cf_ddns_systemd_unit_file_content | regex_replace('(?m)^#.*\\d{2}:\\d{2}:\\d{2}.*\\d{4}\\s*\\n?','') }}"
-
-    - name: cf_ddns | save the generated systemd unit file
-      ansible.builtin.copy:
+    - name: cf_ddns | copy systemd unit file
+      ansible.builtin.template:
+        src: .service.j2
         dest: "/etc/systemd/system/{{ _cf_ddns_systemd_unit_name }}"
-        content: "{{ _cf_ddns_systemd_unit_file_content }}"
         owner: root
         group: root
         mode: "0600"
       notify: restart cf_ddns
 
-    - name: cf_ddns | flush handlers before service start
+    # to avoid 2 restarts during the first deploy
+    - name: cf_ddns | flush handlers
       ansible.builtin.meta: flush_handlers
 
-    - name: cf_ddns | enable and start the systemd unit file for the container
+    - name: cf_ddns| start service
       ansible.builtin.systemd:
         name: "{{ _cf_ddns_systemd_unit_name }}"
-        enabled: yes
         state: started
+        enabled: yes
         daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
 
   tags: ["cf_ddns", "cf-ddns"]

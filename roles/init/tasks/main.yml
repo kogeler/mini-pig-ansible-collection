@@ -9,6 +9,14 @@
   register: _init_user_info
   tags: ['init']
 
+- name: init | dns
+  ansible.builtin.include_tasks:
+    file: dns.yml
+    apply:
+      tags: ['init', 'init-dns']
+  when: init_flow_control_dns | bool
+  tags: ['init', 'init-dns']
+
 - name: init | apt
   ansible.builtin.include_tasks:
     file: apt.yml
