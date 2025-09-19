@@ -3,6 +3,7 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+init_flow_control_dns: true
 init_flow_control_apt: true
 init_flow_control_users: true
 init_flow_control_time: true
@@ -70,3 +71,11 @@ init_custom_hosts: []
 init_time_zone: "Etc/UTC"
 init_time_ntp_servers: "time1.google.com time2.google.com time3.google.com time4.google.com"
 init_time_fallback_ntp_servers: "time.cloudflare.com 0.amazon.pool.ntp.org 1.amazon.pool.ntp.org 2.amazon.pool.ntp.org 3.amazon.pool.ntp.org"
+
+init_resolved_dns:
+  - "1.1.1.1#1dot1dot1dot1.cloudflare-dns.com"
+  - "1.0.0.1#1dot1dot1dot1.cloudflare-dns.com"
+  - "8.8.8.8#dns.google"
+  - "8.8.4.4#dns.google"
+  - "9.9.9.9#dns.quad9.net"
+  - "149.112.112.112#dns.quad9.net"

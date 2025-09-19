@@ -14,11 +14,18 @@
     cmd: "update-grub"
   changed_when: False
 
-- name: restart journald
+- name: restart systemd-journald
   ansible.builtin.systemd:
     name: "systemd-journald.service"
     state: restarted
     enabled: yes
+
+- name: restart systemd-resolved
+  ansible.builtin.systemd:
+    name: "systemd-resolved.service"
+    state: restarted
+    enabled: yes
+  ignore_errors: "{{ not _init_systemd_resolved_unit_register.stat.exists }}"
 
 - name: restart sysfsutils
   ansible.builtin.systemd:
