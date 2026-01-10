@@ -23,12 +23,20 @@
       loop:
         - { dst: "lvm.py", dst_path: ".", mode: "0755" }
 
+    # Install from direct deb URL
+    - name: telegraf | install from deb url
+      ansible.builtin.apt:
+        deb: "{{ telegraf_deb_url }}"
+      when: telegraf_deb_url | length > 0
+
+    # Install from apt repository
     - name: telegraf | ensure APT keyrings directory exists
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
         mode: "0755"
       tags: ["telegraf-apt-gpg"]
+      when: telegraf_deb_url | length == 0
 
     - name: Add InfluxData apt key
       ansible.builtin.shell: |
@@ -37,6 +45,7 @@
       args:
         creates: /etc/apt/keyrings/influxdata-archive.gpg
       tags: ["telegraf-apt-gpg"]
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | set InfluxData apt key permissions
       ansible.builtin.file:
@@ -45,6 +54,7 @@
         owner: "root"
         group: "root"
       tags: ["telegraf-apt-gpg"]
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | remove old apt files
       ansible.builtin.file:
@@ -55,12 +65,14 @@
         - /etc/apt/sources.list.d/influx-data.list
         - /etc/apt/sources.list.d/influxdata_v2.list
         - /etc/apt/trusted.gpg.d/influxdb.gpg
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | add apt repository
       ansible.builtin.apt_repository:
         repo: "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} stable main"
         update_cache: no
         filename: "influxdata_v3"
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | unhold telegraf
       ansible.builtin.dpkg_selections:
@@ -69,6 +81,7 @@
       check_mode: no
       changed_when: false
       ignore_errors: true
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | install telegraf
       ansible.builtin.apt:
@@ -76,6 +89,7 @@
         install_recommends: no
         state: latest
         update_cache: yes
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | hold telegraf
       ansible.builtin.dpkg_selections:
@@ -83,6 +97,7 @@
         selection: hold
       check_mode: no
       changed_when: False
+      when: telegraf_deb_url | length == 0
 
     - name: telegraf | install smartmontools
       ansible.builtin.apt:

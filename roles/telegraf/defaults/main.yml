@@ -1,9 +1,11 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
 #telegraf_version: "1.21.1-1"
+
+# Direct URL to .deb file. If set, skips apt repository setup and version holding.
+telegraf_deb_url: ""
 
 telegraf_base_dir: "/opt/telegraf"
 
