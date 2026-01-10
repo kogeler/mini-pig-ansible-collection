@@ -1,162 +1,177 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
 - block:
+    - name: telegraf | create directory
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode | default('0755') }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { path: "{{ telegraf_base_dir }}" }
 
-  - name: telegraf | create directory
-    ansible.builtin.file:
-      path: "{{ item.path }}"
-      state: directory
-      mode: "{{ item.mode | default('0755') }}"
-      owner: "{{ item.owner | default('root') }}"
-      group: "{{ item.group | default('root') }}"
-    loop:
-      - { path: "{{ telegraf_base_dir }}" }
+    - name: telegraf | copy files
+      ansible.builtin.copy:
+        src: "{{ item.dst }}"
+        dest: "{{ telegraf_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
+        mode: "{{ item.mode | default('600') }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { dst: "lvm.py", dst_path: ".", mode: "0755" }
 
-  - name: telegraf | copy files
-    ansible.builtin.copy:
-      src: "{{ item.dst }}"
-      dest: "{{ telegraf_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
-      mode: "{{ item.mode | default('600') }}"
-      owner: "{{ item.owner | default('root') }}"
-      group: "{{ item.group | default('root') }}"
-    loop:
-      - { dst: 'lvm.py', dst_path: '.', mode: '0755' }
+    - name: telegraf | ensure APT keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      tags: ["telegraf-apt-gpg"]
 
-  - name: telegraf | add GPG key
-    ansible.builtin.apt_key:
-      id: "D8FF8E1F7DF8B07E"
-      keyserver: keyserver.ubuntu.com
-      keyring: "/etc/apt/trusted.gpg.d/influxdb.gpg"
-      state: present
-    tags: ["telegraf-apt-gpg"]
+    - name: Add InfluxData apt key
+      ansible.builtin.shell: |
+        curl -fsSL https://repos.influxdata.com/influxdata-archive.key | \
+        gpg --dearmor -o /etc/apt/keyrings/influxdata-archive.gpg
+      args:
+        creates: /etc/apt/keyrings/influxdata-archive.gpg
+      tags: ["telegraf-apt-gpg"]
 
-  - name: telegraf | remove old repository list files
-    ansible.builtin.file:
-      path: "{{ item }}"
-      state: absent
-    loop:
-      - /etc/apt/sources.list.d/influxdata.list
-      - /etc/apt/sources.list.d/influx-data.list
+    - name: telegraf | set InfluxData apt key permissions
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/influxdata-archive.gpg
+        mode: "0644"
+        owner: "root"
+        group: "root"
+      tags: ["telegraf-apt-gpg"]
 
-  - name: telegraf | add repository
-    ansible.builtin.apt_repository:
-      repo: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdb.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} stable main"
-      update_cache: yes
-      filename: "influxdata_v2"
+    - name: telegraf | remove old apt files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/influxdata.list
+        - /etc/apt/sources.list.d/influx-data.list
+        - /etc/apt/sources.list.d/influxdata_v2.list
+        - /etc/apt/trusted.gpg.d/influxdb.gpg
 
-  - name: telegraf | unhold telegraf
-    ansible.builtin.dpkg_selections:
-      name: "telegraf"
-      selection: install
-    check_mode: no
-    changed_when: false
-    ignore_errors: true
+    - name: telegraf | add apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/{{ telegraf_distribution }} stable main"
+        update_cache: no
+        filename: "influxdata_v3"
 
-  - name: telegraf | install telegraf
-    ansible.builtin.apt:
-      name: "telegraf"
-      install_recommends: no
-      state: latest
-      update_cache: yes
+    - name: telegraf | unhold telegraf
+      ansible.builtin.dpkg_selections:
+        name: "telegraf"
+        selection: install
+      check_mode: no
+      changed_when: false
+      ignore_errors: true
 
-  - name: telegraf | hold telegraf
-    ansible.builtin.dpkg_selections:
-      name: "telegraf"
-      selection: hold
-    check_mode: no
-    changed_when: False
+    - name: telegraf | install telegraf
+      ansible.builtin.apt:
+        name: "telegraf"
+        install_recommends: no
+        state: latest
+        update_cache: yes
 
-  - name: telegraf | install smartmontools
-    ansible.builtin.apt:
-      name:
-        - "smartmontools"
-        - "nvme-cli"
-    when: telegraf_disk_smart_enable | bool
+    - name: telegraf | hold telegraf
+      ansible.builtin.dpkg_selections:
+        name: "telegraf"
+        selection: hold
+      check_mode: no
+      changed_when: False
 
-  - name: telegraf | install libraspberrypi-bin
-    ansible.builtin.apt:
-      name:
-        - "libraspberrypi-bin"
-    when: telegraf_rpi_gpu_temp_enable | bool
+    - name: telegraf | install smartmontools
+      ansible.builtin.apt:
+        name:
+          - "smartmontools"
+          - "nvme-cli"
+      when: telegraf_disk_smart_enable | bool
 
-  - name: telegraf | add telegraf user to the sudo group
-    ansible.builtin.user:
-      name: "telegraf"
-      groups: "sudo"
-      append: yes
-    when: telegraf_disk_smart_enable | bool
+    - name: telegraf | install libraspberrypi-bin
+      ansible.builtin.apt:
+        name:
+          - "libraspberrypi-bin"
+      when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: telegraf | add telegraf user to the "docker" group
-    ansible.builtin.user:
-      name: "telegraf"
-      groups: "docker"
-      append: yes
-    notify: restart telegraf on host
-    when: telegraf_docker_enable | bool
+    - name: telegraf | add telegraf user to the sudo group
+      ansible.builtin.user:
+        name: "telegraf"
+        groups: "sudo"
+        append: yes
+      when: telegraf_disk_smart_enable | bool
 
-  - name: telegraf | add telegraf user to the "video" group
-    ansible.builtin.user:
-      name: "telegraf"
-      groups: "video"
-      append: yes
-    notify: restart telegraf on host
-    when: telegraf_rpi_gpu_temp_enable | bool
+    - name: telegraf | add telegraf user to the "docker" group
+      ansible.builtin.user:
+        name: "telegraf"
+        groups: "docker"
+        append: yes
+      notify: restart telegraf on host
+      when: telegraf_docker_enable | bool
 
-  - name: telegraf | add telegraf user to sudoers.d
-    ansible.builtin.lineinfile:
-      path: /etc/sudoers.d/telegraf
-      line: "{{ item }}"
-      state: "{% if telegraf_disk_smart_enable | bool %}present{% else %}absent{% endif %}"
-      mode: 0600
-      create: yes
-      validate: 'visudo -cf %s'
-    loop:
-      - 'telegraf ALL = NOPASSWD: /usr/sbin/smartctl'
-      - 'Defaults!/usr/sbin/smartctl !logfile, !syslog, !pam_session'
-      - 'telegraf ALL = NOPASSWD: /usr/sbin/nvme'
-      - 'Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session'
-    notify: restart telegraf on host
+    - name: telegraf | add telegraf user to the "video" group
+      ansible.builtin.user:
+        name: "telegraf"
+        groups: "video"
+        append: yes
+      notify: restart telegraf on host
+      when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: telegraf | copy telegraf.conf config
-    ansible.builtin.template:
-      src: "telegraf.conf.j2"
-      dest: "/etc/telegraf/telegraf.conf"
-      mode: "0600"
-      owner: "telegraf"
-      group: "telegraf"
-    notify: restart telegraf on host
-    tags: ["telegraf-config"]
+    - name: telegraf | add telegraf user to sudoers.d
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/telegraf
+        line: "{{ item }}"
+        state: "{% if telegraf_disk_smart_enable | bool %}present{% else %}absent{% endif %}"
+        mode: 0600
+        create: yes
+        validate: "visudo -cf %s"
+      loop:
+        - "telegraf ALL = NOPASSWD: /usr/sbin/smartctl"
+        - "Defaults!/usr/sbin/smartctl !logfile, !syslog, !pam_session"
+        - "telegraf ALL = NOPASSWD: /usr/sbin/nvme"
+        - "Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session"
+      notify: restart telegraf on host
 
-  - name: telegraf | copy telegraf.service systemd unit file
-    ansible.builtin.template:
-      src: "telegraf.service.j2"
-      dest: "/lib/systemd/system/telegraf.service"
-      owner: "root"
-      group: "root"
-      mode: "0644"
-    notify: restart telegraf on host
+    - name: telegraf | copy telegraf.conf config
+      ansible.builtin.template:
+        src: "telegraf.conf.j2"
+        dest: "/etc/telegraf/telegraf.conf"
+        mode: "0600"
+        owner: "telegraf"
+        group: "telegraf"
+      notify: restart telegraf on host
+      tags: ["telegraf-config"]
 
-  - name: telegraf | add vchiq udev rule
-    ansible.builtin.lineinfile:
-      path: "/etc/udev/rules.d/99-input.rules"
-      line: 'SUBSYSTEM=="vchiq", GROUP="video", MODE="0660"'
-      mode: 0644
-      create: yes
-      owner: "root"
-      group: "root"
-    when: telegraf_rpi_gpu_temp_enable | bool
+    - name: telegraf | copy telegraf.service systemd unit file
+      ansible.builtin.template:
+        src: "telegraf.service.j2"
+        dest: "/lib/systemd/system/telegraf.service"
+        owner: "root"
+        group: "root"
+        mode: "0644"
+      notify: restart telegraf on host
 
-  - name: telegraf | flush handlers
-    ansible.builtin.meta: flush_handlers
+    - name: telegraf | add vchiq udev rule
+      ansible.builtin.lineinfile:
+        path: "/etc/udev/rules.d/99-input.rules"
+        line: 'SUBSYSTEM=="vchiq", GROUP="video", MODE="0660"'
+        mode: 0644
+        create: yes
+        owner: "root"
+        group: "root"
+      when: telegraf_rpi_gpu_temp_enable | bool
 
-  - name: telegraf | start telegraf service
-    ansible.builtin.systemd:
-      name: "telegraf"
-      state: started
-      enabled: yes
-      daemon_reload: yes
+    - name: telegraf | flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: telegraf | start telegraf service
+      ansible.builtin.systemd:
+        name: "telegraf"
+        state: started
+        enabled: yes
+        daemon_reload: yes
 
   tags: ["telegraf"]

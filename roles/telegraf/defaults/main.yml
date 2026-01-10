@@ -31,7 +31,7 @@ telegraf_prometheusremotewrite_timeout: "10s"
 telegraf_disk_smart_enable: true
 telegraf_lvm_enable: false
 telegraf_docker_enable: false
-telegraf_rpi_temp_enable: false
+telegraf_sbc_temp_enable: false
 telegraf_rpi_gpu_temp_enable: false
 telegraf_apcupsd_enable: false
 telegraf_postgresql_enable: false
