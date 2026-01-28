@@ -1,5 +1,4 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
@@ -31,12 +30,10 @@
   ansible.builtin.apt:
     name:
       - "gpg"
-      - "aptitude"
       - "dirmngr"
     update_cache: no
-    force_apt_get: yes
   check_mode: no
-  changed_when: False
+  changed_when: false
 
 - name: init | apt | add GPG key of GCP tools
   ansible.builtin.apt_key:
@@ -88,12 +85,6 @@
   register: _init_add_xanmod_repo_register
   when: init_apt_xanmod_kernel_enable | bool
 
-- name: init | apt | upgrade all packages
-  ansible.builtin.apt:
-    upgrade: full
-    update_cache: yes
-  when: init_apt_upgrade | bool
-
 - name: init | apt | add xanmod kernel package
   ansible.builtin.set_fact:
     _init_packages: "{{ _init_packages + [init_apt_xanmod_kernel] }}"
@@ -118,6 +109,62 @@
 - name: init | apt | install packages
   ansible.builtin.apt:
     name: "{{ _init_packages + init_packages + init_packages_extra }}"
-    update_cache: yes
-    install_recommends: no
+    update_cache: true
+    install_recommends: false
+    force_apt_get: true
+  register: _init_apt_install_packages_register
   ignore_errors: "{{ ansible_check_mode }}"
+
+- name: init | apt | upgrade all packages
+  ansible.builtin.apt:
+    upgrade: full
+    update_cache: false
+    autoremove: true
+    purge: true
+    force_apt_get: true
+  register: _init_apt_upgrade_register
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: init_apt_upgrade | bool
+
+- name: init | apt | check if reboot is required (reboot-required file)
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: _init_apt_reboot_required_file_register
+  when: init_apt_reboot_if_required | bool
+
+- name: init | apt | get installed kernel versions
+  ansible.builtin.find:
+    paths: /lib/modules
+    file_type: directory
+  register: _init_apt_kernel_modules_register
+  when: init_apt_reboot_if_required | bool
+
+- name: init | apt | determine if reboot is required
+  ansible.builtin.set_fact:
+    _init_apt_will_reboot: >-
+      {{
+        (
+          _init_apt_reboot_required_file_register.stat.exists or
+          (ansible_kernel != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
+        ) and (
+          (_init_apt_upgrade_register.changed | default(false)) or
+          (_init_apt_install_packages_register.changed | default(false))
+        )
+      }}
+  when: init_apt_reboot_if_required | bool
+
+- name: init | apt | reboot status
+  ansible.builtin.debug:
+    msg:
+      - "reboot-required file exists: {{ _init_apt_reboot_required_file_register.stat.exists }}"
+      - "running kernel: {{ ansible_kernel }}"
+      - "latest installed kernel: {{ _init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last }}"
+      - "packages upgraded: {{ _init_apt_upgrade_register.changed | default(false) }}"
+      - "packages installed: {{ _init_apt_install_packages_register.changed | default(false) }}"
+      - "will reboot: {{ _init_apt_will_reboot | bool }}"
+  when: init_apt_reboot_if_required | bool
+
+- name: init | apt | reboot if required
+  ansible.builtin.reboot:
+    reboot_timeout: 1200
+  when: _init_apt_will_reboot | default(false) | bool

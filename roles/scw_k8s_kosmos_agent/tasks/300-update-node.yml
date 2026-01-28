@@ -1,5 +1,4 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
@@ -15,3 +14,10 @@
   ansible.builtin.debug:
     msg: "{{ _scw_k8s_kosmos_agent_update_node_register.stdout.split('\n') }}"
   when: _scw_k8s_kosmos_agent_update_node_register.stdout is defined
+
+- name: iscw_k8s_kosmos_agent | update node | reboot node
+  ansible.builtin.reboot:
+    reboot_timeout: 1200
+  when:
+    - _scw_k8s_kosmos_agent_update_node_register is not skipped
+    - _scw_k8s_kosmos_agent_update_node_register is succeeded
