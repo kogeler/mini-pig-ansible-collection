@@ -9,11 +9,13 @@ RequiresMountsFor=%t/containers
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=always
 TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
 ExecStartPre=/bin/rm \
         -f %t/%n.ctr-id
 ExecStart=/usr/bin/podman container run \
         --cidfile=%t/%n.ctr-id \
-        --cgroups=no-conmon \
+        --cgroups=split \
         --rm \
         --sdnotify=conmon \
         --replace \
