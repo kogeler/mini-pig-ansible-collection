@@ -10,6 +10,6 @@ SPDX-License-Identifier: Apache-2.0
 {% endif %}
 
 deb https://deb.debian.org/debian {{ ansible_distribution_release }} {{ _init_apt_distributions }}
-deb https://security.debian.org/debian-security {{ ansible_distribution_release }}{% if ansible_distribution_release in ['bullseye', 'bookworm'] %}-security{% else %}/updates{% endif %} {{ _init_apt_distributions }}
+deb https://security.debian.org/debian-security {{ ansible_distribution_release }}-security {{ _init_apt_distributions }}
 deb https://deb.debian.org/debian {{ ansible_distribution_release }}-updates {{ _init_apt_distributions }}
 deb https://deb.debian.org/debian {{ ansible_distribution_release }}-backports {{ _init_apt_distributions }}

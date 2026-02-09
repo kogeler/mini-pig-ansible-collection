@@ -50,6 +50,14 @@
     keyring: "/etc/apt/trusted.gpg.d/xanmod.gpg"
   when: init_apt_xanmod_kernel_enable | bool
 
+- name: init | apt | remove unnecessary system configs in sources.list.d
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/etc/apt/sources.list.d/debian.sources"
+    - "/etc/apt/sources.list.d/non-free-firmware.list"
+
 - name: init | apt | copy base sources.list
   ansible.builtin.template:
     src: "debian/sources.list.j2"

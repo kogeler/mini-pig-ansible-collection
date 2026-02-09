@@ -59,6 +59,10 @@ init_apt_google_cloud_sdk_enable: false
 
 init_cmdline_linux: ""
 
+init_journald_system_max_use: "5G"
+init_journald_system_keep_free: "1G"
+init_journald_system_max_file_size: "512M"
+
 init_hostname: "{{ inventory_hostname }}"
 # specify custom hosts to add them to /etc/hosts
 init_add_all_hosts: true

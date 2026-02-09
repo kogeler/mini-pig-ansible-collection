@@ -1,26 +1,44 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: init | kernel | set GRUB_CMDLINE_LINUX_DEFAULT
+- name: init | kernel | check /etc/default/grub
+  ansible.builtin.stat:
+    path: "/etc/default/grub"
+  register: _init_kernel_grub_file_register
+
+- name: init | kernel | set GRUB_CMDLINE_LINUX_DEFAULT (grub file)
   ansible.builtin.replace:
     path: "/etc/default/grub"
     regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=".*"$'
     replace: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ init_cmdline_linux }}"'
   notify: update grub
-  when: init_cmdline_linux != ''
-  
+  when:
+    - init_cmdline_linux != ''
+    - _init_kernel_grub_file_register.stat.exists
+
+- name: init | kernel | set GRUB_CMDLINE_LINUX_DEFAULT (grub.d)
+  ansible.builtin.copy:
+    content: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ init_cmdline_linux }}"'
+    dest: "/etc/default/grub.d/90-init-role-cmdline.cfg"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: update grub
+  when:
+    - init_cmdline_linux != ''
+    - not _init_kernel_grub_file_register.stat.exists
+
 - name: init | kernel | check /etc/init.d/sysfsutils
   ansible.builtin.stat:
     path: "/etc/init.d/sysfsutils"
   register: _init_kernel_sysfsutils_register
-  
+
 - name: init | kernel | copy sysfsutils config
   ansible.builtin.template:
     src: sysfs.conf.j2
     dest: /etc/sysfs.d/init_role.conf
     owner: root
     group: root
-    mode: '0644'
+    mode: "0644"
   notify: restart sysfsutils
