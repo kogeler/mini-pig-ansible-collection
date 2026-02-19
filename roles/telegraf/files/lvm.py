@@ -73,7 +73,7 @@ def main() -> None:
     lvs_json = json.loads(
         run(
             "lvs -a --segments "
-            "-o vg_name,lv_name,lv_path,segtype,lv_role,lv_active,"
+            "-o vg_name,lv_name,lv_path,segtype,lv_active,"
             "lv_health_status,sync_percent,copy_percent "
             "--reportformat json"
         )
@@ -82,6 +82,7 @@ def main() -> None:
     timestamp = int(time.time() * 1e9)  # nanoseconds for Influx
     lines = []
     raid_health = {}
+    raid_active = {}
     raid_sync = {}
     cache_stats = {}
 
@@ -93,26 +94,22 @@ def main() -> None:
             name = lv["lv_name"]
             segtype = lv.get("segtype")
             path = lv.get("lv_path") or f"/dev/{vg}/{name}"
-            roles = {
-                role.strip().lower()
-                for role in (lv.get("lv_role") or "").split(",")
-                if role.strip()
-            }
             lv_active = (lv.get("lv_active") or "").strip().lower()
-
-            # Ignore internal/private or inactive LVs to avoid false alarms from helper volumes.
-            if "private" in roles or lv_active == "inactive":
-                continue
 
             # --- RAID metrics ---
             if segtype and segtype.startswith("raid"):
                 health_status = (lv.get("lv_health_status") or "").strip().lower()
                 h = HEALTH.get(health_status, 6)
                 key = (vg, name)
+                active_value = 1 if lv_active == "active" else 0
                 if key in raid_health:
                     raid_health[key] = max(raid_health[key], h)
                 else:
                     raid_health[key] = h
+                if key in raid_active:
+                    raid_active[key] = max(raid_active[key], active_value)
+                else:
+                    raid_active[key] = active_value
 
                 sync_raw = (
                     (lv.get("sync_percent") or lv.get("copy_percent") or "")
@@ -144,6 +141,9 @@ def main() -> None:
 
     for (vg, name), health in sorted(raid_health.items()):
         lines.append(f"lvm_raid_health,vg={vg},lv={name} value={health} {timestamp}")
+        lines.append(
+            f"lvm_raid_active,vg={vg},lv={name} value={raid_active[(vg, name)]} {timestamp}"
+        )
 
     for (vg, name), sync_value in sorted(raid_sync.items()):
         lines.append(
