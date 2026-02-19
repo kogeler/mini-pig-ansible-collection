@@ -22,13 +22,17 @@ run = lambda cmd: subprocess.check_output(shlex.split(cmd), text=True)
 
 # Map textual health to numeric levels for easy alerting
 HEALTH = {
-    "": 0, "ok": 0, "clean": 0,
+    "": 0,
+    "ok": 0,
+    "clean": 0,
     "partial": 1,
     "degraded": 2,
-    "resync": 3, "recover": 3,
+    "resync": 3,
+    "recover": 3,
     "mismatch": 4,
-    "suspended": 5
+    "suspended": 5,
 }
+
 
 def parse_cache_status(devpath: str):
     """
@@ -51,8 +55,8 @@ def parse_cache_status(devpath: str):
 
     # Used/total cache blocks is the token at +4 from 'cache'
     try:
-        used_total = tokens[idx + 4]                 # e.g. 819198/819200
-        dirty      = int(tokens[idx + 11])           # e.g. 6728
+        used_total = tokens[idx + 4]  # e.g. 819198/819200
+        dirty = int(tokens[idx + 11])  # e.g. 6728
     except (IndexError, ValueError) as exc:
         raise RuntimeError("unexpected dmsetup output") from exc
 
@@ -63,57 +67,99 @@ def parse_cache_status(devpath: str):
 
     return total, dirty
 
+
 def main() -> None:
     # Query LVM in JSON format, including segment info
-    lvs_json = json.loads(run(
-        "lvs -a --segments "
-        "-o vg_name,lv_name,lv_path,segtype,lv_role,"
-        "lv_health_status,sync_percent,copy_percent "
-        "--reportformat json"
-    ))
+    lvs_json = json.loads(
+        run(
+            "lvs -a --segments "
+            "-o vg_name,lv_name,lv_path,segtype,lv_role,lv_active,"
+            "lv_health_status,sync_percent,copy_percent "
+            "--reportformat json"
+        )
+    )
 
     timestamp = int(time.time() * 1e9)  # nanoseconds for Influx
     lines = []
+    raid_health = {}
+    raid_sync = {}
+    cache_stats = {}
 
     for rpt in lvs_json["report"]:
         # Support all possible array names: lv / lv_segments / seg
         segs = rpt.get("lv", []) + rpt.get("lv_segments", []) + rpt.get("seg", [])
         for lv in segs:
-            vg   = lv["vg_name"]
+            vg = lv["vg_name"]
             name = lv["lv_name"]
             segtype = lv.get("segtype")
             path = lv.get("lv_path") or f"/dev/{vg}/{name}"
+            roles = {
+                role.strip().lower()
+                for role in (lv.get("lv_role") or "").split(",")
+                if role.strip()
+            }
+            lv_active = (lv.get("lv_active") or "").strip().lower()
+
+            # Ignore internal/private or inactive LVs to avoid false alarms from helper volumes.
+            if "private" in roles or lv_active == "inactive":
+                continue
 
             # --- RAID metrics ---
             if segtype and segtype.startswith("raid"):
-                h = HEALTH.get(lv.get("lv_health_status", "").lower(), 6)
-                lines.append(f"lvm_raid_health,vg={vg},lv={name} value={h} {timestamp}")
+                health_status = (lv.get("lv_health_status") or "").strip().lower()
+                h = HEALTH.get(health_status, 6)
+                key = (vg, name)
+                if key in raid_health:
+                    raid_health[key] = max(raid_health[key], h)
+                else:
+                    raid_health[key] = h
 
-                sync = lv.get("sync_percent") or lv.get("copy_percent")
-                if sync:
-                    lines.append(
-                        f"lvm_raid_sync_percent,vg={vg},lv={name} "
-                        f"value={float(sync)} {timestamp}"
-                    )
+                sync_raw = (
+                    (lv.get("sync_percent") or lv.get("copy_percent") or "")
+                    .strip()
+                    .rstrip("%")
+                )
+                if sync_raw:
+                    try:
+                        sync_value = float(sync_raw)
+                    except ValueError:
+                        print(
+                            f"# WARN lvs sync_percent parse failed for {vg}/{name}: '{sync_raw}'",
+                            file=sys.stderr,
+                        )
+                    else:
+                        if key in raid_sync:
+                            raid_sync[key] = min(raid_sync[key], sync_value)
+                        else:
+                            raid_sync[key] = sync_value
 
             # --- dm-cache metrics ---
             if segtype == "cache" and path.startswith("/dev"):
                 try:
                     total, dirty = parse_cache_status(path)
                     ratio = 100.0 * dirty / total if total else 0.0
-                    lines += [
-                        f"lvm_cache_dirty_blocks,vg={vg},lv={name} "
-                        f"value={dirty} {timestamp}",
-                        f"lvm_cache_total_blocks,vg={vg},lv={name} "
-                        f"value={total} {timestamp}",
-                        f"lvm_cache_dirty_ratio,vg={vg},lv={name} "
-                        f"value={ratio:.2f} {timestamp}",
-                    ]
+                    cache_stats[(vg, name)] = (dirty, total, ratio)
                 except Exception as err:
                     print(f"# WARN dmsetup {path}: {err}", file=sys.stderr)
 
+    for (vg, name), health in sorted(raid_health.items()):
+        lines.append(f"lvm_raid_health,vg={vg},lv={name} value={health} {timestamp}")
+
+    for (vg, name), sync_value in sorted(raid_sync.items()):
+        lines.append(
+            f"lvm_raid_sync_percent,vg={vg},lv={name} value={sync_value} {timestamp}"
+        )
+
+    for (vg, name), (dirty, total, ratio) in sorted(cache_stats.items()):
+        lines += [
+            f"lvm_cache_dirty_blocks,vg={vg},lv={name} value={dirty} {timestamp}",
+            f"lvm_cache_total_blocks,vg={vg},lv={name} value={total} {timestamp}",
+            f"lvm_cache_dirty_ratio,vg={vg},lv={name} value={ratio:.2f} {timestamp}",
+        ]
+
     # Emit all collected metrics
     print("\n".join(lines))
+
 
 if __name__ == "__main__":
     main()
