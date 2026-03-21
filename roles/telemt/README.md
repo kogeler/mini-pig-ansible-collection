@@ -34,6 +34,15 @@ head -c 16 /dev/urandom | xxd -p
 python3 -c "import secrets; print(secrets.token_hex(16))"
 ```
 
+## Security model
+
+The role applies hardening by default — no manual `telemt_extra_args` required:
+
+- **Telemt container**: `--cap-drop=ALL`, `--cap-add=NET_BIND_SERVICE` (only when listen port < 1024), `--read-only`, `--security-opt=no-new-privileges`, tmpfs for runtime cache.
+- **Decoy (Caddy) container**: `--cap-drop=ALL` (no extra capabilities — listens on internal high port only), `--read-only`, `--security-opt=no-new-privileges`.
+- **API is disabled by default** (`telemt_api_enabled: false`). The API provides full control over proxy management — enable it only when needed and restrict access with `telemt_api_whitelist`.
+- **Pod-based networking only**. All containers share a single pod network namespace. The pod unit is the sole point for publishing ports to the host.
+
 ## Role variables
 
 ### General
@@ -48,15 +57,14 @@ python3 -c "import secrets; print(secrets.token_hex(16))"
 
 | Variable | Default | Description |
 |---|---|---|
-| `telemt_config_dir` | `/etc/telemt` | Host directory for config file |
+| `telemt_config_dir` | `/opt/telemt` | Host directory for config file |
 | `telemt_container_config_path` | `/run/telemt/config.toml` | Config path inside container |
 
 ### Network
 
 | Variable | Default | Description |
 |---|---|---|
-| `telemt_listen_port` | `443` | Main proxy listen port |
-| `telemt_network_mode` | `""` (bridge) | Podman network mode; set to `"host"` to skip port publishing |
+| `telemt_listen_port` | `443` | Main proxy listen port (published via pod) |
 
 ### Proxy modes
 
@@ -79,14 +87,10 @@ At least one mode must be enabled.
 | Variable | Default | Description |
 |---|---|---|
 | `telemt_tls_mask` | `true` | TCP-splice unrecognized connections to real web server |
-| `telemt_mask_host` | `""` | Backend host for mask relay. If empty, telemt resolves `tls_domain` via DNS |
-| `telemt_mask_port` | `443` | Backend port for mask relay |
 | `telemt_tls_emulation` | `true` | Emulate real TLS record lengths |
 | `telemt_tls_front_dir` | `tlsfront` | Cache directory for TLS emulation data |
 
-When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-spliced (raw bytes, no TLS termination) to the mask backend. The censor sees a real certificate and real content from the impersonated site.
-
-If `telemt_mask_host` is empty, telemt resolves `telemt_domain` via DNS and proxies there. **If your domain's DNS points to the proxy server itself, set `telemt_mask_host` to the real IP of the impersonated site to avoid a loop.**
+When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-spliced (raw bytes, no TLS termination) to the decoy Caddy container running in the same pod (`127.0.0.1:8443`). The censor sees a real certificate and real content served by Caddy.
 
 ### Users
 
@@ -96,13 +100,15 @@ If `telemt_mask_host` is empty, telemt resolves `telemt_domain` via DNS and prox
 
 ### API
 
+> **Warning:** The API provides full control over proxy management (add/remove users, change config). Keep it disabled unless you have a specific need.
+
 | Variable | Default | Description |
 |---|---|---|
-| `telemt_api_enabled` | `true` | Enable REST API inside the container |
+| `telemt_api_enabled` | `false` | Enable REST API inside the container |
 | `telemt_api_bind` | `127.0.0.1` | Host-side bind when API is published |
 | `telemt_api_port` | `9091` | API port |
 | `telemt_api_whitelist` | `[]` | CIDR whitelist for API access (empty = upstream default) |
-| `telemt_publish_api` | `false` | Publish API port on the host |
+| `telemt_publish_api` | `false` | Publish API port on the host (opt-in) |
 
 ### Metrics
 
@@ -120,17 +126,24 @@ If `telemt_mask_host` is empty, telemt resolves `telemt_domain` via DNS and prox
 | `telemt_tmpfs_enabled` | `true` | Mount tmpfs at `/run/telemt` for cache |
 | `telemt_selinux_relabel` | `false` | Add `:Z` SELinux relabel to volume mounts |
 
-Container runs with podman default capabilities which include `NET_BIND_SERVICE` (needed for port 443). `--read-only` and `--security-opt=no-new-privileges` are hardcoded. To add extra hardening (e.g. `--cap-drop=ALL --cap-add=NET_BIND_SERVICE`), use `telemt_extra_args`.
-
 ### Extra options
 
 | Variable | Default | Description |
 |---|---|---|
 | `telemt_extra_env` | `{}` | Additional environment variables |
 | `telemt_extra_volumes` | `[]` | Additional volume mounts |
-| `telemt_extra_args` | `[]` | Additional podman run arguments |
+| `telemt_extra_args` | `[]` | Additional podman run arguments (appended after built-in hardening flags) |
 | `telemt_rust_log` | `""` | RUST_LOG environment variable |
 | `telemt_use_middle_proxy` | `true` | Use Telegram middle proxy infrastructure |
+
+### Decoy site
+
+| Variable | Default | Description |
+|---|---|---|
+| `telemt_decoy_image` | `docker.io/library/caddy` | Caddy container image |
+| `telemt_decoy_image_tag` | `latest` | Caddy image tag |
+| `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
+| `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
 
 ## Configuration examples
 
@@ -190,23 +203,22 @@ telemt_users:
   main: "0123456789abcdef0123456789abcdef"
 ```
 
-### Extra container hardening
+### Enable API (use with caution)
 
 ```yaml
 telemt_domain: "example.org"
 telemt_users:
   main: "0123456789abcdef0123456789abcdef"
-telemt_extra_args:
-  - "--cap-drop=ALL"
-  - "--cap-add=NET_BIND_SERVICE"
+telemt_api_enabled: true
 ```
 
-### Expose API externally (use with caution)
+### Expose API externally (use with extreme caution)
 
 ```yaml
 telemt_domain: "example.org"
 telemt_users:
   main: "0123456789abcdef0123456789abcdef"
+telemt_api_enabled: true
 telemt_publish_api: true
 telemt_api_bind: "0.0.0.0"
 telemt_api_whitelist:
@@ -221,15 +233,6 @@ telemt_users:
   main: "0123456789abcdef0123456789abcdef"
 telemt_publish_metrics: true
 telemt_metrics_bind: "127.0.0.1"
-```
-
-### Host network mode
-
-```yaml
-telemt_domain: "example.org"
-telemt_network_mode: "host"
-telemt_users:
-  main: "0123456789abcdef0123456789abcdef"
 ```
 
 ## Inventory example
@@ -253,17 +256,23 @@ telemt_users:
 ## Service management
 
 ```bash
-# Status
+# Pod status
+systemctl status podman-telemt-pod.service
+
+# Telemt status
 systemctl status podman-telemt.service
+
+# Decoy status
+systemctl status podman-telemt-decoy.service
 
 # Logs
 journalctl -u podman-telemt.service -f
 
-# Restart
+# Restart (restarts the container, pod stays up)
 systemctl restart podman-telemt.service
 
-# Stop
-systemctl stop podman-telemt.service
+# Stop everything (pod + containers)
+systemctl stop podman-telemt-pod.service
 ```
 
 ## Proxy links
@@ -290,7 +299,8 @@ Send the link to Telegram users — they can open it directly to add the proxy.
 
 The role is fully idempotent:
 
-- Systemd unit and config are templated — changes trigger a restart via handler.
+- Systemd units and config are templated — changes trigger a restart via handlers.
+- Pod unit changes cascade to dependent containers (decoy and telemt).
 - `flush_handlers` prevents double restart on first deploy.
 - Repeated runs with unchanged variables produce no `changed` tasks.
 - The container is not recreated unless the unit file or config changes.

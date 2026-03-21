@@ -3,17 +3,28 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: restart telemt
+- name: restart telemt-pod
   ansible.builtin.systemd:
-    name: "{{ _telemt_systemd_unit_name }}"
+    name: "{{ _telemt_pod_systemd_unit_name }}"
+    enabled: yes
+    daemon_reload: yes
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+  notify:
+    - restart telemt-decoy
+    - restart telemt
+
+- name: restart telemt-decoy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_decoy_systemd_unit_name }}"
     enabled: yes
     daemon_reload: yes
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: restart telemt-decoy
+- name: restart telemt
   ansible.builtin.systemd:
-    name: "{{ _telemt_decoy_systemd_unit_name }}"
+    name: "{{ _telemt_systemd_unit_name }}"
     enabled: yes
     daemon_reload: yes
     state: restarted

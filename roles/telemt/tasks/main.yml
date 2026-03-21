@@ -74,24 +74,16 @@
         group: root
         mode: "0750"
 
-    - name: telemt | render config file
-      ansible.builtin.template:
-        src: telemt.toml.j2
-        dest: "{{ telemt_config_dir }}/telemt.toml"
-        owner: root
-        group: root
-        mode: "0644"
-      notify: restart telemt
+    # -- Systemd pod unit -------------------------------------------------------
 
-    # -- Systemd unit ----------------------------------------------------------
-
-    - name: telemt | copy systemd unit file
+    - name: telemt | copy pod systemd unit file
       ansible.builtin.template:
-        src: .service.j2
-        dest: "/etc/systemd/system/{{ _telemt_systemd_unit_name }}"
+        src: pod.service.j2
+        dest: "/etc/systemd/system/{{ _telemt_pod_systemd_unit_name }}"
         owner: root
         group: root
         mode: "0600"
+      notify: restart telemt-pod
 
     # -- Decoy site (mask host stub) -------------------------------------------
 
@@ -136,16 +128,27 @@
         owner: root
         group: root
         mode: "0600"
+      notify: restart telemt-decoy
 
-    # -- Systemd pod unit -------------------------------------------------------
+    # -- Telemt config & unit ---------------------------------------------------
 
-    - name: telemt | copy pod systemd unit file
+    - name: telemt | render config file
       ansible.builtin.template:
-        src: pod.service.j2
-        dest: "/etc/systemd/system/{{ _telemt_pod_systemd_unit_name }}"
+        src: telemt.toml.j2
+        dest: "{{ telemt_config_dir }}/telemt.toml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart telemt
+
+    - name: telemt | copy systemd unit file
+      ansible.builtin.template:
+        src: .service.j2
+        dest: "/etc/systemd/system/{{ _telemt_systemd_unit_name }}"
         owner: root
         group: root
         mode: "0600"
+      notify: restart telemt
 
     # Flush before start so config-triggered restart doesn't double-fire
     - name: telemt | flush handlers
