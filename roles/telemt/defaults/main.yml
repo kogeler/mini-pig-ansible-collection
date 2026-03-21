@@ -1,0 +1,98 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# -- General ------------------------------------------------------------------
+
+telemt_enabled: true
+telemt_image: ghcr.io/telemt/telemt
+telemt_image_tag: latest
+
+# -- Paths --------------------------------------------------------------------
+
+telemt_config_dir: /opt/telemt
+# Path inside the container where config.toml is mounted
+telemt_container_config_path: /run/telemt/config.toml
+
+# -- Network ------------------------------------------------------------------
+
+telemt_listen_port: 443
+# Leave empty for default bridge mode; set to "host" if needed
+telemt_network_mode: ""
+
+# -- Container options ---------------------------------------------------------
+
+# Read-only root filesystem; telemt writes cache to tmpfs at /run/telemt
+telemt_read_only_rootfs: true
+# Mount tmpfs at /run/telemt for runtime cache (proxy-secret, tlsfront, etc.)
+telemt_tmpfs_enabled: true
+# Add :Z SELinux relabel to volume mounts
+telemt_selinux_relabel: false
+
+# -- Extra container options ---------------------------------------------------
+
+telemt_extra_env: {}
+telemt_extra_volumes: []
+# Additional podman run arguments (e.g. --cap-drop=ALL --cap-add=NET_BIND_SERVICE)
+telemt_extra_args: []
+telemt_rust_log: ""
+
+# -- Proxy modes ---------------------------------------------------------------
+# At least one mode must be enabled.
+# Default: Fake TLS only (anti-censorship deployment).
+
+telemt_modes_classic: false
+telemt_modes_secure: false
+telemt_modes_tls: true
+
+# -- General proxy config ------------------------------------------------------
+
+telemt_use_middle_proxy: true
+
+# -- Domain (required) ---------------------------------------------------------
+# Server domain name. Used in proxy links and as tls_domain in Fake TLS mode.
+
+telemt_domain: ""
+
+# -- Fake TLS / anti-censorship ------------------------------------------------
+
+telemt_tls_mask: true
+telemt_tls_emulation: true
+telemt_tls_front_dir: tlsfront
+
+# -- Users (required) ---------------------------------------------------------
+# Dict of name -> 32-hex-char secret.  At least one user must be defined.
+# Generate secrets with: openssl rand -hex 16
+
+telemt_users: {}
+
+# -- API -----------------------------------------------------------------------
+
+telemt_api_enabled: true
+# Host-side bind address when API port is published
+telemt_api_bind: "127.0.0.1"
+telemt_api_port: 9091
+telemt_api_whitelist: []
+# Set to true to publish API port on the host
+telemt_publish_api: false
+
+# -- Metrics -------------------------------------------------------------------
+
+# Host-side bind address when metrics port is published
+telemt_metrics_bind: "127.0.0.1"
+telemt_metrics_port: 9090
+# Set to true to publish metrics port on the host
+telemt_publish_metrics: false
+
+# -- Decoy site (mask host stub) ----------------------------------------------
+# Caddy container serving a stub page with auto Let's Encrypt cert.
+# Runs in the same podman pod (shared network namespace).
+# TLS-ALPN-01 challenge passes through telemt TCP-splice to Caddy on localhost.
+
+telemt_decoy_image: docker.io/library/caddy
+telemt_decoy_image_tag: latest
+# Domain for Let's Encrypt certificate. Defaults to telemt_domain if empty.
+telemt_decoy_domain: ""
+# ACME email for Let's Encrypt notifications (optional)
+telemt_decoy_acme_email: ""

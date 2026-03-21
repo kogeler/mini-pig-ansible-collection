@@ -1,0 +1,16 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+_telemt_container_name: telemt
+_telemt_systemd_unit_name: "podman-{{ _telemt_container_name }}.service"
+_telemt_pod_name: telemt-pod
+_telemt_pod_systemd_unit_name: "podman-{{ _telemt_pod_name }}.service"
+
+_telemt_decoy_container_name: telemt-decoy
+_telemt_decoy_systemd_unit_name: "podman-{{ _telemt_decoy_container_name }}.service"
+_telemt_decoy_domain: "{{ telemt_decoy_domain if telemt_decoy_domain else telemt_domain }}"
+_telemt_decoy_data_dir: "{{ telemt_config_dir }}/caddy-data"
+_telemt_decoy_html_dir: "{{ telemt_config_dir }}/decoy-html"
+_telemt_decoy_port: 8443
