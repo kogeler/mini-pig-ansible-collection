@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 - block:
-  
+
     - name: ssl-route | install packages
       ansible.builtin.apt:
         name:
@@ -13,7 +13,7 @@
           - "slirp4netns"
         update_cache: yes
         install_recommends: no
-  
+
     - name: ssl-route | create directory
       file:
         path: "{{ item.path }}"
@@ -35,50 +35,25 @@
         - { dst: "nginx.conf", dst_path: "." }
       notify: restart ssl-router
 
-    - name: ssl_router | start the Podman container
-      become: true
-      become_user: "root"
-      containers.podman.podman_container:
-        name: "{{ _ssl_router_container_name }}"
-        image: "{{ ssl_router_image_name }}:{{ ssl_router_image_version }}"
-        state: started
-        rm: true
-        pull: "always"
-        network: "host"
-        volumes:
-          - "{{ ssl_router_base_dir }}/nginx.conf:/etc/nginx/nginx.conf:ro"
-
-    - name: ssl_router | generate systemd unit file for the container
-      ansible.builtin.command: podman generate systemd --name "{{ _ssl_router_container_name }}" --new
-      register: _ssl_router_systemd_unit_register
-      check_mode: false
-      changed_when: false
-
-    - name: ssl_router | fix the generated systemd unit file content 1
-      ansible.builtin.set_fact:
-        _ssl_router_systemd_unit_file_content: "{{ _ssl_router_systemd_unit_register.stdout | regex_replace('Restart=.+', 'Restart=always') }}"
-
-    - name: ssl_router | fix the generated systemd unit file content 2
-      ansible.builtin.set_fact:
-        _ssl_router_systemd_unit_file_content: "{{ _ssl_router_systemd_unit_file_content | regex_replace('(?m)^#.*\\d{2}:\\d{2}:\\d{2}.*\\d{4}\\s*\\n?','') }}"
-
-    - name: ssl_router | save the generated systemd unit file
-      ansible.builtin.copy:
+    - name: ssl_router | copy systemd unit file
+      ansible.builtin.template:
+        src: .service.j2
         dest: "/etc/systemd/system/{{ _ssl_router_systemd_unit_name }}"
-        content: "{{ _ssl_router_systemd_unit_file_content }}"
         owner: root
         group: root
         mode: "0600"
       notify: restart ssl-router
 
-    - name: ssl_router | flush handlers before service start
+    # to avoid 2 restarts during the first deploy
+    - name: ssl_router | flush handlers
       ansible.builtin.meta: flush_handlers
 
-    - name: ssl_router | enable and start the systemd unit file for the container
+    - name: ssl_router | start service
       ansible.builtin.systemd:
         name: "{{ _ssl_router_systemd_unit_name }}"
-        enabled: yes
         state: started
+        enabled: yes
         daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
 
   tags: ["ssl-router", "ssl_router"]

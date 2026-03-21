@@ -1,0 +1,211 @@
+---
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- block:
+
+    # -- Preflight validation --------------------------------------------------
+
+    - name: telemt | validate at least one mode is enabled
+      ansible.builtin.assert:
+        that:
+          - telemt_modes_classic or telemt_modes_secure or telemt_modes_tls
+        fail_msg: >-
+          At least one of telemt_modes_classic, telemt_modes_secure,
+          telemt_modes_tls must be true.
+        quiet: true
+
+    - name: telemt | validate domain is set
+      ansible.builtin.assert:
+        that:
+          - telemt_domain | length > 0
+        fail_msg: >-
+          telemt_domain is required. Set it to the server's domain name.
+        quiet: true
+
+    - name: telemt | validate users are defined
+      ansible.builtin.assert:
+        that:
+          - telemt_users | length > 0
+        fail_msg: >-
+          telemt_users must contain at least one user entry.
+          Generate a secret with: openssl rand -hex 16
+        quiet: true
+
+    - name: telemt | validate listen port
+      ansible.builtin.assert:
+        that:
+          - telemt_listen_port | int > 0
+          - telemt_listen_port | int <= 65535
+        fail_msg: >-
+          telemt_listen_port must be between 1 and 65535.
+        quiet: true
+
+    - name: telemt | warn if API is exposed on non-loopback
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: telemt API is published on {{ telemt_api_bind }}:{{ telemt_api_port }}.
+          Make sure this is intentional — the API provides full proxy control.
+      when:
+        - telemt_publish_api
+        - telemt_api_bind != "127.0.0.1"
+        - telemt_api_bind != "::1"
+
+    # -- Install dependencies --------------------------------------------------
+
+    - name: telemt | install packages
+      ansible.builtin.apt:
+        name:
+          - podman
+          - catatonit
+          - runc
+          - uidmap
+          - slirp4netns
+        update_cache: yes
+        install_recommends: no
+
+    # -- Configuration ---------------------------------------------------------
+
+    - name: telemt | create config directory
+      ansible.builtin.file:
+        path: "{{ telemt_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: telemt | render config file
+      ansible.builtin.template:
+        src: telemt.toml.j2
+        dest: "{{ telemt_config_dir }}/telemt.toml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart telemt
+
+    # -- Systemd unit ----------------------------------------------------------
+
+    - name: telemt | copy systemd unit file
+      ansible.builtin.template:
+        src: .service.j2
+        dest: "/etc/systemd/system/{{ _telemt_systemd_unit_name }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    # -- Decoy site (mask host stub) -------------------------------------------
+
+    - name: telemt | create decoy data directory
+      ansible.builtin.file:
+        path: "{{ _telemt_decoy_data_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: telemt | create decoy html directory
+      ansible.builtin.file:
+        path: "{{ _telemt_decoy_html_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: telemt | copy decoy index.html
+      ansible.builtin.copy:
+        src: index.html
+        dest: "{{ _telemt_decoy_html_dir }}/index.html"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart telemt-decoy
+
+    - name: telemt | render Caddyfile
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: "{{ telemt_config_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart telemt-decoy
+
+    - name: telemt | copy decoy systemd unit file
+      ansible.builtin.template:
+        src: decoy.service.j2
+        dest: "/etc/systemd/system/{{ _telemt_decoy_systemd_unit_name }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    # -- Systemd pod unit -------------------------------------------------------
+
+    - name: telemt | copy pod systemd unit file
+      ansible.builtin.template:
+        src: pod.service.j2
+        dest: "/etc/systemd/system/{{ _telemt_pod_systemd_unit_name }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    # Flush before start so config-triggered restart doesn't double-fire
+    - name: telemt | flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: telemt | start pod service
+      ansible.builtin.systemd:
+        name: "{{ _telemt_pod_systemd_unit_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: telemt | start decoy service
+      ansible.builtin.systemd:
+        name: "{{ _telemt_decoy_systemd_unit_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: telemt | start service
+      ansible.builtin.systemd:
+        name: "{{ _telemt_systemd_unit_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    # -- Proxy links --------------------------------------------------------------
+
+    - name: telemt | display proxy link (tls)
+      ansible.builtin.debug:
+        msg: >-
+          [{{ item.key }}]
+          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret=ee{{ item.value }}{{ telemt_domain.encode('utf-8').hex() }}
+      loop: "{{ telemt_users | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: telemt_modes_tls
+
+    - name: telemt | display proxy link (secure)
+      ansible.builtin.debug:
+        msg: >-
+          [{{ item.key }}]
+          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret=dd{{ item.value }}
+      loop: "{{ telemt_users | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: telemt_modes_secure
+
+    - name: telemt | display proxy link (classic)
+      ansible.builtin.debug:
+        msg: >-
+          [{{ item.key }}]
+          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret={{ item.value }}
+      loop: "{{ telemt_users | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: telemt_modes_classic
+
+  when: telemt_enabled
+  tags: ["telemt"]
