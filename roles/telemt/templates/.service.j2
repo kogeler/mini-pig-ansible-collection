@@ -1,0 +1,63 @@
+[Unit]
+Description=Podman container-{{ _telemt_container_name }}.service
+Requires={{ _telemt_pod_systemd_unit_name }}
+Wants={{ _telemt_decoy_systemd_unit_name }}
+After=network-online.target {{ _telemt_pod_systemd_unit_name }} {{ _telemt_decoy_systemd_unit_name }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=-/usr/bin/podman pull \
+        {{ telemt_image }}:{{ telemt_image_tag }}
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _telemt_container_name }} \
+        --pull=never \
+        --read-only \
+        --security-opt=no-new-privileges \
+{% if telemt_tmpfs_enabled %}
+        --tmpfs /run/telemt:rw,size=64m \
+{% endif %}
+        --volume {{ telemt_config_dir }}/telemt.toml:{{ telemt_container_config_path }}:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --workdir /run/telemt \
+{% if telemt_network_mode == "host" %}
+        --network=host \
+{% else %}
+        --pod={{ _telemt_pod_name }} \
+{% endif %}
+{% if telemt_rust_log %}
+        --env RUST_LOG={{ telemt_rust_log }} \
+{% endif %}
+{% for key, value in telemt_extra_env.items() %}
+        --env {{ key }}={{ value }} \
+{% endfor %}
+{% for vol in telemt_extra_volumes %}
+        --volume {{ vol }} \
+{% endfor %}
+{% for arg in telemt_extra_args %}
+        {{ arg }} \
+{% endfor %}
+        {{ telemt_image }}:{{ telemt_image_tag }}
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

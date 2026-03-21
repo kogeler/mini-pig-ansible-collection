@@ -1,0 +1,25 @@
+[Unit]
+Description=Podman pod {{ _telemt_pod_name }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/podman pod rm --ignore {{ _telemt_pod_name }}
+ExecStart=/usr/bin/podman pod create \
+        --name {{ _telemt_pod_name }} \
+{% if telemt_publish_api and telemt_api_enabled %}
+        --publish {{ telemt_api_bind }}:{{ telemt_api_port }}:{{ telemt_api_port }} \
+{% endif %}
+{% if telemt_publish_metrics %}
+        --publish {{ telemt_metrics_bind }}:{{ telemt_metrics_port }}:{{ telemt_metrics_port }} \
+{% endif %}
+        --publish {{ telemt_listen_port }}:{{ telemt_listen_port }}
+ExecStop=/usr/bin/podman pod stop \
+        --ignore {{ _telemt_pod_name }}
+ExecStopPost=/usr/bin/podman pod rm \
+        --ignore {{ _telemt_pod_name }}
+
+[Install]
+WantedBy=multi-user.target

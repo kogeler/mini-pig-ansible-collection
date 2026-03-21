@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+
+{
+{% if telemt_decoy_acme_email %}
+    email {{ telemt_decoy_acme_email }}
+{% endif %}
+    https_port {{ _telemt_decoy_port }}
+}
+
+{{ _telemt_decoy_domain }} {
+    tls {
+        issuer acme {
+            disable_http_challenge
+        }
+    }
+    root * /srv
+    file_server
+}
