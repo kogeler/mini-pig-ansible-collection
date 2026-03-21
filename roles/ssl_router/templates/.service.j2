@@ -1,5 +1,5 @@
 [Unit]
-Description=Podman container-cf-ddns.service
+Description=Podman container-{{ _ssl_router_container_name }}.service
 Wants=network-online.target
 After=network-online.target
 RequiresMountsFor=%t/containers
@@ -17,24 +17,17 @@ KillMode=mixed
 ExecStartPre=/bin/rm \
         -f %t/%n.ctr-id
 ExecStartPre=-/usr/bin/podman pull \
-        {{ cf_ddns_image_name }}:{{ cf_ddns_image_version }}
+        {{ ssl_router_image_name }}:{{ ssl_router_image_version }}
 ExecStart=/usr/bin/podman container run \
         --cidfile=%t/%n.ctr-id \
         --cgroups=split \
         --sdnotify=conmon \
         --replace \
-        --name {{ _cf_ddns_container_name }} \
+        --name {{ _ssl_router_container_name }} \
         --pull=never \
-        --env CF_DDNS_TOKEN={{ cf_ddns_token }} \
-        --env CF_DDNS_ZONE_ID={{ cf_ddns_zone_id }} \
-        --env CF_DDNS_HOST={{ cf_ddns_host }} \
-        --env CF_DDNS_INTERVAL={{ cf_ddns_interval }} \
-        --env CF_DDNS_TTL={{ cf_ddns_ttl }} \
-        --env CF_DDNS_PROXIED={{ cf_ddns_proxied }} \
-        --env CF_DDNS_LOGLEVEL={{ cf_ddns_loglevel }} \
-        --env CF_DDNS_METRICS_PORT={{ cf_ddns_metrics_port }} \
-        --publish {{ cf_ddns_metrics_host }}:{{ cf_ddns_metrics_port }}:{{ cf_ddns_metrics_port }} \
-        {{ cf_ddns_image_name }}:{{ cf_ddns_image_version }}
+        --network=host \
+        --volume {{ ssl_router_base_dir }}/nginx.conf:/etc/nginx/nginx.conf:ro \
+        {{ ssl_router_image_name }}:{{ ssl_router_image_version }}
 ExecStop=/usr/bin/podman stop \
         --ignore -t 10 \
         --cidfile=%t/%n.ctr-id

@@ -1,0 +1,45 @@
+[Unit]
+Description=Podman container-{{ _telemt_decoy_container_name }}.service
+Requires={{ _telemt_pod_systemd_unit_name }}
+After=network-online.target {{ _telemt_pod_systemd_unit_name }}
+Before={{ _telemt_systemd_unit_name }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=-/usr/bin/podman pull \
+        {{ telemt_decoy_image }}:{{ telemt_decoy_image_tag }}
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _telemt_decoy_container_name }} \
+        --pull=never \
+        --read-only \
+        --security-opt=no-new-privileges \
+        --volume {{ telemt_config_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --volume {{ _telemt_decoy_data_dir }}:/data{% if telemt_selinux_relabel %}:Z{% endif %} \
+        --volume {{ _telemt_decoy_html_dir }}:/srv:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --pod={{ _telemt_pod_name }} \
+        {{ telemt_decoy_image }}:{{ telemt_decoy_image_tag }}
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

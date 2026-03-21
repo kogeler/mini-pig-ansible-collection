@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+
+[general]
+use_middle_proxy = {{ telemt_use_middle_proxy | lower }}
+
+[general.modes]
+classic = {{ telemt_modes_classic | lower }}
+secure = {{ telemt_modes_secure | lower }}
+tls = {{ telemt_modes_tls | lower }}
+
+[server]
+port = {{ telemt_listen_port }}
+metrics_listen = "0.0.0.0:{{ telemt_metrics_port }}"
+
+{% if telemt_api_enabled %}
+[server.api]
+enabled = true
+listen = "0.0.0.0:{{ telemt_api_port }}"
+{% if telemt_api_whitelist %}
+whitelist = {{ telemt_api_whitelist | to_json }}
+{% endif %}
+
+{% endif %}
+[[server.listeners]]
+ip = "0.0.0.0"
+
+{% if telemt_modes_tls %}
+[censorship]
+tls_domain = "{{ telemt_domain }}"
+mask = {{ telemt_tls_mask | lower }}
+{% if telemt_tls_mask %}
+mask_host = "127.0.0.1"
+mask_port = {{ _telemt_decoy_port }}
+{% endif %}
+tls_emulation = {{ telemt_tls_emulation | lower }}
+tls_front_dir = "{{ telemt_tls_front_dir }}"
+
+{% endif %}
+[access.users]
+{% for name, secret in telemt_users.items() %}
+{{ name }} = "{{ secret }}"
+{% endfor %}
