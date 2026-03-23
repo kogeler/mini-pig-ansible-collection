@@ -105,7 +105,7 @@
 
     - name: telemt | copy decoy index.html
       ansible.builtin.copy:
-        src: index.html
+        src: "{{ telemt_decoy_index_html | default('index.html', true) }}"
         dest: "{{ _telemt_decoy_html_dir }}/index.html"
         owner: root
         group: root
