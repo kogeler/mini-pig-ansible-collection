@@ -15,6 +15,16 @@ events {
     multi_accept on;
 }
 
+http {
+    server {
+        listen      80 default_server;
+        listen      [::]:80 default_server;
+        server_name _;
+
+        return 301 https://$host$request_uri;
+    }
+}
+
 stream {
     map $ssl_preread_server_name $name {
 {% for key, value in ssl_router_upstream_map.items() | sort %}

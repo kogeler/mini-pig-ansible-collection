@@ -39,7 +39,7 @@ python3 -c "import secrets; print(secrets.token_hex(16))"
 The role applies hardening by default — no manual `telemt_extra_args` required:
 
 - **Telemt container**: `--cap-drop=ALL`, `--cap-add=NET_BIND_SERVICE` (only when listen port < 1024), `--read-only`, `--security-opt=no-new-privileges`, tmpfs for runtime cache.
-- **Decoy (Caddy) container**: `--cap-drop=ALL` (no extra capabilities — listens on internal high port only), `--read-only`, `--security-opt=no-new-privileges`.
+- **Decoy (Caddy) container**: `--cap-drop=ALL`, `--cap-add=NET_BIND_SERVICE` (required because the official Caddy binary has file capabilities set via `setcap`; without this, `--security-opt=no-new-privileges` blocks exec), `--read-only`, `--security-opt=no-new-privileges`.
 - **API is disabled by default** (`telemt_api_enabled: false`). The API provides full control over proxy management — enable it only when needed and restrict access with `telemt_api_whitelist`.
 - **Pod-based networking only**. All containers share a single pod network namespace. The pod unit is the sole point for publishing ports to the host.
 
@@ -144,6 +144,7 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_decoy_image_tag` | `latest` | Caddy image tag |
 | `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
 | `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
+| `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page |
 
 ## Configuration examples
 
@@ -223,6 +224,24 @@ telemt_publish_api: true
 telemt_api_bind: "0.0.0.0"
 telemt_api_whitelist:
   - "10.0.0.0/8"
+```
+
+### Custom decoy page
+
+Place your `index.html` in the playbook's `files/` directory:
+
+```
+playbook/
+├── files/
+│   └── decoy-index.html
+└── site.yml
+```
+
+```yaml
+telemt_domain: "example.org"
+telemt_users:
+  main: "0123456789abcdef0123456789abcdef"
+telemt_decoy_index_html: "{{ playbook_dir }}/files/decoy-index.html"
 ```
 
 ### Expose Prometheus metrics

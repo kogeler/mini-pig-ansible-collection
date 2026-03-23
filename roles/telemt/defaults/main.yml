@@ -94,3 +94,6 @@ telemt_decoy_image_tag: latest
 telemt_decoy_domain: ""
 # ACME email for Let's Encrypt notifications (optional)
 telemt_decoy_acme_email: ""
+# Path to custom index.html for decoy site.
+# When empty, the role uses its built-in files/index.html.
+telemt_decoy_index_html: ""
