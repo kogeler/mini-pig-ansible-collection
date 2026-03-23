@@ -29,6 +29,7 @@ ExecStart=/usr/bin/podman container run \
         --read-only \
         --security-opt=no-new-privileges \
         --cap-drop=ALL \
+        --cap-add=NET_BIND_SERVICE \
         --volume {{ telemt_config_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro{% if telemt_selinux_relabel %},Z{% endif %} \
         --volume {{ _telemt_decoy_data_dir }}:/data{% if telemt_selinux_relabel %}:Z{% endif %} \
         --volume {{ _telemt_decoy_html_dir }}:/srv:ro{% if telemt_selinux_relabel %},Z{% endif %} \
