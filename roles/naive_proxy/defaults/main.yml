@@ -1,0 +1,129 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# -- General ------------------------------------------------------------------
+
+naive_proxy_enabled: true
+
+# Force-pull fresh runtime images for long-running services near the start of
+# the role. Intended for already provisioned hosts. When enabled, only HAProxy
+# and decoy images are refreshed. ACME and molecule-only Pebble are
+# intentionally excluded.
+naive_proxy_update_runtime_images: false
+
+# -- Domain (required) --------------------------------------------------------
+# Server FQDN. Used for TLS certificate and HAProxy site address.
+
+naive_proxy_domain: ""
+
+# -- Users (required) ---------------------------------------------------------
+# Dict of name -> password.  At least one user must be defined.
+# Passwords are used for HTTP basic auth (Proxy-Authorization header).
+# Users are configured in BOTH HAProxy (userlist) and naive backend (--listen).
+
+naive_proxy_users: {}
+
+# -- Naive backend ------------------------------------------------------------
+# Official standalone naive binary from klzgrad/naiveproxy releases.
+# Releases: https://github.com/klzgrad/naiveproxy/releases
+
+naive_proxy_naive_version: "v143.0.7499.109-2"
+naive_proxy_padding: true
+# Base image for the naive backend container build.
+naive_proxy_backend_base_image: "docker.io/library/ubuntu"
+naive_proxy_backend_base_image_tag: "22.04"
+
+# -- Images -------------------------------------------------------------------
+
+naive_proxy_haproxy_image: "docker.io/library/haproxy"
+# Pin the current HAProxy LTS major instead of floating on the lts alias.
+naive_proxy_haproxy_image_tag: "3.2-alpine"
+naive_proxy_decoy_image: "docker.io/library/caddy"
+naive_proxy_decoy_image_tag: "latest"
+naive_proxy_acme_image: "docker.io/neilpang/acme.sh"
+naive_proxy_acme_image_tag: "latest"
+
+# -- ACME / TLS ---------------------------------------------------------------
+
+# Email for Let's Encrypt notifications (optional but recommended).
+naive_proxy_acme_email: ""
+# Explicit ACME CA for acme.sh. Default to Let's Encrypt so first issue does not
+# depend on ZeroSSL account registration semantics. In molecule mode this is
+# overridden by the local Pebble directory.
+naive_proxy_acme_server: "letsencrypt"
+
+# -- Paths --------------------------------------------------------------------
+
+naive_proxy_config_dir: /opt/naive-proxy
+
+# -- Network ------------------------------------------------------------------
+
+naive_proxy_listen_port: 443
+# External port visible to clients (e.g. after port forwarding).
+# Used in client configs. Defaults to listen_port.
+naive_proxy_external_port: "{{ naive_proxy_listen_port }}"
+
+# -- HAProxy tuning -----------------------------------------------------------
+# Defaults below favor client throughput on a dedicated VPN edge. Override them
+# downward on smaller hosts or when memory efficiency matters more than speed.
+
+naive_proxy_haproxy_timeout_connect: "5s"
+naive_proxy_haproxy_timeout_client: "60s"
+naive_proxy_haproxy_timeout_server: "60s"
+naive_proxy_haproxy_timeout_tunnel: "3600s"
+naive_proxy_haproxy_timeout_client_fin: "30s"
+naive_proxy_haproxy_timeout_server_fin: "30s"
+
+# Optional global connection cap. 0 keeps HAProxy defaults.
+naive_proxy_haproxy_global_maxconn: 0
+
+# HAProxy 3.2+ CPU placement policy. "performance" is the recommended starting
+# point for busy dedicated proxies where client speed matters more than keeping
+# the daemon on as few CPUs as possible. Set to "" to keep HAProxy defaults.
+naive_proxy_haproxy_cpu_policy: "performance"
+
+# SSL session cache size in blocks. HAProxy documents roughly 200 bytes per
+# block, so 40000 blocks stay inexpensive while giving more room for session
+# reuse bursts than the upstream default.
+naive_proxy_haproxy_ssl_cache_size: 40000
+
+# Optional explicit frontend H2 receive buffer. When empty, the role derives it
+# from the expected symmetric bandwidth and RTT below using the HAProxy BDP
+# guidance for H2 uploads. Lower expected_bandwidth_mbps to reduce per-client
+# memory usage on smaller servers.
+naive_proxy_haproxy_h2_frontend_rxbuf: ""
+naive_proxy_haproxy_expected_bandwidth_mbps: 1000
+naive_proxy_haproxy_expected_rtt_ms: 100
+
+# Optional Linux-only low-water mark for client/server sockets. Set this to a
+# small value such as 16384 only after benchmarks confirm it helps your host.
+naive_proxy_haproxy_notsent_lowat: 0
+
+# -- Container options --------------------------------------------------------
+
+naive_proxy_read_only_rootfs: true
+# Add :Z SELinux relabel to volume mounts
+naive_proxy_selinux_relabel: false
+
+# -- Extra options for naive backend container ---------------------------------
+
+naive_proxy_backend_extra_env: {}
+naive_proxy_backend_extra_volumes: []
+naive_proxy_backend_extra_args: []
+
+# -- Decoy site ---------------------------------------------------------------
+# Caddy serves a static decoy page for unauthenticated visitors.
+# Path to custom index.html. When empty, the role uses its built-in stub page.
+
+naive_proxy_decoy_index_html: ""
+
+# -- Client configs -----------------------------------------------------------
+
+naive_proxy_client_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+
+# -- Molecule testing mode ----------------------------------------------------
+# Deploys pebble (test ACME CA) as an additional container in the pod.
+# Sets acme_server and acme_insecure automatically. Never enable in production.
+
+naive_proxy_molecule_mode: false

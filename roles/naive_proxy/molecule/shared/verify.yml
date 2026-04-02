@@ -1,0 +1,227 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+  tasks:
+    # -- Service health checks -------------------------------------------------
+
+    - name: Wait for verify prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Read rendered HAProxy config
+      ansible.builtin.slurp:
+        src: /opt/naive-proxy/haproxy.cfg
+      register: _haproxy_cfg_raw
+
+    - name: Set HAProxy config fact
+      ansible.builtin.set_fact:
+        _haproxy_cfg: "{{ _haproxy_cfg_raw.content | b64decode }}"
+
+    - name: Assert tuned HAProxy directives are rendered
+      ansible.builtin.assert:
+        that:
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*cpu-policy\\s+\\S+\\s*$')) is not none"
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.ssl\\.cachesize\\s+\\S+\\s*$')) is not none"
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.h2\\.fe\\.rxbuf\\s+\\S+\\s*$')) is not none"
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout client-fin\\s+\\S+\\s*$')) is not none"
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout server-fin\\s+\\S+\\s*$')) is not none"
+      when: naive_proxy_haproxy_cpu_policy | default('') | length > 0
+
+    # -- Decoy site smoke test -------------------------------------------------
+
+    - name: Smoke test decoy site via HAProxy
+      ansible.builtin.uri:
+        url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: _decoy_response
+      until: _decoy_response.status == 200
+      retries: 6
+      delay: 5
+
+    - name: Print decoy response
+      ansible.builtin.debug:
+        var: _decoy_response.content
+
+    - name: Assert decoy page content
+      ansible.builtin.assert:
+        that:
+          - "'Welcome' in _decoy_response.content"
+          - "'under construction' in _decoy_response.content"
+
+    - name: Smoke test decoy site with external port in Host header
+      ansible.builtin.uri:
+        url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
+        headers:
+          Host: "{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_external_port }}"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: _decoy_external_host_response
+
+    - name: Assert request with external port in Host header is accepted
+      ansible.builtin.assert:
+        that:
+          - _decoy_external_host_response.status == 200
+          - "'Welcome' in _decoy_external_host_response.content"
+          - "'under construction' in _decoy_external_host_response.content"
+
+    # -- Certificate validation ------------------------------------------------
+
+    - name: Check cert files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _cert_files
+      loop:
+        - /opt/naive-proxy/certs/fullchain.pem
+        - /opt/naive-proxy/certs/key.pem
+
+    - name: Assert all cert files exist
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+      loop: "{{ _cert_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read certificate info
+      community.crypto.x509_certificate_info:
+        path: /opt/naive-proxy/certs/fullchain.pem
+      register: _cert_info
+
+    - name: Print cert issuer
+      ansible.builtin.debug:
+        var: _cert_info.issuer
+
+    - name: Assert cert was issued by pebble (not bootstrap self-signed)
+      ansible.builtin.assert:
+        that:
+          - "'Pebble' in _cert_info.issuer.commonName"
+        fail_msg: >-
+          Certificate issuer does not contain 'Pebble'.
+          Expected pebble-issued cert, got: {{ _cert_info.issuer }}
+
+    # -- ACME timer check ------------------------------------------------------
+
+    - name: Check acme-renew timer status
+      ansible.builtin.systemd:
+        name: naive-acme-renew.timer
+      register: _timer_svc
+
+    - name: Assert timer is enabled
+      ansible.builtin.assert:
+        that:
+          - _timer_svc.status.UnitFileState == 'enabled'
+
+    - name: Stop acme-renew timer during forced renewal check
+      ansible.builtin.systemd:
+        name: naive-acme-renew.timer
+        state: stopped
+
+    - name: Stop acme-renew service before forced renewal check
+      ansible.builtin.systemd:
+        name: naive-acme-renew.service
+        state: stopped
+      failed_when: false
+
+    # -- Certificate renewal test ----------------------------------------------
+    # Trigger the same acme systemd unit (has --force in molecule_mode).
+    # Verify HAProxy picks up the new cert after SIGHUP.
+
+    - name: Read cert serial before renewal
+      community.crypto.x509_certificate_info:
+        path: /opt/naive-proxy/certs/fullchain.pem
+      register: _cert_before
+
+    - name: Reset failed state of acme service
+      ansible.builtin.command:
+        cmd: systemctl reset-failed naive-acme-renew.service
+      changed_when: false
+      failed_when: false
+
+    - name: Trigger certificate re-issue via acme systemd unit
+      ansible.builtin.systemd:
+        name: naive-acme-renew.service
+        state: restarted
+        daemon_reload: true
+
+    - name: Wait for HAProxy to reload after SIGHUP
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Read cert serial after renewal
+      community.crypto.x509_certificate_info:
+        path: /opt/naive-proxy/certs/fullchain.pem
+      register: _cert_after
+
+    - name: Assert certificate was renewed (serial changed)
+      ansible.builtin.assert:
+        that:
+          - _cert_before.serial_number != _cert_after.serial_number
+        fail_msg: >-
+          Certificate serial did not change after forced renewal.
+          Before: {{ _cert_before.serial_number }}, After: {{ _cert_after.serial_number }}
+
+    - name: Get certificate served by HAProxy via TLS
+      community.crypto.get_certificate:
+        host: "{{ molecule_naive_proxy_domain }}"
+        port: "{{ molecule_naive_proxy_listen_port }}"
+        server_name: "{{ molecule_naive_proxy_domain }}"
+      register: _haproxy_tls_cert
+      retries: 6
+      delay: 5
+      until: _haproxy_tls_cert is not failed
+
+    - name: Parse HAProxy TLS certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ _haproxy_tls_cert.cert }}"
+      register: _haproxy_cert_info
+
+    - name: Assert HAProxy serves the renewed certificate
+      ansible.builtin.assert:
+        that:
+          - _haproxy_cert_info.serial_number == _cert_after.serial_number
+        fail_msg: >-
+          HAProxy still serves old certificate after SIGHUP reload.
+          HAProxy serial: {{ _haproxy_cert_info.serial_number }},
+          Expected: {{ _cert_after.serial_number }}
+
+    # -- NaiveProxy VPN tunnel test --------------------------------------------
+    # Test 1: HAProxy as HTTPS forward proxy (curl -x).
+    # Test 2: naive client SOCKS5 tunnel with official naive binary.
+    # Both fetch the decoy site THROUGH the VPN tunnel without external internet.
+
+    # -- Test 1: Direct HTTPS proxy -------------------------------------------
+
+    - name: Fetch decoy site through HTTPS proxy tunnel # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: >
+          curl -sf --max-time 10
+          --proxy-insecure
+          -x https://testuser:testpass@{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}
+          {{ molecule_naive_proxy_decoy_url }}
+      changed_when: false
+      register: _vpn_proxy_decoy
+      retries: 10
+      delay: 5
+      until: _vpn_proxy_decoy.rc == 0
+
+    - name: Assert decoy page received through HTTPS proxy
+      ansible.builtin.assert:
+        that:
+          - "'Welcome' in _vpn_proxy_decoy.stdout"
+          - "'under construction' in _vpn_proxy_decoy.stdout"
+
+    # -- Test 2/3: naive client SOCKS5 tunnel + throughput benchmark ----------
+
+    - name: Run shared benchmark tasks
+      ansible.builtin.import_tasks: tasks/benchmark.yml
+
+    - name: Start acme-renew timer after verify
+      ansible.builtin.systemd:
+        name: naive-acme-renew.timer
+        state: started

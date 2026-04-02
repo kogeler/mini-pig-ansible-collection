@@ -1,0 +1,115 @@
+---
+name: Molecule
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  detect:
+    name: Detect changed roles and scenarios
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      has_jobs: ${{ steps.build-matrix.outputs.has_jobs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build matrix
+        id: build-matrix
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          echo "Comparing ${BASE}..${HEAD}"
+
+          CHANGED_FILES=$(git diff --name-only "${BASE}" "${HEAD}")
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Find changed roles that have molecule tests
+          CHANGED_ROLES=$(echo "$CHANGED_FILES" | grep '^roles/' | cut -d'/' -f2 | sort -u | while read -r role; do
+            if [ -d "roles/${role}/molecule" ]; then
+              echo "$role"
+            fi
+          done)
+
+          echo "Roles with molecule tests:"
+          echo "$CHANGED_ROLES"
+
+          # Build matrix: for each changed role, find all scenarios with ENABLE_CI
+          MATRIX="[]"
+          for role in $CHANGED_ROLES; do
+            for scenario_dir in roles/${role}/molecule/*/; do
+              scenario=$(basename "$scenario_dir")
+              if [ -f "${scenario_dir}ENABLE_CI" ]; then
+                MATRIX=$(echo "$MATRIX" | jq -c ". + [{\"role\": \"${role}\", \"scenario\": \"${scenario}\"}]")
+                echo "  ${role} / ${scenario} (ENABLE_CI found)"
+              else
+                echo "  ${role} / ${scenario} (skipped, no ENABLE_CI)"
+              fi
+            done
+          done
+
+          echo "Matrix: $MATRIX"
+          JOBS=$(echo "$MATRIX" | jq length)
+
+          if [ "$JOBS" -eq 0 ]; then
+            echo "has_jobs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_jobs=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "matrix=$(echo "$MATRIX" | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: "${{ matrix.role }} / ${{ matrix.scenario }}"
+    needs: detect
+    if: needs.detect.outputs.has_jobs == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: ansible_collections/kogeler/mini_pig
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade ansible-core ansible-lint molecule "molecule-plugins[podman]"
+
+      - name: Install collection dependencies
+        working-directory: ansible_collections/kogeler/mini_pig
+        run: |
+          python3 -c "
+          import yaml, subprocess, sys
+          with open('galaxy.yml') as f:
+              deps = yaml.safe_load(f).get('dependencies', {})
+          for name, ver in deps.items():
+              spec = f'{name}:{ver}' if ver else name
+              subprocess.check_call(['ansible-galaxy', 'collection', 'install', spec, '--force'])
+          "
+
+      - name: Run ansible-lint
+        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
+        run: ansible-lint
+
+      - name: Molecule converge
+        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
+        run: molecule converge -s "${{ matrix.scenario }}"
+
+      - name: Molecule idempotence
+        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
+        run: molecule idempotence -s "${{ matrix.scenario }}"
+
+      - name: Molecule verify
+        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
+        run: molecule verify -s "${{ matrix.scenario }}"
