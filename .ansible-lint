@@ -1,0 +1,8 @@
+---
+skip_list:
+  - name[casing]
+
+warn_list:
+  - yaml[line-length]
+  - jinja[spacing]
+  - command-instead-of-module

@@ -1,0 +1,55 @@
+{{ {
+  'log': {'level': 'info'},
+  'dns': {
+    'servers': [
+      {'type': 'https', 'tag': 'dns-remote-cloudflare',
+       'server': '1.1.1.1', 'server_port': 443,
+       'detour': 'naive-' ~ _naive_proxy_singbox_user,
+       'tls': {'enabled': true,
+               'server_name': 'cloudflare-dns.com'}},
+      {'type': 'tcp', 'tag': 'dns-bootstrap',
+       'server': '1.1.1.1', 'server_port': 53}
+    ],
+    'rules': [
+      {'domain': [naive_proxy_domain],
+       'action': 'route', 'server': 'dns-bootstrap'}
+    ],
+    'final': 'dns-remote-cloudflare',
+    'strategy': 'ipv4_only',
+    'independent_cache': true
+  },
+  'inbounds': [
+    {'type': 'tun', 'tag': 'tun-in',
+     'address': ['172.19.0.1/30'],
+     'auto_route': true, 'strict_route': true,
+     'stack': 'mixed',
+     'exclude_package': ['com.android.captiveportallogin']}
+  ],
+  'outbounds': [
+    {'type': 'naive', 'tag': 'naive-' ~ _naive_proxy_singbox_user,
+     'server': naive_proxy_domain,
+     'server_port': naive_proxy_external_port | int,
+     'username': _naive_proxy_singbox_user,
+     'password': _naive_proxy_singbox_pass,
+     'domain_resolver': {'server': 'dns-bootstrap'},
+     'tls': {'enabled': true, 'server_name': naive_proxy_domain}},
+    {'type': 'direct', 'tag': 'direct'}
+  ],
+  'route': {
+    'auto_detect_interface': true,
+    'default_domain_resolver': {'server': 'dns-bootstrap'},
+    'rules': [
+      {'action': 'sniff'},
+      {'type': 'logical', 'mode': 'or',
+       'rules': [
+         {'protocol': 'dns'},
+         {'port': [53]}
+       ],
+       'action': 'hijack-dns'},
+      {'action': 'reject', 'port': [853]},
+      {'action': 'route', 'outbound': 'direct',
+       'network': ['udp']}
+    ],
+    'final': 'naive-' ~ _naive_proxy_singbox_user
+  }
+} | to_nice_json }}

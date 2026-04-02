@@ -1,0 +1,79 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | main | preflight
+  ansible.builtin.include_tasks:
+    file: preflight.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-preflight", "naive_proxy_preflight"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-preflight", "naive_proxy_preflight"]
+
+- name: naive-proxy | main | install
+  ansible.builtin.include_tasks:
+    file: install.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-install", "naive_proxy_install"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-install", "naive_proxy_install"]
+
+- name: naive-proxy | main | utils
+  ansible.builtin.include_tasks:
+    file: utils.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-utils", "naive_proxy_utils"]
+  when:
+    - naive_proxy_enabled
+    - naive_proxy_update_runtime_images | bool
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-utils", "naive_proxy_utils"]
+
+- name: naive-proxy | main | image
+  ansible.builtin.include_tasks:
+    file: image.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-image", "naive_proxy_image"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-image", "naive_proxy_image"]
+
+- name: naive-proxy | main | config
+  ansible.builtin.include_tasks:
+    file: config.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-config", "naive_proxy_config"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-config", "naive_proxy_config"]
+
+- name: naive-proxy | main | services
+  ansible.builtin.include_tasks:
+    file: services.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-services", "naive_proxy_services"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-services", "naive_proxy_services"]
+
+- name: naive-proxy | main | acme
+  ansible.builtin.include_tasks:
+    file: acme.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-acme", "naive_proxy_acme"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-acme", "naive_proxy_acme"]
+
+- name: naive-proxy | main | clients
+  ansible.builtin.include_tasks:
+    file: clients.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-clients", "naive_proxy_clients"]
+  when: naive_proxy_enabled
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-clients", "naive_proxy_clients"]
+
+- name: naive-proxy | main | healthchecks
+  ansible.builtin.include_tasks:
+    file: healthchecks.yml
+    apply:
+      tags: ["naive-proxy", "naive_proxy", "naive-proxy-healthchecks", "naive_proxy_healthchecks"]
+  when:
+    - naive_proxy_enabled
+    - not ansible_check_mode
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-healthchecks", "naive_proxy_healthchecks"]

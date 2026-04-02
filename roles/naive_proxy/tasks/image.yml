@@ -1,0 +1,23 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | image | render Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ _naive_proxy_build_dir }}/Containerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _naive_proxy_containerfile
+
+- name: naive-proxy | image | build naive backend image
+  containers.podman.podman_image:
+    name: "{{ _naive_proxy_backend_image }}"
+    tag: "{{ _naive_proxy_backend_image_tag }}"
+    path: "{{ _naive_proxy_build_dir }}"
+    build:
+      extra_args: "--network=host --isolation=chroot"
+    state: build
+    force: "{{ _naive_proxy_containerfile.changed }}"
+  notify: naive-proxy | handlers | restart naive-backend

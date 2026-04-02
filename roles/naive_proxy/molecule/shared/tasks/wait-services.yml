@@ -1,0 +1,32 @@
+---
+- name: Wait for pod service to become active
+  ansible.builtin.systemd:
+    name: podman-naive-pod.service
+  register: _pod_svc
+  until: _pod_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for haproxy service to become active
+  ansible.builtin.systemd:
+    name: podman-naive-haproxy.service
+  register: _haproxy_svc
+  until: _haproxy_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for decoy service to become active
+  ansible.builtin.systemd:
+    name: podman-naive-decoy.service
+  register: _decoy_svc
+  until: _decoy_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for backend service to become active
+  ansible.builtin.systemd:
+    name: podman-naive-backend.service
+  register: _backend_svc
+  until: _backend_svc.status.ActiveState == 'active'
+  retries: 40
+  delay: 15

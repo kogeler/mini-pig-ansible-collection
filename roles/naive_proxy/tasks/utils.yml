@@ -1,0 +1,121 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Refresh only long-running runtime images. The backend image is built locally
+# by the role, while ACME and Pebble are not production runtime services.
+
+- name: naive-proxy | utils | runtime image refresh
+  tags: ["naive-proxy", "naive_proxy", "naive-proxy-utils", "naive_proxy_utils"]
+  block:
+    - name: naive-proxy | utils | check decoy unit presence
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ _naive_proxy_decoy_unit }}"
+      register: _naive_proxy_utils_decoy_unit
+
+    - name: naive-proxy | utils | inspect decoy image before refresh
+      containers.podman.podman_image_info:
+        name:
+          - "{{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }}"
+      register: _naive_proxy_utils_decoy_image_before
+
+    - name: naive-proxy | utils | pull decoy image
+      containers.podman.podman_image:
+        name: "{{ naive_proxy_decoy_image }}"
+        tag: "{{ naive_proxy_decoy_image_tag }}"
+        pull: true
+        force: true
+      changed_when: false
+
+    - name: naive-proxy | utils | inspect decoy image after refresh
+      containers.podman.podman_image_info:
+        name:
+          - "{{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }}"
+      register: _naive_proxy_utils_decoy_image_after
+
+    - name: naive-proxy | utils | evaluate decoy image refresh result
+      ansible.builtin.set_fact:
+        _naive_proxy_utils_decoy_image_updated: >-
+          {{
+            ((_naive_proxy_utils_decoy_image_before.images | default([]) | first | default({})).Id | default(''))
+            !=
+            ((_naive_proxy_utils_decoy_image_after.images | default([]) | first | default({})).Id | default(''))
+          }}
+      changed_when: false
+
+    - name: naive-proxy | utils | record decoy image refresh without restart
+      ansible.builtin.debug:
+        msg: >-
+          Refreshed {{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }},
+          but {{ _naive_proxy_decoy_unit }} is not installed yet, so no restart was queued.
+      when:
+        - _naive_proxy_utils_decoy_image_updated
+        - not _naive_proxy_utils_decoy_unit.stat.exists
+      changed_when: true
+
+    - name: naive-proxy | utils | queue decoy restart after image refresh
+      ansible.builtin.debug:
+        msg: >-
+          Refreshed {{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }};
+          queued restart for {{ _naive_proxy_decoy_unit }}.
+      when:
+        - _naive_proxy_utils_decoy_image_updated
+        - _naive_proxy_utils_decoy_unit.stat.exists
+      changed_when: true
+      notify: naive-proxy | handlers | restart naive-decoy
+
+    - name: naive-proxy | utils | check haproxy unit presence
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ _naive_proxy_haproxy_unit }}"
+      register: _naive_proxy_utils_haproxy_unit
+
+    - name: naive-proxy | utils | inspect haproxy image before refresh
+      containers.podman.podman_image_info:
+        name:
+          - "{{ naive_proxy_haproxy_image }}:{{ naive_proxy_haproxy_image_tag }}"
+      register: _naive_proxy_utils_haproxy_image_before
+
+    - name: naive-proxy | utils | pull haproxy image
+      containers.podman.podman_image:
+        name: "{{ naive_proxy_haproxy_image }}"
+        tag: "{{ naive_proxy_haproxy_image_tag }}"
+        pull: true
+        force: true
+      changed_when: false
+
+    - name: naive-proxy | utils | inspect haproxy image after refresh
+      containers.podman.podman_image_info:
+        name:
+          - "{{ naive_proxy_haproxy_image }}:{{ naive_proxy_haproxy_image_tag }}"
+      register: _naive_proxy_utils_haproxy_image_after
+
+    - name: naive-proxy | utils | evaluate haproxy image refresh result
+      ansible.builtin.set_fact:
+        _naive_proxy_utils_haproxy_image_updated: >-
+          {{
+            ((_naive_proxy_utils_haproxy_image_before.images | default([]) | first | default({})).Id | default(''))
+            !=
+            ((_naive_proxy_utils_haproxy_image_after.images | default([]) | first | default({})).Id | default(''))
+          }}
+      changed_when: false
+
+    - name: naive-proxy | utils | record haproxy image refresh without restart
+      ansible.builtin.debug:
+        msg: >-
+          Refreshed {{ naive_proxy_haproxy_image }}:{{ naive_proxy_haproxy_image_tag }},
+          but {{ _naive_proxy_haproxy_unit }} is not installed yet, so no restart was queued.
+      when:
+        - _naive_proxy_utils_haproxy_image_updated
+        - not _naive_proxy_utils_haproxy_unit.stat.exists
+      changed_when: true
+
+    - name: naive-proxy | utils | queue haproxy restart after image refresh
+      ansible.builtin.debug:
+        msg: >-
+          Refreshed {{ naive_proxy_haproxy_image }}:{{ naive_proxy_haproxy_image_tag }};
+          queued restart for {{ _naive_proxy_haproxy_unit }}.
+      when:
+        - _naive_proxy_utils_haproxy_image_updated
+        - _naive_proxy_utils_haproxy_unit.stat.exists
+      changed_when: true
+      notify: naive-proxy | handlers | restart naive-haproxy

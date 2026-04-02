@@ -1,0 +1,24 @@
+---
+- name: Install test dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - iperf3
+      - xz-utils
+      - procps
+      - proxychains4
+    update_cache: true
+    state: present
+
+- name: Download naive client
+  ansible.builtin.get_url:
+    url: "https://github.com/klzgrad/naiveproxy/releases/download/{{ naive_proxy_naive_version }}/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64.tar.xz"
+    dest: /tmp/naiveproxy.tar.xz
+    mode: "0644"
+
+- name: Extract naive client
+  ansible.builtin.unarchive:
+    src: /tmp/naiveproxy.tar.xz
+    dest: /tmp/
+    remote_src: true
+    creates: "/tmp/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64/naive"

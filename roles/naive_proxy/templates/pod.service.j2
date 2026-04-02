@@ -1,0 +1,23 @@
+[Unit]
+Description=Podman pod {{ _naive_proxy_pod_name }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/podman pod rm --ignore {{ _naive_proxy_pod_name }}
+ExecStart=/usr/bin/podman pod create \
+        --name {{ _naive_proxy_pod_name }} \
+{% if naive_proxy_molecule_mode %}
+        --publish {{ _naive_proxy_pebble_port }}:{{ _naive_proxy_pebble_port }} \
+        --publish {{ _naive_proxy_pebble_mgmt_port }}:{{ _naive_proxy_pebble_mgmt_port }} \
+{% endif %}
+        --publish {{ naive_proxy_listen_port }}:{{ naive_proxy_listen_port }}
+ExecStop=/usr/bin/podman pod stop \
+        --ignore {{ _naive_proxy_pod_name }}
+ExecStopPost=/usr/bin/podman pod rm \
+        --ignore {{ _naive_proxy_pod_name }}
+
+[Install]
+WantedBy=multi-user.target

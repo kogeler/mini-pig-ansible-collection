@@ -1,0 +1,40 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | services | flush handlers
+  ansible.builtin.meta: flush_handlers
+
+# Service start order follows the same dependency chain as the units:
+# pod -> decoy -> haproxy -> backend.
+- name: naive-proxy | services | start pod service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_pod_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | services | start decoy service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_decoy_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | services | start haproxy service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_haproxy_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | services | start backend service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_backend_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"

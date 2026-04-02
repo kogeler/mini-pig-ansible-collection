@@ -1,0 +1,41 @@
+[Unit]
+Description=ACME certificate issue/renewal for naive-proxy
+Requires={{ _naive_proxy_pod_unit }}
+Wants={{ _naive_proxy_haproxy_unit }}{{ ' ' ~ _naive_proxy_pebble_unit if naive_proxy_molecule_mode else '' }}
+After={{ _naive_proxy_pod_unit }} {{ _naive_proxy_haproxy_unit }}{{ ' ' ~ _naive_proxy_pebble_unit if naive_proxy_molecule_mode else '' }}
+
+[Service]
+Type=oneshot
+# Run acme.sh issue + reload HAProxy in a single ExecStart via shell.
+# This avoids ExecStartPost cgroup issues in nested podman environments.
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ naive_proxy_acme_image }}:{{ naive_proxy_acme_image_tag }} \
+        || /usr/bin/podman pull {{ naive_proxy_acme_image }}:{{ naive_proxy_acme_image_tag }}'
+ExecStart=/bin/sh -c '\
+        /usr/bin/podman run --rm \
+        --cgroups=split \
+        --pod={{ _naive_proxy_pod_name }} \
+        --volume {{ _naive_proxy_certs_dir }}:/certs \
+        --volume {{ _naive_proxy_acme_data_dir }}:/acme.sh \
+        {{ naive_proxy_acme_image }}:{{ naive_proxy_acme_image_tag }} \
+        --issue -d {{ naive_proxy_domain }} \
+        --alpn --tlsport {{ _naive_proxy_acme_alpn_port }} \
+{% if naive_proxy_molecule_mode %}
+        --server {{ _naive_proxy_pebble_acme_server }} \
+        --insecure \
+        --force \
+{% else %}
+        --server {{ naive_proxy_acme_server }} \
+{% endif %}
+{% if naive_proxy_acme_email %}
+        --accountemail {{ naive_proxy_acme_email }} \
+{% endif %}
+        --cert-file /certs/cert.pem \
+        --key-file /certs/key.pem \
+        --fullchain-file /certs/fullchain.pem \
+        --reloadcmd true; \
+        rc=$$?; \
+        /bin/systemctl restart {{ _naive_proxy_haproxy_unit }}; \
+        exit $$rc'
+# exit 0 = issued/renewed, exit 2 = valid cert exists (skip). Both are success.
+SuccessExitStatus=0 2
