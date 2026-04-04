@@ -1,0 +1,58 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# -- Pebble (molecule mode only) -----------------------------------------------
+
+- name: naive-proxy | acme | start pebble service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_pebble_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: naive_proxy_molecule_mode
+
+- name: naive-proxy | acme | wait for pebble to become ready
+  ansible.builtin.uri:
+    url: "https://localhost:{{ _naive_proxy_pebble_port }}/dir"
+    validate_certs: false
+  register: _naive_proxy_pebble_ready
+  until: _naive_proxy_pebble_ready.status == 200
+  retries: 15
+  delay: 3
+  when: naive_proxy_molecule_mode
+
+# -- ACME certificate issuance via systemd unit --------------------------------
+# Trigger the acme systemd service to issue cert. Same unit is used by the
+# timer for periodic renewal. Uses --issue which is idempotent:
+# exit 0 = issued, exit 2 = valid cert exists (skip).
+# The unit's ExecStartPost sends SIGHUP to HAProxy to reload the new cert.
+
+- name: naive-proxy | acme | check if real cert already issued
+  ansible.builtin.command:
+    cmd: openssl x509 -in {{ _naive_proxy_certs_dir }}/fullchain.pem -issuer -noout
+  register: _naive_proxy_cert_issuer
+  changed_when: false
+  failed_when: false
+
+- name: naive-proxy | acme | reset acme service failed state
+  ansible.builtin.command:
+    cmd: systemctl reset-failed {{ _naive_proxy_acme_renew_unit }}
+  changed_when: false
+  failed_when: false
+
+- name: naive-proxy | acme | issue certificate via acme systemd unit
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_acme_renew_unit }}"
+    state: started
+    daemon_reload: true
+  when: "'Pebble' not in _naive_proxy_cert_issuer.stdout and 'Let' not in _naive_proxy_cert_issuer.stdout"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | acme | enable acme-renew timer
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_acme_renew_timer }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"

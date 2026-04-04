@@ -1,0 +1,33 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | install | install packages
+  ansible.builtin.apt:
+    name:
+      - podman
+      - buildah
+      - catatonit
+      - runc
+      - uidmap
+      - slirp4netns
+      - nftables
+      - openssl
+      - python3-cryptography
+    update_cache: true
+    install_recommends: false
+
+- name: naive-proxy | install | create directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    - { path: "{{ naive_proxy_config_dir }}" }
+    - { path: "{{ _naive_proxy_certs_dir }}", mode: "0755" }
+    - { path: "{{ _naive_proxy_acme_data_dir }}" }
+    - { path: "{{ _naive_proxy_decoy_html_dir }}", mode: "0755" }
+    - { path: "{{ _naive_proxy_decoy_data_dir }}", mode: "0755" }
+    - { path: "{{ _naive_proxy_build_dir }}" }

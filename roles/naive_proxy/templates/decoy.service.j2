@@ -1,0 +1,52 @@
+[Unit]
+Description=Podman container-{{ _naive_proxy_decoy_name }}.service
+Requires={{ _naive_proxy_pod_unit }}
+After=network-online.target {{ _naive_proxy_pod_unit }}
+Before={{ _naive_proxy_haproxy_unit }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }} \
+        || /usr/bin/podman pull {{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }}'
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --log-driver=passthrough \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _naive_proxy_decoy_name }} \
+        --pull=never \
+{% if naive_proxy_read_only_rootfs %}
+        --read-only \
+{% endif %}
+        --security-opt=no-new-privileges \
+        --security-opt=apparmor=unconfined \
+        --cap-drop=ALL \
+        --cap-add=NET_BIND_SERVICE \
+        --volume {{ naive_proxy_config_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
+        --volume {{ _naive_proxy_decoy_data_dir }}:/data{% if naive_proxy_selinux_relabel %}:Z{% endif %} \
+        --volume {{ _naive_proxy_decoy_html_dir }}:/srv:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
+        --pod={{ _naive_proxy_pod_name }} \
+        {{ naive_proxy_decoy_image }}:{{ naive_proxy_decoy_image_tag }}
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | handlers | restart naive-pod
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_pod_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+  notify:
+    - naive-proxy | handlers | restart naive-decoy
+    - naive-proxy | handlers | restart naive-haproxy
+    - naive-proxy | handlers | restart naive-backend
+
+- name: naive-proxy | handlers | restart naive-decoy
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_decoy_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | restart naive-haproxy
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_haproxy_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | restart naive-backend
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_backend_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"

@@ -1,0 +1,17 @@
+---
+- name: Prepare (GHA)
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    # On the podman scenario, etc_hosts in molecule.yml handles this.
+    # On a bare runner there is no such mechanism, so we add it here.
+    - name: Add molecule test domain to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ molecule_naive_proxy_domain }}"
+        state: present
+
+    - name: Import shared prepare tasks
+      ansible.builtin.import_tasks: ../shared/tasks/prepare.yml

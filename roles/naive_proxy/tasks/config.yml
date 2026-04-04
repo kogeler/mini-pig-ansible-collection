@@ -1,0 +1,144 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# -- Decoy site ----------------------------------------------------------------
+
+- name: naive-proxy | config | copy decoy index.html
+  ansible.builtin.copy:
+    src: "{{ naive_proxy_decoy_index_html | default('index.html', true) }}"
+    dest: "{{ _naive_proxy_decoy_html_dir }}/index.html"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: naive-proxy | handlers | restart naive-decoy
+
+- name: naive-proxy | config | render Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ naive_proxy_config_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: naive-proxy | handlers | restart naive-decoy
+
+# -- HAProxy config ------------------------------------------------------------
+
+- name: naive-proxy | config | render haproxy.cfg
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ naive_proxy_config_dir }}/haproxy.cfg"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: naive-proxy | handlers | restart naive-haproxy
+
+# -- Bootstrap certificate (first deploy only) ---------------------------------
+# HAProxy needs a cert file to start. On first deploy, generate a temporary
+# self-signed cert. acme.sh systemd unit replaces it after services are up.
+
+- name: naive-proxy | config | check if bootstrap cert exists
+  ansible.builtin.stat:
+    path: "{{ _naive_proxy_certs_dir }}/fullchain.pem"
+  register: _naive_proxy_cert_stat
+
+- name: naive-proxy | config | generate bootstrap private key
+  community.crypto.openssl_privatekey:
+    path: "{{ _naive_proxy_certs_dir }}/key.pem"
+    type: ECC
+    curve: secp256r1
+    mode: "0644"
+  when: not _naive_proxy_cert_stat.stat.exists
+
+- name: naive-proxy | config | generate bootstrap CSR
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ _naive_proxy_certs_dir }}/key.pem"
+    common_name: "{{ naive_proxy_domain }}"
+    subject_alt_name:
+      - "DNS:{{ naive_proxy_domain }}"
+  register: _naive_proxy_csr
+  when: not _naive_proxy_cert_stat.stat.exists
+
+- name: naive-proxy | config | generate bootstrap self-signed cert
+  community.crypto.x509_certificate:
+    path: "{{ _naive_proxy_certs_dir }}/fullchain.pem"
+    privatekey_path: "{{ _naive_proxy_certs_dir }}/key.pem"
+    csr_content: "{{ _naive_proxy_csr.csr }}"
+    provider: selfsigned
+    selfsigned_not_after: "+30d"
+    mode: "0644"
+  when: not _naive_proxy_cert_stat.stat.exists
+
+# -- Systemd units -------------------------------------------------------------
+# Keep the copy order aligned with runtime dependencies. Handler execution is
+# ordered, so pod -> decoy -> haproxy -> backend is intentional.
+
+- name: naive-proxy | config | copy pod systemd unit
+  ansible.builtin.template:
+    src: pod.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_pod_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: naive-proxy | handlers | restart naive-pod
+
+- name: naive-proxy | config | copy decoy systemd unit
+  ansible.builtin.template:
+    src: decoy.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_decoy_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: naive-proxy | handlers | restart naive-decoy
+
+- name: naive-proxy | config | copy haproxy systemd unit
+  ansible.builtin.template:
+    src: haproxy.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_haproxy_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: naive-proxy | handlers | restart naive-haproxy
+
+- name: naive-proxy | config | copy backend systemd unit
+  ansible.builtin.template:
+    src: backend.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_backend_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: naive-proxy | handlers | restart naive-backend
+
+- name: naive-proxy | config | copy acme service unit
+  ansible.builtin.template:
+    src: acme-renew.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_acme_renew_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: naive-proxy | config | copy acme timer unit
+  ansible.builtin.template:
+    src: acme-renew.timer.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_acme_renew_timer }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: naive-proxy | config | render pebble config
+  ansible.builtin.template:
+    src: pebble-config.json.j2
+    dest: "{{ naive_proxy_config_dir }}/pebble-config.json"
+    owner: root
+    group: root
+    mode: "0644"
+  when: naive_proxy_molecule_mode
+
+- name: naive-proxy | config | copy pebble systemd unit
+  ansible.builtin.template:
+    src: pebble.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_pebble_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: naive_proxy_molecule_mode

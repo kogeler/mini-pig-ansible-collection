@@ -1,0 +1,13 @@
+---
+- name: Benchmark
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+  tasks:
+    - name: Wait for benchmark prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Run benchmark tasks
+      ansible.builtin.import_tasks: tasks/benchmark.yml
