@@ -15,6 +15,11 @@
     url: "https://github.com/klzgrad/naiveproxy/releases/download/{{ naive_proxy_naive_version }}/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64.tar.xz"
     dest: /tmp/naiveproxy.tar.xz
     mode: "0644"
+    timeout: 120
+  register: _naive_download
+  retries: 3
+  delay: 10
+  until: _naive_download is not failed
 
 - name: Extract naive client
   ansible.builtin.unarchive:
