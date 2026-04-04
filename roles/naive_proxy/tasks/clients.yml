@@ -2,11 +2,11 @@
 # Copyright © 2026 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: naive-proxy | clients | display proxy link
+- name: naive-proxy | clients | display proxy links
   ansible.builtin.debug:
-    msg: >-
-      [{{ item.key }}]
-      naive+https://{{ item.key }}:{{ item.value }}@{{ naive_proxy_domain }}:{{ naive_proxy_external_port }}#{{ item.key }}
+    msg:
+      - "[{{ item.key }}] naive client: naive+https://{{ item.key }}:{{ item.value }}@{{ naive_proxy_domain }}:{{ naive_proxy_external_port }}#{{ item.key }}"
+      - "[{{ item.key }}] hiddify:      naive://{{ item.key }}:{{ item.value }}@{{ naive_proxy_domain }}:{{ naive_proxy_external_port }}?security=tls#{{ item.key }}"
   loop: "{{ naive_proxy_users | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
