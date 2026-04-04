@@ -1,0 +1,32 @@
+---
+# GHA scenario: applies the role directly to the runner VM (no nested containers).
+# Uses ansible-native configuration — no driver/platforms sections.
+# Locally, use the default (podman) scenario instead.
+ansible:
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+        - --inventory=inventory/
+  env:
+    ANSIBLE_FORCE_COLOR: "true"
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+    privilege_escalation:
+      become: "true"
+  playbooks:
+    prepare: prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml
+
+scenario:
+  test_sequence:
+    - prepare
+    - converge
+    - idempotence
+    - verify
+
+verifier:
+  name: ansible

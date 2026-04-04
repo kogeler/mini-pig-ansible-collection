@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Decoy site only -- no ACME, no proxy.
+
+{
+    auto_https off
+    http_port {{ _naive_proxy_decoy_port }}
+}
+
+:{{ _naive_proxy_decoy_port }} {
+    root * /srv
+    file_server
+}

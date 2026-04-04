@@ -1,0 +1,18 @@
+---
+naive_client_unit: "podman-naive-molecule-client.service"
+naive_client_container_name: "naive-molecule-client"
+naive_client_image: "docker.io/library/ubuntu"
+naive_client_image_tag: "22.04"
+naive_client_socks_port: 1080
+iperf_unit: "podman-naive-iperf-bench.service"
+iperf_image: "docker.io/networkstatic/iperf3"
+iperf_container_name: "naive-iperf-bench"
+iperf_port: 5201
+iperf_duration: 30
+iperf_cpu_units:
+  - unit: "podman-naive-haproxy.service"
+    label: "naive-haproxy"
+  - unit: "podman-naive-backend.service"
+    label: "naive-backend"
+  - unit: "{{ iperf_unit }}"
+    label: "{{ iperf_container_name }}"

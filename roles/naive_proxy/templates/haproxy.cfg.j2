@@ -1,0 +1,104 @@
+# {{ ansible_managed }}
+# Based on: https://github.com/klzgrad/naiveproxy/wiki/HAProxy-Setup
+
+global
+    log stdout format raw local0
+    no-quic
+{% if naive_proxy_haproxy_global_maxconn | int > 0 %}
+    maxconn {{ naive_proxy_haproxy_global_maxconn }}
+{% endif %}
+{% if naive_proxy_haproxy_cpu_policy %}
+    cpu-policy {{ naive_proxy_haproxy_cpu_policy }}
+{% endif %}
+{% if naive_proxy_haproxy_ssl_cache_size | int > 0 %}
+    tune.ssl.cachesize {{ naive_proxy_haproxy_ssl_cache_size }}
+{% endif %}
+{% set haproxy_h2_frontend_rxbuf = _naive_proxy_haproxy_h2_frontend_rxbuf_effective | string | trim %}
+{% if haproxy_h2_frontend_rxbuf %}
+    tune.h2.fe.rxbuf {{ haproxy_h2_frontend_rxbuf }}
+{% endif %}
+{% if naive_proxy_haproxy_notsent_lowat | int > 0 %}
+    tune.notsent-lowat.client {{ naive_proxy_haproxy_notsent_lowat }}
+    tune.notsent-lowat.server {{ naive_proxy_haproxy_notsent_lowat }}
+{% endif %}
+
+defaults
+    log global
+    mode http
+    option httplog
+    timeout connect {{ naive_proxy_haproxy_timeout_connect }}
+    timeout client  {{ naive_proxy_haproxy_timeout_client }}
+    timeout server  {{ naive_proxy_haproxy_timeout_server }}
+    timeout tunnel  {{ naive_proxy_haproxy_timeout_tunnel }}
+    timeout client-fin {{ naive_proxy_haproxy_timeout_client_fin }}
+    timeout server-fin {{ naive_proxy_haproxy_timeout_server_fin }}
+
+userlist naive_users
+{% for name, pass in naive_proxy_users.items() %}
+    user {{ name }} insecure-password {{ pass }}
+{% endfor %}
+
+# -- TCP frontend: ALPN inspection before TLS termination --------------------
+# Routes acme-tls/1 to ACME responder, everything else to HTTPS frontend.
+
+frontend tcp_in
+    bind *:{{ naive_proxy_listen_port }}
+    mode tcp
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+
+    acl acme_alpn req.ssl_alpn acme-tls/1
+    use_backend be_acme if acme_alpn
+    default_backend be_https
+
+backend be_acme
+    mode tcp
+    server acme 127.0.0.1:{{ _naive_proxy_acme_alpn_port }}
+
+backend be_https
+    mode tcp
+    server local-https 127.0.0.1:{{ _naive_proxy_haproxy_https_port }}
+
+# -- HTTPS frontend: TLS termination + auth-based routing --------------------
+
+frontend https_in
+    bind 127.0.0.1:{{ _naive_proxy_haproxy_https_port }} ssl alpn h2,http/1.1
+    ssl-f-use crt /certs/fullchain.pem key /certs/key.pem
+    option http-use-proxy-header
+{% if naive_proxy_molecule_mode %}
+    # Stage-wise logging for molecule debugging. This logs the incoming request
+    # line plus the headers that matter for auth routing and naive padding
+    # negotiation before backend selection and after response processing.
+    log-format "src=%ci:%cp fe=%ft be=%b/%s status=%ST bytes=%B term=%tsc req=%{+Q}r fe_host=%{+Q}[var(txn.dbg_fe_host)] fe_auth=%{+Q}[var(txn.dbg_fe_auth)] fe_proxy_auth=%{+Q}[var(txn.dbg_fe_proxy_auth)] fe_padding=%{+Q}[var(txn.dbg_fe_padding)] be_proxy_auth_pre=%{+Q}[var(txn.dbg_be_proxy_auth_pre)] be_padding_pre=%{+Q}[var(txn.dbg_be_padding_pre)] be_proxy_auth_post=%{+Q}[var(txn.dbg_be_proxy_auth_post)] be_padding_post=%{+Q}[var(txn.dbg_be_padding_post)] be_res_padding=%{+Q}[var(txn.dbg_be_res_padding)] fe_res_padding=%{+Q}[var(txn.dbg_fe_res_padding)] fe_res_proxy_authenticate=%{+Q}[var(txn.dbg_fe_res_proxy_authenticate)]"
+    http-request set-var(txn.dbg_fe_host) req.fhdr(host)
+    http-request set-var(txn.dbg_fe_auth) req.fhdr(authorization)
+    http-request set-var(txn.dbg_fe_proxy_auth) req.fhdr(proxy-authorization)
+    http-request set-var(txn.dbg_fe_padding) req.fhdr(padding)
+    http-response set-var(txn.dbg_fe_res_padding) res.fhdr(padding)
+    http-response set-var(txn.dbg_fe_res_proxy_authenticate) res.fhdr(proxy-authenticate)
+{% endif %}
+
+    acl auth_ok http_auth(naive_users)
+    use_backend be_naive if auth_ok
+    default_backend be_decoy
+
+backend be_naive
+    # naive backend expects one proxy request per accepted TCP socket.
+    # Disable backend connection reuse to prevent HAProxy from sending
+    # a CONNECT on a connection that already completed a handshake.
+    option http-server-close
+    http-reuse never
+{% if naive_proxy_molecule_mode %}
+    http-request set-var(txn.dbg_be_proxy_auth_pre) req.fhdr(proxy-authorization)
+    http-request set-var(txn.dbg_be_padding_pre) req.fhdr(padding)
+{% endif %}
+    http-request del-header proxy-authorization
+{% if naive_proxy_molecule_mode %}
+    http-request set-var(txn.dbg_be_proxy_auth_post) req.fhdr(proxy-authorization)
+    http-request set-var(txn.dbg_be_padding_post) req.fhdr(padding)
+    http-response set-var(txn.dbg_be_res_padding) res.fhdr(padding)
+{% endif %}
+    server naive 127.0.0.1:{{ _naive_proxy_backend_port }}
+
+backend be_decoy
+    server caddy 127.0.0.1:{{ _naive_proxy_decoy_port }}

@@ -1,0 +1,10 @@
+{
+  "pebble": {
+    "listenAddress": "0.0.0.0:{{ _naive_proxy_pebble_port }}",
+    "managementListenAddress": "0.0.0.0:{{ _naive_proxy_pebble_mgmt_port }}",
+    "certificate": "test/certs/localhost/cert.pem",
+    "privateKey": "test/certs/localhost/key.pem",
+    "httpPort": 5002,
+    "tlsPort": {{ naive_proxy_listen_port }}
+  }
+}

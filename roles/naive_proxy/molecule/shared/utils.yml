@@ -1,0 +1,20 @@
+---
+- name: Utils
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for utils prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Run runtime image refresh utils
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.naive_proxy
+        tasks_from: utils.yml
+      vars:
+        naive_proxy_update_runtime_images: true
+
+    - name: Flush utils handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for services after utils run
+      ansible.builtin.import_tasks: tasks/wait-services.yml

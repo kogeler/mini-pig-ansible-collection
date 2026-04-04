@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+FROM {{ naive_proxy_backend_base_image }}:{{ naive_proxy_backend_base_image_tag }} AS fetcher
+ARG NAIVE_VERSION={{ naive_proxy_naive_version }}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
+    && curl -fsSL \
+       "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz" \
+       | tar -xJ --strip-components=1 -C /tmp \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM {{ naive_proxy_backend_base_image }}:{{ naive_proxy_backend_base_image_tag }}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=fetcher /tmp/naive /usr/bin/naive
+ENTRYPOINT ["naive"]

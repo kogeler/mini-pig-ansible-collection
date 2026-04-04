@@ -1,0 +1,45 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | clients | display proxy link
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.key }}]
+      naive+https://{{ item.key }}:{{ item.value }}@{{ naive_proxy_domain }}:{{ naive_proxy_external_port }}#{{ item.key }}
+  loop: "{{ naive_proxy_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: naive-proxy | clients | create client config directory
+  ansible.builtin.file:
+    path: "{{ naive_proxy_client_config_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+- name: naive-proxy | clients | write sing-box client configs
+  ansible.builtin.template:
+    src: singbox-client.json.j2
+    dest: "{{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.key }}.json"
+    mode: "0600"
+  vars:
+    _naive_proxy_singbox_user: "{{ item.key }}"
+    _naive_proxy_singbox_pass: "{{ item.value }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ naive_proxy_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: naive-proxy | clients | display client config paths
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.key }}] {{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.key }}.json
+  loop: "{{ naive_proxy_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

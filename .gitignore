@@ -1,1 +1,4 @@
 .idea
+.ansible
+
+roles/naive_proxy/molecule/shared/naive-proxy-json-configs

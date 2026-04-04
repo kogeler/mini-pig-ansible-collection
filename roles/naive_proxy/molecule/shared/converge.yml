@@ -1,0 +1,14 @@
+---
+- name: Converge
+  hosts: all
+  vars_files:
+    - vars/common.yml
+  roles:
+    - role: kogeler.mini_pig.naive_proxy
+      vars:
+        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+        naive_proxy_users:
+          testuser: "testpass"
+        naive_proxy_molecule_mode: true

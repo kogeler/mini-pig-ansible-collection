@@ -1,0 +1,60 @@
+[Unit]
+Description=Podman container-{{ _naive_proxy_backend_name }}.service
+Requires={{ _naive_proxy_pod_unit }}
+Wants={{ _naive_proxy_haproxy_unit }} {{ _naive_proxy_decoy_unit }}
+After=network-online.target {{ _naive_proxy_pod_unit }} {{ _naive_proxy_haproxy_unit }} {{ _naive_proxy_decoy_unit }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --log-driver=passthrough \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _naive_proxy_backend_name }} \
+        --pull=never \
+{% if naive_proxy_read_only_rootfs %}
+        --read-only \
+{% endif %}
+        --security-opt=no-new-privileges \
+        --security-opt=apparmor=unconfined \
+        --cap-drop=ALL \
+        --cap-add=NET_BIND_SERVICE \
+        --pod={{ _naive_proxy_pod_name }} \
+{% for key, value in naive_proxy_backend_extra_env.items() %}
+        --env {{ key }}={{ value }} \
+{% endfor %}
+{% for vol in naive_proxy_backend_extra_volumes %}
+        --volume {{ vol }} \
+{% endfor %}
+{% for arg in naive_proxy_backend_extra_args %}
+        {{ arg }} \
+{% endfor %}
+        {{ _naive_proxy_backend_image }}:{{ _naive_proxy_backend_image_tag }} \
+        --listen=http://0.0.0.0:{{ _naive_proxy_backend_port }} \
+{% if naive_proxy_padding %}
+        --padding \
+{% endif %}
+        --log
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | preflight | validate domain is set
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_domain | length > 0
+    fail_msg: >-
+      naive_proxy_domain is required. Set it to the server's FQDN.
+    quiet: true
+
+- name: naive-proxy | preflight | validate users are defined
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_users | length > 0
+    fail_msg: >-
+      naive_proxy_users must contain at least one user entry.
+    quiet: true
+
+- name: naive-proxy | preflight | validate listen port
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_listen_port | int > 0
+      - naive_proxy_listen_port | int <= 65535
+    fail_msg: >-
+      naive_proxy_listen_port must be between 1 and 65535.
+    quiet: true
+
+- name: naive-proxy | preflight | validate external port
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_external_port | int > 0
+      - naive_proxy_external_port | int <= 65535
+    fail_msg: >-
+      naive_proxy_external_port must be between 1 and 65535.
+    quiet: true
+
+- name: naive-proxy | preflight | validate listen port does not overlap internal ports
+  vars:
+    _naive_proxy_reserved_local_ports: >-
+      {{
+        {
+          '_naive_proxy_haproxy_https_port': _naive_proxy_haproxy_https_port | int,
+          '_naive_proxy_backend_port': _naive_proxy_backend_port | int,
+          '_naive_proxy_decoy_port': _naive_proxy_decoy_port | int,
+          '_naive_proxy_acme_alpn_port': _naive_proxy_acme_alpn_port | int
+        }
+        | combine(
+            naive_proxy_molecule_mode | bool
+            | ternary(
+                {
+                  '_naive_proxy_pebble_port': _naive_proxy_pebble_port | int,
+                  '_naive_proxy_pebble_mgmt_port': _naive_proxy_pebble_mgmt_port | int
+                },
+                {}
+              )
+          )
+      }}
+    _naive_proxy_listen_port_conflicts: >-
+      {{
+        _naive_proxy_reserved_local_ports
+        | dict2items
+        | selectattr('value', 'equalto', naive_proxy_listen_port | int)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - _naive_proxy_listen_port_conflicts | length == 0
+    fail_msg: >-
+      naive_proxy_listen_port ({{ naive_proxy_listen_port }}) conflicts with
+      internal service port variable(s):
+      {{ _naive_proxy_listen_port_conflicts | map(attribute='key') | join(', ') }}.
+      Choose a public listen port that does not overlap role-internal localhost ports.
+    quiet: true

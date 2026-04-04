@@ -1,0 +1,64 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: naive-proxy | healthchecks | wait for managed units to become active
+  vars:
+    _naive_proxy_healthcheck_retries: 20
+    _naive_proxy_healthcheck_delay: 3
+    _naive_proxy_healthcheck_units: >-
+      {{
+        [
+          {'unit': _naive_proxy_pod_unit},
+          {'unit': _naive_proxy_decoy_unit},
+          {'unit': _naive_proxy_haproxy_unit},
+          {'unit': _naive_proxy_backend_unit},
+          {'unit': _naive_proxy_acme_renew_timer}
+        ]
+        +
+        (
+          naive_proxy_molecule_mode | bool
+          | ternary(
+              [{'unit': _naive_proxy_pebble_unit}],
+              []
+            )
+        )
+      }}
+  ansible.builtin.systemd:
+    name: "{{ item.unit }}"
+  register: _naive_proxy_healthcheck_unit_status
+  until:
+    - (_naive_proxy_healthcheck_unit_status.status.ActiveState | default('')) == 'active'
+    - (_naive_proxy_healthcheck_unit_status.status.Result | default('success')) == 'success'
+  retries: "{{ _naive_proxy_healthcheck_retries }}"
+  delay: "{{ _naive_proxy_healthcheck_delay }}"
+  loop: "{{ _naive_proxy_healthcheck_units }}"
+  loop_control:
+    label: "{{ item.unit }}"
+
+- name: naive-proxy | healthchecks | probe decoy site via haproxy
+  vars:
+    _naive_proxy_healthcheck_retries: 20
+    _naive_proxy_healthcheck_delay: 3
+    _naive_proxy_healthcheck_host_header: >-
+      {{
+        naive_proxy_domain
+        ~
+        (
+          ((naive_proxy_external_port | int) not in [80, 443])
+          | ternary(':' ~ (naive_proxy_external_port | string), '')
+        )
+      }}
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ naive_proxy_listen_port }}/"
+    method: GET
+    headers:
+      Host: "{{ _naive_proxy_healthcheck_host_header }}"
+    validate_certs: false
+    use_proxy: false
+    status_code: 200
+  register: _naive_proxy_healthcheck_site
+  until:
+    - _naive_proxy_healthcheck_site.status == 200
+  retries: "{{ _naive_proxy_healthcheck_retries }}"
+  delay: "{{ _naive_proxy_healthcheck_delay }}"
