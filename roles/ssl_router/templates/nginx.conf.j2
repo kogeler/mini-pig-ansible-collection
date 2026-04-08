@@ -49,5 +49,8 @@ stream {
         proxy_pass  $name;
         proxy_connect_timeout 1s;
         ssl_preread on;
+        
+        preread_buffer_size {{ ssl_router_preread_buffer_size }};
+        proxy_buffer_size {{ ssl_router_proxy_buffer_size }};
     }
 }
