@@ -12,3 +12,6 @@ ssl_router_upstream_map: {}
 #    regex: ".*abc.com"
 #    host: abc.abc
 #    port: "5443"
+
+ssl_router_preread_buffer_size: "32k"
+ssl_router_proxy_buffer_size: "64k"
