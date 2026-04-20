@@ -1,4 +1,15 @@
 ---
+# Non-podman drivers only — podman injects the same mapping via
+# molecule.yml etc_hosts, and /etc/hosts in the container is a bind-mount
+# that lineinfile's atomic-rename can't replace.
+- name: Ensure naive.test resolves to loopback
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.0.1 {{ molecule_naive_proxy_domain }}"
+    regexp: '^127\.0\.0\.1\s+{{ molecule_naive_proxy_domain | regex_escape }}\s*$'
+    state: present
+  when: mp_driver != 'podman'
+
 - name: Install test dependencies
   ansible.builtin.apt:
     name:
