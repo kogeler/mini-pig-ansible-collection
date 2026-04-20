@@ -1,10 +1,26 @@
 ---
+# Driver is selected at runtime via MP_DRIVER (default: podman).
+# Supported values: podman, vagrant.
+# Env vars for vagrant driver:
+#   MP_DRIVER=vagrant
+#   MP_VAGRANT_PROVIDER=libvirt (default)
+#   MP_BOX=debian/trixie64 (default)
+#   MP_VM_MEMORY=2048
+#   MP_VM_CPUS=2
+# NOTE: env vars must NOT start with "MOLECULE_" — molecule keeps those
+# names as literals (see MOLECULE_KEEP_STRING in molecule.config).
+# The single platforms block carries keys for both drivers; each driver
+# reads only the keys it understands and ignores the rest.
 dependency:
   name: galaxy
 driver:
-  name: podman
+  name: "${MP_DRIVER:-podman}"
+  # vagrant-only; podman ignores it
+  provider:
+    name: "${MP_VAGRANT_PROVIDER:-libvirt}"
 platforms:
   - name: molecule-naive-proxy
+    # ---- podman driver keys ----
     image: "docker.io/library/debian:trixie"
     pre_build_image: false
     systemd: always
@@ -18,7 +34,7 @@ platforms:
     # directly; this simplifies testing services that bind to :443.
     # NOTE: the molecule-podman create playbook reads "network", not
     # "network_mode" — using the wrong key silently falls back to the default.
-    network: "${MOLECULE_NETWORK:-slirp4netns}"
+    network: "${MP_NETWORK:-slirp4netns}"
     # podman-in-podman: unmask /proc for newuidmap, caps for nested userns
     security_opts:
       - "label=disable"
@@ -39,6 +55,10 @@ platforms:
       # - /dev/net/tun:/dev/net/tun
     command: ""
     override_command: false
+    # ---- vagrant driver keys ----
+    box: "${MP_BOX:-debian/trixie64}"
+    memory: "${MP_VM_MEMORY:-2048}"
+    cpus: "${MP_VM_CPUS:-2}"
 provisioner:
   name: ansible
   options:
@@ -47,6 +67,13 @@ provisioner:
     prepare: prepare.yml
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
+  inventory:
+    # ansible_become follows mp_driver (defined in shared/vars/common.yml).
+    # host_vars (not group_vars.all) so localhost — used by the vagrant
+    # create/destroy playbooks — does not inherit become.
+    host_vars:
+      molecule-naive-proxy:
+        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
   config_options:
     defaults:
       callbacks_enabled: ansible.posix.profile_tasks

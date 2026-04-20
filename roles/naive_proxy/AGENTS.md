@@ -2,22 +2,23 @@
 
 ## Rules for AI agents running Molecule
 
-1. **Never pipe molecule output through `tail`.** Always redirect full output to a temporary file, then inspect it:
+1. **Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule` commands.** It hides three env-var workarounds (`GIT_DIR=/dev/null`, `MP_DRIVER=<driver>`, `ANSIBLE_LIBRARY=.../molecule_plugins/vagrant/modules`). Target schema is `make <scenario>-<driver>-<action>`; run `make help` for the full list.
+2. **Never pipe molecule output through `tail`.** Always redirect full output to a temporary file, then inspect it:
    ```bash
-   GIT_DIR=/dev/null molecule converge 2>&1 > /tmp/mol-converge.log; echo "exit=$?"
-   # Then read the file for errors:
+   cd molecule && make default-podman-converge > /tmp/mol-converge.log 2>&1; echo "exit=$?"
    grep -E "fatal:|FAILED" /tmp/mol-converge.log
    ```
-2. **Never use `molecule test` during development.** It destroys the instance at the end, making debugging impossible. Always run `converge` and `verify` as separate commands. Use `molecule destroy` explicitly only when you need a clean slate.
-3. **When a failure occurs**, first check the full log file (`grep`, `tail`, targeted reads). If the log does not contain enough information, exec into the running Molecule instance to collect data:
+3. **Never use the `test` action during development.** It destroys the instance at the end, making debugging impossible. Always run `converge` and `verify` as separate actions. Use the `destroy` action explicitly only when you need a clean slate.
+4. **When a failure occurs**, first check the full log file (`grep`, `tail`, targeted reads). If the log does not contain enough information, exec into the running Molecule instance to collect data (podman scenarios):
    ```bash
    podman exec molecule-naive-proxy journalctl -u <unit> --no-pager -n 100
    podman exec molecule-naive-proxy podman logs <container>
    podman exec molecule-naive-proxy ss -tlnp
    ```
-4. **Keep the Molecule instance alive** between iterations. Re-run `molecule converge` and `molecule verify` without destroying. Only destroy when the instance state is suspect or you need to test from scratch.
-5. **Always activate the venv** before any molecule/ansible command: `source /media/data/app/python/venv3/bin/activate`
-6. **Always prefix with `GIT_DIR=/dev/null`** for the default (podman) scenario because `collections/` is gitignored.
+   For the vagrant driver use `make default-vagrant-login` (drops you into SSH on the VM).
+5. **Keep the Molecule instance alive** between iterations. Re-run the `converge` and `verify` actions without destroying. Only destroy when the instance state is suspect or you need to test from scratch.
+6. **Always activate the venv** before any make/molecule/ansible command: `source /media/data/app/python/venv3/bin/activate`
+7. **Do not switch drivers against a live instance.** If a vagrant VM is up, `make default-podman-*` will route to the vagrant driver (molecule keeps driver state per scenario). Run `make default-vagrant-destroy` first, then the podman target.
 
 ## What this role does
 
@@ -156,7 +157,8 @@ roles/naive_proxy/
 │   └── singbox-client.json.j2
 ├── files/index.html
 └── molecule/
-    ├── default/           # Local podman-in-podman scenario (Debian trixie)
+    ├── Makefile           # Thin wrapper: <scenario>-<driver>-<action>, hides MP_DRIVER/GIT_DIR/ANSIBLE_LIBRARY
+    ├── default/           # Dual-driver scenario (podman-in-podman + vagrant-libvirt), Debian trixie
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
     │   ├── prepare.yml
@@ -289,11 +291,14 @@ naive-acme-renew.timer (daily, RandomizedDelaySec=3600)
 
 ### Scenarios
 
-| Scenario | Driver | Purpose | Command |
-|----------|--------|---------|---------|
-| `default` | podman | Local dev, podman-in-podman, Debian trixie | `GIT_DIR=/dev/null molecule converge && molecule verify` |
-| `debian-bookworm` | podman | Local dev, podman-in-podman, Debian 12 | `GIT_DIR=/dev/null molecule converge -s debian-bookworm` |
-| `gha` | ansible-native (delegated) | GitHub Actions, role applied to runner VM | `molecule converge -s gha` |
+| Scenario | Driver | Make target prefix | Purpose |
+|----------|--------|--------------------|---------|
+| `default` | podman (container) | `default-podman-` | Local dev, podman-in-podman, Debian trixie |
+| `default` | vagrant-libvirt (VM) | `default-vagrant-` | Local dev on a real VM, Debian trixie |
+| `debian-bookworm` | podman | `bookworm-podman-` | Local dev, podman-in-podman, Debian 12 |
+| `gha` | ansible-native (delegated) | `gha-native-` | GitHub Actions, role applied to runner VM |
+
+The `default` scenario supports two drivers selected at runtime via `MP_DRIVER` (podman | vagrant). The platforms block carries keys for both drivers in the same `molecule.yml`; each driver reads only what it understands.
 
 All scenarios share playbooks and tasks from `molecule/shared/`. Each has its own `molecule.yml` and `prepare.yml`. Shared variables live in `molecule/shared/vars/common.yml`.
 
@@ -301,28 +306,66 @@ A scenario is included in the CI matrix only if its directory contains an `ENABL
 
 ### Commands
 
+Actions: `test create converge verify idempotence destroy login reset prepare check`. All run through `molecule/Makefile`; activate the venv first.
+
 ```bash
-cd naive_proxy
+cd naive_proxy/molecule
+make help
 
-# Iterative development (default/podman scenario)
-GIT_DIR=/dev/null molecule converge
-GIT_DIR=/dev/null molecule verify
-GIT_DIR=/dev/null molecule login
+# default scenario on podman
+make default-podman-converge
+make default-podman-verify
+make default-podman-login
 
-# Full clean cycle
-GIT_DIR=/dev/null molecule test
+# default scenario on vagrant-libvirt
+make default-vagrant-converge
+make default-vagrant-verify
+make default-vagrant-destroy
 
-# Debian 12
-MOLECULE_DEBIAN_TAG=bookworm GIT_DIR=/dev/null molecule test
+# debian-bookworm (podman-only)
+make bookworm-podman-test
 
-# GHA scenario (localhost, no containers)
-molecule converge -s gha
-molecule verify -s gha
+# gha (localhost, no containers)
+make gha-native-test
 ```
 
-During iterative work, do not destroy the instance between changes. Re-run `molecule converge` and `molecule verify`. Use `molecule test` only at the end.
+During iterative work, do not destroy the instance between changes. Re-run `make ...-converge` and `make ...-verify` against the same instance. Use `make ...-test` only at the end of a session.
 
-`GIT_DIR=/dev/null` is required because `collections/` is gitignored.
+### Driver conditionals and env-var plumbing
+
+The Makefile is the only place that knows about env-var workarounds:
+
+- `GIT_DIR=/dev/null` — makes molecule stop misidentifying the role as a collection (collections/ is gitignored).
+- `MP_DRIVER=<podman|vagrant>` — selects the driver for the `default` scenario at runtime. Prefix is `MP_` because molecule silently drops env vars named `MOLECULE_*` (see `MOLECULE_KEEP_STRING` in `molecule.config`).
+- `ANSIBLE_LIBRARY=.../molecule_plugins/vagrant/modules` — required only for the vagrant driver. molecule 26 no longer auto-injects driver module paths (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)). The Makefile resolves the path from the active Python env.
+
+Inside the playbooks, the single source of truth for driver-conditional behavior is the `mp_driver` host_var, set in `molecule/default/molecule.yml`:
+
+```yaml
+provisioner:
+  inventory:
+    host_vars:
+      molecule-naive-proxy:
+        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
+        ansible_become: '{{ mp_driver != "podman" }}'
+```
+
+- `ansible_become` follows from `mp_driver` — podman container runs as root (no sudo), vagrant VM needs sudo.
+- Tasks that must branch on driver use `when: mp_driver != 'podman'` (see the `/etc/hosts` patch in `shared/tasks/prepare.yml`, needed for SSH-based drivers because podman's own `etc_hosts` mechanism handles the container case and `/etc/hosts` there is a bind-mount that `lineinfile` cannot atomic-replace).
+- `host_vars` (not `group_vars.all`) so that localhost — used by vagrant's `create.yml` and `destroy.yml` — does not inherit become.
+
+Other `MP_*` env vars tune the vagrant platform: `MP_VAGRANT_PROVIDER` (default `libvirt`), `MP_BOX` (default `debian/trixie64`), `MP_VM_MEMORY`, `MP_VM_CPUS`. `MP_NETWORK` sets the podman platform network mode.
+
+### Vagrant driver prerequisites
+
+Host-side one-time setup:
+
+- `python-vagrant` installed in the molecule venv (`pip install python-vagrant`).
+- `vagrant` CLI with `vagrant-libvirt` plugin.
+- libvirt with nftables firewall backend (`firewall_backend = "nftables"` in `/etc/libvirt/network.conf`, then `systemctl restart libvirtd`). Default libvirt network must be active (`virsh net-start default`).
+- User in groups `libvirt` and `kvm`.
+
+Box comes from Vagrant Cloud on first `create`; cached afterwards. `generic/debian13` does not exist — use `debian/trixie64` (the default).
 
 ### What `molecule verify` checks
 
@@ -376,15 +419,15 @@ When `naive_proxy_molecule_mode: true`:
 
 Never run downloaded binaries on the host and do not mutate host state outside the project tree. All validation and benchmarking happen inside the Molecule instance and its nested Podman environment. The SOCKS5 test client runs inside a container, not as a bare host binary.
 
-### Molecule network configuration (default scenario)
+### Molecule network configuration (default scenario, podman driver)
 
 ```yaml
-network: "${MOLECULE_NETWORK:-slirp4netns}"
+network: "${MP_NETWORK:-slirp4netns}"
 ```
 
 Supported values: `host`, `slirp4netns` (rootless default), `bridge`, `pasta` (podman >= 5.0). The molecule-podman create playbook reads `network`, not `network_mode` — using the wrong key silently falls back to the default.
 
-The test domain `naive.test` is mapped to `127.0.0.1` via `etc_hosts` in molecule.yml (default scenario) or `/etc/hosts` lineinfile (GHA scenario) to avoid IPv6 loopback issues with pasta networking.
+The test domain `naive.test` is mapped to `127.0.0.1` via `etc_hosts` in molecule.yml (podman driver) or via a `lineinfile` task gated on `when: mp_driver != 'podman'` in `shared/tasks/prepare.yml` (vagrant/gha). Two mechanisms because `/etc/hosts` inside the podman container is a bind-mount that `lineinfile` cannot atomic-replace.
 
 ## Key references
 
