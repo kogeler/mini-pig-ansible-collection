@@ -5,3 +5,9 @@ molecule_naive_proxy_listen_port: 8443
 molecule_naive_proxy_external_port: 9443
 molecule_naive_proxy_decoy_url: "http://{{ molecule_naive_proxy_domain }}:8081/"
 molecule_naive_proxy_pebble_root_url: "https://{{ molecule_naive_proxy_domain }}:15000/roots/0"
+
+# Single driver signal read from the MP_DRIVER env var. Defaults to
+# "podman" so single-driver scenarios (debian-bookworm, gha) don't need
+# to set anything. The default scenario exports MP_DRIVER=podman|vagrant
+# via the Makefile.
+mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'

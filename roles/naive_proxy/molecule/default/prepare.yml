@@ -1,5 +1,5 @@
 ---
-- name: Prepare (podman)
+- name: Prepare
   hosts: all
   gather_facts: false
   vars_files:

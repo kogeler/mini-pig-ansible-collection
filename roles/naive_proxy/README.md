@@ -342,13 +342,13 @@ The role ships with multiple Molecule scenarios sharing common playbooks from `m
 
 ### Scenarios
 
-| Scenario | Driver | Purpose |
-|----------|--------|---------|
-| `default` | podman | Local dev, podman-in-podman, Debian trixie |
+| Scenario | Driver(s) | Purpose |
+|----------|-----------|---------|
+| `default` | podman, vagrant-libvirt | Local dev, Debian trixie (container or VM) |
 | `debian-bookworm` | podman | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native | GitHub Actions, role applied directly to runner VM |
 
-A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
+The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (`podman` by default, `vagrant` for vagrant-libvirt). The same platform block carries keys for both drivers; each driver reads only what it understands. A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
 
 ### What `molecule verify` Covers
 
@@ -365,47 +365,72 @@ A scenario is included in the CI matrix only if its directory contains an `ENABL
 
 ### Running Tests
 
-```bash
-cd naive_proxy
+All runs go through the wrapper Makefile at `molecule/Makefile`. It hides the env-var plumbing (`GIT_DIR`, `MP_DRIVER`, `ANSIBLE_LIBRARY`) and exposes a uniform `<scenario>-<driver>-<action>` target schema.
 
-# iterative work (default scenario)
-GIT_DIR=/dev/null molecule converge
-GIT_DIR=/dev/null molecule verify
-GIT_DIR=/dev/null molecule login
+```bash
+cd naive_proxy/molecule
+
+# list available targets
+make help
+
+# default scenario on podman
+make default-podman-test
+make default-podman-converge
+make default-podman-verify
+make default-podman-login
+
+# default scenario on vagrant-libvirt
+make default-vagrant-converge
+make default-vagrant-verify
+make default-vagrant-destroy
 
 # Debian 12 scenario
-GIT_DIR=/dev/null molecule converge -s debian-bookworm
-GIT_DIR=/dev/null molecule verify -s debian-bookworm
+make bookworm-podman-test
 
 # GHA scenario (localhost)
-molecule converge -s gha
-molecule verify -s gha
+make gha-native-test
 ```
 
-`GIT_DIR=/dev/null` is required for podman scenarios because `collections/` is gitignored at the repo root.
+`<action>` is forwarded verbatim to `molecule` and may be any of: `test`, `create`, `converge`, `verify`, `idempotence`, `destroy`, `login`, `reset`, `prepare`, `check`.
+
+Why the wrapper exists:
+
+- `GIT_DIR=/dev/null` — required for podman/vagrant scenarios because `collections/` is gitignored at the repo root and without this shim molecule misidentifies the role as a collection.
+- `MP_DRIVER` — switches the `default` scenario between podman and vagrant at runtime. The prefix is `MP_` (mini-pig) because molecule silently drops env vars named `MOLECULE_*` before interpolation.
+- `ANSIBLE_LIBRARY` — points at `molecule_plugins/vagrant/modules/`. Molecule 26 no longer auto-injects this for third-party drivers (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)); the Makefile resolves the path from the active Python env.
+
+#### Vagrant driver prerequisites
+
+Host-side, one-time:
+
+- `python-vagrant` and `molecule-plugins[vagrant]` installed in the same venv as `molecule`.
+- `vagrant` with the `vagrant-libvirt` plugin.
+- libvirt with the nftables firewall backend: `firewall_backend = "nftables"` in `/etc/libvirt/network.conf`, then `systemctl restart libvirtd`.
+- User in the `libvirt` and `kvm` groups.
+- Default box used is `debian/trixie64`; override with `MP_BOX=<box-name>` if desired. Other knobs: `MP_VM_MEMORY`, `MP_VM_CPUS`, `MP_VAGRANT_PROVIDER` (defaults to `libvirt`).
 
 ### Standalone Benchmark
 
 The benchmark playbook runs the throughput portion without the rest of `verify`:
 
 ```bash
-cd naive_proxy
-GIT_DIR=/dev/null molecule converge
+cd naive_proxy/molecule
+make default-podman-converge   # or default-vagrant-converge
 
 INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
 ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
-  ansible-playbook -i "$INV" molecule/shared/benchmark.yml
+  ansible-playbook -i "$INV" shared/benchmark.yml
 ```
 
 ### Standalone Runtime Image Refresh Test
 
 ```bash
-cd naive_proxy
-GIT_DIR=/dev/null molecule converge
+cd naive_proxy/molecule
+make default-podman-converge
 
 INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
 ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
-  ansible-playbook -i "$INV" molecule/shared/utils.yml
+  ansible-playbook -i "$INV" shared/utils.yml
 ```
 
 ## Limitations
