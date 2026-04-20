@@ -3,8 +3,16 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+- name: scw_k8s_kosmos_agent | add node | ensure /usr/local/sbin exists
+  ansible.builtin.file:
+    path: /usr/local/sbin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: scw_k8s_kosmos_agent | add node | run agent
-  ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -loglevel 0 -no-controller"
+  ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -kosmos"
   environment:
     POOL_REGION: "{{ scw_k8s_kosmos_agent_pool_region }}"
     POOL_ID: "{{ scw_k8s_kosmos_agent_pool_id }}"
