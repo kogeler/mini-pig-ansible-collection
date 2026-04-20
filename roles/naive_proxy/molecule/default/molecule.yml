@@ -68,16 +68,12 @@ provisioner:
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
   inventory:
-    # Single source of truth for driver-conditional behavior: mp_driver
-    # is resolved from the MP_DRIVER env var (podman is the default).
-    # Everything that needs to branch on driver (ansible_become, the
-    # /etc/hosts patch task) reads this host_var.
+    # ansible_become follows mp_driver (defined in shared/vars/common.yml).
     # host_vars (not group_vars.all) so localhost — used by the vagrant
-    # create/destroy playbooks — does not inherit anything.
+    # create/destroy playbooks — does not inherit become.
     host_vars:
       molecule-naive-proxy:
-        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
-        ansible_become: '{{ mp_driver != "podman" }}'
+        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
   config_options:
     defaults:
       callbacks_enabled: ansible.posix.profile_tasks
