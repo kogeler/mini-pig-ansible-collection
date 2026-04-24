@@ -125,7 +125,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 
 | Variable | Default | Description |
 |---|---|---|
-| `naive_proxy_naive_version` | `"v143.0.7499.109-2"` | Standalone naive release tag |
+| `naive_proxy_naive_version` | `"v147.0.7727.49-2"` | Standalone naive release tag |
 | `naive_proxy_padding` | `true` | Enable `--padding` on the backend |
 | `naive_proxy_backend_base_image` | `"docker.io/library/ubuntu"` | Base image for the backend container build |
 | `naive_proxy_backend_base_image_tag` | `"22.04"` | Base image tag |
