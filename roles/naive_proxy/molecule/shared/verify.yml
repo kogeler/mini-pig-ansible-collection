@@ -221,6 +221,49 @@
     - name: Run shared benchmark tasks
       ansible.builtin.import_tasks: tasks/benchmark.yml
 
+    # -- Test 4: reverse-proxy decoy mode (naive_proxy_decoy_upstream_url) ----
+    # Re-render the Caddyfile with an upstream URL set, restart the decoy,
+    # and confirm unauthenticated traffic is reverse-proxied to the remote
+    # site with content rewriting limited to the Host header.
+    # example.com is used as a stable, IANA-controlled upstream.
+
+    - name: Reconfigure decoy in reverse-proxy mode (upstream URL)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.naive_proxy
+        tasks_from: config.yml
+      vars:
+        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+        naive_proxy_users:
+          testuser: "testpass"
+        naive_proxy_molecule_mode: true
+        naive_proxy_decoy_upstream_url: "https://example.com"
+
+    - name: Flush handlers to apply Caddyfile change
+      ansible.builtin.meta: flush_handlers
+
+    - name: Smoke test reverse-proxy decoy via HAProxy
+      ansible.builtin.uri:
+        url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: _decoy_upstream_response
+      until:
+        - _decoy_upstream_response.status == 200
+        - "'Example Domain' in (_decoy_upstream_response.content | default(''))"
+      retries: 12
+      delay: 5
+
+    - name: Assert decoy reverse-proxies to upstream URL
+      ansible.builtin.assert:
+        that:
+          - "'Example Domain' in _decoy_upstream_response.content"
+        fail_msg: >-
+          Expected upstream content from example.com but got:
+          {{ _decoy_upstream_response.content | default('<empty>') | truncate(300) }}
+
     - name: Start acme-renew timer after verify
       ansible.builtin.systemd:
         name: naive-acme-renew.timer

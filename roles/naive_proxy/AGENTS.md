@@ -55,6 +55,13 @@ HAProxy routes by **HTTP authentication** (`http_auth` + `Proxy-Authorization` h
 - Users live only in HAProxy `userlist`; the naive backend runs without auth.
 - HAProxy strips `proxy-authorization` only in `backend be_naive`, after routing has already used `http_auth`.
 
+### Decoy modes
+
+Caddy decoy has two mutually exclusive modes selected at template time:
+
+- **Local stub (default)** — `file_server` rooted at `/srv`. Content comes from `naive_proxy_decoy_index_html` or the bundled placeholder.
+- **Reverse-proxy to a remote site** — enabled by setting `naive_proxy_decoy_upstream_url`. Caddy terminates upstream TLS itself and rewrites the request `Host` to the upstream hostname (`{upstream_hostport}`). Response bodies and `Location` headers are not rewritten — picking a static-style upstream avoids URL leaks. Future option: build a custom Caddy image with `caddy-replace-response` for body rewriting (tracked as TODO in README).
+
 ### Backend hop detail
 
 The public client side is HTTP/2 over TLS on the HAProxy HTTPS frontend. The internal HAProxy -> naive backend hop is plain HTTP to `127.0.0.1:8080` and does **not** use `proto h2`.
