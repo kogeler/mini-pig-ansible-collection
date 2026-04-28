@@ -10,11 +10,11 @@ Environment=PODMAN_SYSTEMD_UNIT=%n
 Type=notify
 NotifyAccess=all
 Restart=on-failure
-RestartSec=30
+RestartSec=5
 TimeoutStartSec=300
 TimeoutStopSec=70
 Delegate=yes
-KillMode=control-group
+KillMode=mixed
 ExecStartPre=/bin/rm \
         -f %t/%n.ctr-id
 ExecStartPre=/bin/sh -c '\
