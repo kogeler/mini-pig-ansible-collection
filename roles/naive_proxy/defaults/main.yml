@@ -115,8 +115,18 @@ naive_proxy_backend_extra_args: []
 # -- Decoy site ---------------------------------------------------------------
 # Caddy serves a static decoy page for unauthenticated visitors.
 # Path to custom index.html. When empty, the role uses its built-in stub page.
+# Ignored when naive_proxy_decoy_upstream_url is set.
 
 naive_proxy_decoy_index_html: ""
+
+# When non-empty, Caddy reverse-proxies all unauthenticated traffic to the
+# given URL (e.g. "https://example.com") instead of serving the local static
+# page. Caddy terminates HTTPS on the upstream side and rewrites the Host
+# header so the upstream sees its own hostname. Absolute URLs and Location
+# redirects from the upstream are NOT rewritten — see README "Limitations".
+# When set, naive_proxy_decoy_index_html is ignored.
+
+naive_proxy_decoy_upstream_url: ""
 
 # -- Client configs -----------------------------------------------------------
 

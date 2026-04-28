@@ -157,7 +157,8 @@ The role defaults to `letsencrypt` explicitly so the first issuance does not dep
 
 | Variable | Default | Description |
 |---|---|---|
-| `naive_proxy_decoy_index_html` | `""` | Path to a custom decoy `index.html`; empty uses the built-in stub page |
+| `naive_proxy_decoy_index_html` | `""` | Path to a custom decoy `index.html`; empty uses the built-in stub page. Ignored when `naive_proxy_decoy_upstream_url` is set |
+| `naive_proxy_decoy_upstream_url` | `""` | When set (e.g. `https://example.com`), Caddy reverse-proxies unauthenticated traffic to this URL instead of serving a local static page. Caddy terminates HTTPS on the upstream side and rewrites the `Host` header to the upstream hostname |
 
 ### Container Options
 
@@ -265,6 +266,23 @@ naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_index_html: "{{ playbook_dir }}/files/decoy-index.html"
 ```
+
+### Remote Decoy (Reverse-Proxied Site)
+
+Caddy reverse-proxies all unauthenticated traffic to a remote site instead of
+serving a local stub page. Useful when you want the public TLS endpoint to look
+like an actual site under your control without hosting one. Pick an upstream
+that does not leak its own domain through absolute URLs or redirects (see
+[Limitations](#limitations)).
+
+```yaml
+naive_proxy_domain: "cdn.example.org"
+naive_proxy_users:
+  alice: "pass1"
+naive_proxy_decoy_upstream_url: "https://example.com"
+```
+
+When set, `naive_proxy_decoy_index_html` is ignored.
 
 ### Override HAProxy Tuning
 
@@ -438,6 +456,7 @@ ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
 - TLS-ALPN-01 still requires public reachability from the CA to port `443`; if you listen elsewhere, you need upstream forwarding to that port.
 - The backend image is built on the target host; there is no prebuilt multi-arch image in this role.
 - `naive_proxy_haproxy_notsent_lowat` is intentionally left off by default because it is a Linux-specific tuning knob that should be benchmarked on the real host first.
+- `naive_proxy_decoy_upstream_url` does not rewrite response bodies or `Location` headers. Absolute URLs and redirects from the upstream site continue to point at the upstream's real domain, which leaks the decoy origin to the client. For static-style upstreams with relative links this is usually fine; for anything dynamic, prefer an upstream you control or a custom local decoy page. **TODO**: optional response rewriting via the [`caddy-replace-response`](https://github.com/caddyserver/replace-response) plugin (requires building a custom Caddy image with `xcaddy`).
 
 ## License
 
