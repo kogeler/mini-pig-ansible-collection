@@ -227,42 +227,92 @@
     # site with content rewriting limited to the Host header.
     # example.com is used as a stable, IANA-controlled upstream.
 
-    - name: Reconfigure decoy in reverse-proxy mode (upstream URL)
-      ansible.builtin.include_role:
-        name: kogeler.mini_pig.naive_proxy
-        tasks_from: config.yml
-      vars:
-        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
-        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
-        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
-        naive_proxy_users:
-          testuser: "testpass"
-        naive_proxy_molecule_mode: true
-        naive_proxy_decoy_upstream_url: "https://example.com"
+    - name: Reverse-proxy decoy mode test
+      block:
+        - name: Reconfigure decoy in reverse-proxy mode (upstream URL)
+          ansible.builtin.include_role:
+            name: kogeler.mini_pig.naive_proxy
+            tasks_from: config.yml
+          vars:
+            naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+            naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+            naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+            naive_proxy_users:
+              testuser: "testpass"
+            naive_proxy_molecule_mode: true
+            naive_proxy_decoy_upstream_url: "https://example.com"
 
-    - name: Flush handlers to apply Caddyfile change
-      ansible.builtin.meta: flush_handlers
+        - name: Flush handlers to apply Caddyfile change
+          ansible.builtin.meta: flush_handlers
 
-    - name: Smoke test reverse-proxy decoy via HAProxy
-      ansible.builtin.uri:
-        url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
-        validate_certs: false
-        use_proxy: false
-        return_content: true
-      register: _decoy_upstream_response
-      until:
-        - _decoy_upstream_response.status == 200
-        - "'Example Domain' in (_decoy_upstream_response.content | default(''))"
-      retries: 12
-      delay: 5
+        - name: Smoke test reverse-proxy decoy via HAProxy
+          ansible.builtin.uri:
+            url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
+            validate_certs: false
+            use_proxy: false
+            return_content: true
+          register: _decoy_upstream_response
+          until:
+            - _decoy_upstream_response.status == 200
+            - "'Example Domain' in (_decoy_upstream_response.content | default(''))"
+          retries: 12
+          delay: 5
 
-    - name: Assert decoy reverse-proxies to upstream URL
-      ansible.builtin.assert:
-        that:
-          - "'Example Domain' in _decoy_upstream_response.content"
-        fail_msg: >-
-          Expected upstream content from example.com but got:
-          {{ _decoy_upstream_response.content | default('<empty>') | truncate(300) }}
+        - name: Assert decoy reverse-proxies to upstream URL
+          ansible.builtin.assert:
+            that:
+              - "'Example Domain' in _decoy_upstream_response.content"
+            fail_msg: >-
+              Expected upstream content from example.com but got:
+              {{ _decoy_upstream_response.content | default('<empty>') | truncate(300) }}
+      rescue:
+        - name: Capture decoy systemd status on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: systemctl status podman-naive-decoy.service --no-pager -l
+          register: _decoy_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture decoy journal on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: journalctl -xeu podman-naive-decoy.service --no-pager -n 200
+          register: _decoy_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Capture podman ps on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: podman ps -a
+          register: _decoy_podman_ps
+          changed_when: false
+          failed_when: false
+
+        - name: Capture rendered Caddyfile on failure
+          ansible.builtin.slurp:
+            src: "{{ naive_proxy_config_dir | default('/opt/naive-proxy') }}/Caddyfile"
+          register: _decoy_caddyfile_raw
+          failed_when: false
+
+        - name: Print reverse-proxy decoy diagnostics
+          ansible.builtin.debug:
+            msg: |-
+              === systemctl status podman-naive-decoy.service ===
+              {{ _decoy_status.stdout | default('<no output>') }}
+              {{ _decoy_status.stderr | default('') }}
+              === journalctl -xeu podman-naive-decoy.service ===
+              {{ _decoy_journal.stdout | default('<no output>') }}
+              {{ _decoy_journal.stderr | default('') }}
+              === podman ps -a ===
+              {{ _decoy_podman_ps.stdout | default('<no output>') }}
+              === rendered /opt/naive-proxy/Caddyfile ===
+              {{ (_decoy_caddyfile_raw.content | b64decode)
+                 if _decoy_caddyfile_raw.content is defined
+                 else '<could not read Caddyfile>' }}
+
+        - name: Re-raise reverse-proxy decoy test failure
+          ansible.builtin.fail:
+            msg: >-
+              Reverse-proxy decoy mode test failed; see diagnostics above.
 
     - name: Start acme-renew timer after verify
       ansible.builtin.systemd:
