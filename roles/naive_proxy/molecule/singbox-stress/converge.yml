@@ -22,6 +22,11 @@
         naive_proxy_users:
           testuser: "testpass"
         naive_proxy_molecule_mode: true
+        # Crank chromium net-stack verbosity in molecule so the backend
+        # journal carries VERBOSE1 lines (TLS handshakes, HTTP/2 frames,
+        # padding negotiation) that make CI failures self-diagnosable.
+        naive_proxy_backend_naive_args:
+          - "--v=1"
     - role: kogeler.mini_pig.ssl_router
       vars:
         # Public-facing port the sing-box client hits — same as a real
