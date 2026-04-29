@@ -51,20 +51,3 @@ _naive_proxy_acme_data_dir: "{{ naive_proxy_config_dir }}/acme-data"
 _naive_proxy_decoy_html_dir: "{{ naive_proxy_config_dir }}/decoy-html"
 _naive_proxy_decoy_data_dir: "{{ naive_proxy_config_dir }}/caddy-data"
 
-# -- Derived tuning values -----------------------------------------------------
-# BDP-based auto-sizing for the frontend H2 receive buffer. HAProxy documents
-# the default 1600k as roughly enough for 130 Mbps over 100 ms RTT, so we use
-# the same bandwidth-delay product with a floor at the upstream default.
-
-_naive_proxy_haproxy_h2_frontend_rxbuf_auto: >-
-  {% set bandwidth = naive_proxy_haproxy_expected_bandwidth_mbps | float %}
-  {% set rtt_ms = naive_proxy_haproxy_expected_rtt_ms | float %}
-  {% if bandwidth > 0 and rtt_ms > 0 %}
-  {{ [1638400, (bandwidth * rtt_ms * 125) | round(0, 'ceil') | int] | max }}
-  {% else %}
-  {{ "" }}
-  {% endif %}
-
-_naive_proxy_haproxy_h2_frontend_rxbuf_effective: >-
-  {{ naive_proxy_haproxy_h2_frontend_rxbuf | default('', true)
-     or _naive_proxy_haproxy_h2_frontend_rxbuf_auto }}

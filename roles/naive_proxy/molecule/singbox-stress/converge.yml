@@ -1,0 +1,38 @@
+---
+# Converge for singbox-stress.
+#
+# Mirrors the production topology more closely than shared/converge.yml:
+# real deployments put `kogeler.mini_pig.ssl_router` (nginx with
+# `ssl_preread`) in front of HAProxy on :443 and SNI-route by hostname
+# to the HAProxy frontend. We replicate that here so the sing-box
+# stress reproducer exercises the full chain — sing-box → ssl-router
+# (TCP/SNI) → HAProxy (TLS terminate, naive auth) → naive backend —
+# and not just sing-box → HAProxy direct.
+- name: Converge
+  hosts: all
+  vars_files:
+    - ../shared/vars/common.yml
+  roles:
+    - role: kogeler.mini_pig.naive_proxy
+      vars:
+        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+        naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip }}"
+        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+        naive_proxy_users:
+          testuser: "testpass"
+        naive_proxy_molecule_mode: true
+    - role: kogeler.mini_pig.ssl_router
+      vars:
+        # Public-facing port the sing-box client hits — same as a real
+        # deployment, where ssl-router is the only thing on :443.
+        ssl_router_https_port: 443
+        # Single SNI route: naive.test → HAProxy listen port. The match
+        # is anchored (^...$ in the template) so we use a regex that
+        # accepts the bare host plus optional :port suffix some clients
+        # send through SNI.
+        ssl_router_upstream_map:
+          naive:
+            regex: '.*{{ molecule_naive_proxy_domain | regex_escape }}'
+            host: "127.0.0.1"
+            port: "{{ molecule_naive_proxy_listen_port }}"

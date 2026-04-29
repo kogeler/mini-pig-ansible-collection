@@ -1,0 +1,19 @@
+---
+# Standalone sing-box stress benchmark playbook.
+#
+# Same shape as shared/benchmark.yml: runs only the throughput portion,
+# without the rest of verify. Useful for ad-hoc reproduction runs against
+# a converged Molecule instance.
+- name: Sing-box stress benchmark
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+    - vars/singbox-benchmark.yml
+  tasks:
+    - name: Wait for benchmark prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Run sing-box stress benchmark tasks
+      ansible.builtin.import_tasks: tasks/singbox-benchmark.yml

@@ -10,6 +10,17 @@
       naive_proxy_domain is required. Set it to the server's FQDN.
     quiet: true
 
+- name: naive-proxy | preflight | validate external ip is set
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_external_ip | length > 0
+    fail_msg: >-
+      naive_proxy_external_ip is required. Set it to the public IPv4 or
+      IPv6 that {{ naive_proxy_domain }} resolves to. Client configs use
+      this directly in the naive outbound so sing-box / cronet does not
+      need to bootstrap DNS for the proxy server itself.
+    quiet: true
+
 - name: naive-proxy | preflight | validate users are defined
   ansible.builtin.assert:
     that:

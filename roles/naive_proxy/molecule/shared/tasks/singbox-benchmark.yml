@@ -1,0 +1,279 @@
+---
+# Sing-box stress benchmark.
+#
+# Reproduces the H2 protocol failures reported by real sing-box / SFA
+# users. Architecture is intentionally aligned with the official-naive
+# benchmark (tasks/benchmark.yml) — both flow through the same iperf3
+# server inside naive-pod and the same proxychains4 + SOCKS5 client
+# loop. The transport-level pieces are shared:
+#
+#   tasks/socks-decoy-smoke.yml    SOCKS5 smoke test
+#   tasks/iperf-server.yml         iperf3 server unit inside naive-pod
+#   tasks/iperf-bench.yml          proxychains + iperf3 + CPU + assert
+#
+# This file owns only the sing-box-specific bits: binary acquisition,
+# config rendering, client systemd unit, and the journal failure-marker
+# scan that is the actual bug surface. `mixed` inbound is used instead
+# of TUN because iperf3 is already exercised through proxychains4 +
+# SOCKS5; the failure surface is the Naive outbound H2 stream, not
+# Android VpnService / TUN. TCP-only by design.
+
+# -- Sing-box binary -----------------------------------------------------
+# Pre-built into the molecule instance image by Dockerfile.j2 — see
+# molecule/singbox-stress/Dockerfile.j2 for the SFA-pinned version,
+# Go toolchain, and build tags. `with_naive_outbound` requires CGO
+# (cronet-go bindings), so the binary links glibc dynamically; the
+# client container runs a base image with a matching glibc — see
+# vars/singbox-benchmark.yml `singbox_client_image_tag`. We probe
+# `sing-box version` here so a missing / wrong image fails the test
+# with a clear marker.
+
+- name: Probe sing-box version banner
+  ansible.builtin.command:
+    cmd: "{{ singbox_host_binary_path }} version"
+  register: _singbox_version_probe
+  changed_when: false
+  failed_when: _singbox_version_probe.rc != 0
+
+- name: Print sing-box version banner
+  ansible.builtin.debug:
+    var: _singbox_version_probe.stdout_lines
+
+# -- Pebble test CA for sing-box --------------------------------------
+# The naive outbound uses cronet, which validates against Chromium's
+# hardcoded root store and ignores the system CA bundle this molecule
+# scenario writes the Pebble CA into. `tls.insecure` is rejected at
+# config-decode time on naive outbound, but sing-box does accept
+# `tls.certificate_path` and threads its contents into cronet as
+# `TrustedRootCertificates` (see protocol/naive/outbound.go in
+# sing-box v1.14.0-alpha.20). We download the Pebble root once and
+# mount it into the client container at a fixed path.
+
+- name: Download pebble root CA for sing-box client
+  ansible.builtin.get_url:
+    url: "{{ molecule_naive_proxy_pebble_root_url }}"
+    dest: /etc/ssl/certs/pebble-ca.crt
+    validate_certs: false
+    mode: "0644"
+
+# -- Sing-box client config ---------------------------------------------
+# Shape mirrors templates/singbox-client.json.j2 (the config the role
+# generates for real users) as closely as the test harness allows:
+#   * `tun` inbound replaced with `mixed` — iperf3 already exercises
+#     SOCKS5 via proxychains4, the failure surface is the Naive outbound
+#     H2 stream, not Android VpnService / TUN.
+#   * `dns` block dropped — the prod template has only one DNS server
+#     (`dns-remote-cloudflare` DoH detoured through naive) and the
+#     molecule sandbox has no internet to reach Cloudflare. The
+#     `hijack-dns` route rule is dropped with it (it depends on a `dns`
+#     block). Mixed inbound is TCP-only so no DNS queries flow through
+#     the proxy anyway.
+#   * `auto_detect_interface` dropped — only meaningful for tun/auto_route.
+#   * `tls.certificate_path` added — cronet otherwise rejects the Pebble
+#     test CA. Real prod uses a public CA chain that cronet trusts.
+#   * `log.level=debug` (prod uses `info`) so H2 stream errors surface.
+
+- name: Render sing-box client config
+  ansible.builtin.copy:
+    dest: "{{ singbox_client_config_path }}"
+    mode: "0644"
+    content: "{{ _singbox_client_config | to_nice_json }}"
+  vars:
+    _singbox_client_config:
+      log:
+        level: debug
+      inbounds:
+        - type: mixed
+          tag: mixed-in
+          listen: 127.0.0.1
+          listen_port: "{{ singbox_client_mixed_port | int }}"
+      outbounds:
+        - type: naive
+          tag: naive-test
+          # IP, not hostname — same approach as the prod template
+          # (naive_proxy_external_ip). Cronet skips DNS for the proxy
+          # itself, no bootstrap dns is needed.
+          server: "{{ molecule_naive_proxy_external_ip }}"
+          server_port: "{{ singbox_naive_server_port | int }}"
+          username: testuser
+          password: testpass
+          tls:
+            enabled: true
+            server_name: "{{ molecule_naive_proxy_domain }}"
+            # PEM read by sing-box and injected into cronet's
+            # TrustedRootCertificates — only path naive outbound
+            # exposes for adding a non-public CA.
+            certificate_path: /etc/ssl/certs/pebble-ca.crt
+        - type: direct
+          tag: direct
+      route:
+        rules:
+          - action: sniff
+          - action: reject
+            ip_cidr: ["2000::/3"]
+          - action: reject
+            port: [853]
+          # Reject QUIC / HTTP-3 (UDP/443) so apps fall back to HTTP/2
+          # over TCP through naive. Mirrors the prod template — without
+          # it the next rule (route udp → direct) would bypass naive
+          # entirely for QUIC. In this molecule scenario `mixed` inbound
+          # is TCP-only so no real UDP/443 traffic flows, but we keep
+          # the rule for parity with the prod config shape.
+          - action: reject
+            network: ["udp"]
+            port: [443]
+          - action: route
+            outbound: direct
+            network: ["udp"]
+        final: naive-test
+
+# -- Sing-box client systemd unit ---------------------------------------
+
+- name: Install sing-box client systemd unit
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ singbox_client_unit }}"
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=NaiveProxy molecule sing-box stress client (containerised)
+      RequiresMountsFor=%t/containers
+
+      [Service]
+      Environment=PODMAN_SYSTEMD_UNIT=%n
+      Type=notify
+      NotifyAccess=all
+      Restart=on-failure
+      RestartSec=5
+      TimeoutStartSec=300
+      TimeoutStopSec=70
+      Delegate=yes
+      KillMode=mixed
+      ExecStartPre=/bin/rm \
+              -f %t/%n.ctr-id
+      ExecStart=/usr/bin/podman container run \
+              --cidfile=%t/%n.ctr-id \
+              --cgroups=split \
+              --log-driver=passthrough \
+              --sdnotify=conmon \
+              --replace \
+              --name {{ singbox_client_container_name }} \
+              --network host \
+              --pull=missing \
+              --read-only=false \
+              --security-opt=no-new-privileges \
+              --security-opt=apparmor=unconfined \
+              --cap-drop=ALL \
+              --volume {{ singbox_host_binary_path }}:/usr/local/bin/sing-box:ro \
+              --volume /usr/local/lib/libcronet.so:/usr/local/lib/libcronet.so:ro \
+              --volume {{ singbox_client_config_path }}:/etc/sing-box/config.json:ro \
+              --volume /etc/ssl/certs/pebble-ca.crt:/etc/ssl/certs/pebble-ca.crt:ro \
+              {{ singbox_client_image }}:{{ singbox_client_image_tag }} \
+              sing-box run -c /etc/sing-box/config.json
+      ExecStop=/usr/bin/podman stop \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+      ExecStopPost=/usr/bin/podman rm \
+              -f \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+
+- name: Start sing-box client container
+  ansible.builtin.systemd:
+    name: "{{ singbox_client_unit }}"
+    state: restarted
+    daemon_reload: true
+
+- name: Wait for sing-box mixed inbound to start listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ singbox_client_mixed_port }}"
+    timeout: 30
+
+# -- SOCKS5 smoke test (shared) -----------------------------------------
+
+- name: Smoke-test the sing-box mixed inbound
+  ansible.builtin.include_tasks: socks-decoy-smoke.yml
+  vars:
+    _socks_smoke_proxy_host: "127.0.0.1"
+    _socks_smoke_proxy_port: "{{ singbox_client_mixed_port }}"
+    _socks_smoke_label: "sing-box mixed inbound"
+
+# -- iperf3 server + iperf3 client + CPU + assertions (all shared) ------
+
+- name: Start iperf3 server inside naive pod
+  ansible.builtin.import_tasks: iperf-server.yml
+
+- name: Run iperf3 stress through sing-box mixed inbound
+  ansible.builtin.include_tasks: iperf-bench.yml
+  vars:
+    _iperf_bench_socks_host: "127.0.0.1"
+    _iperf_bench_socks_port: "{{ singbox_client_mixed_port }}"
+    _iperf_bench_proxychains_conf: "{{ singbox_client_proxychains_conf }}"
+    _iperf_bench_parallel: "{{ iperf_parallel }}"
+    _iperf_bench_duration: "{{ iperf_duration }}"
+    _iperf_bench_min_bps: "{{ singbox_iperf_min_bps }}"
+    _iperf_bench_label: "sing-box mixed inbound"
+
+# -- Sing-box-specific journal scan (the actual bug surface) ------------
+
+- name: Capture sing-box client journal
+  ansible.builtin.command:
+    cmd: "journalctl -u {{ singbox_client_unit }} --no-pager -n 500"
+  register: _singbox_log_raw
+  changed_when: false
+
+- name: Capture HAProxy journal
+  ansible.builtin.command:
+    cmd: "journalctl -u podman-naive-haproxy.service --no-pager -n 500"
+  register: _singbox_haproxy_log_raw
+  changed_when: false
+
+- name: Capture naive backend journal
+  ansible.builtin.command:
+    cmd: "journalctl -u podman-naive-backend.service --no-pager -n 500"
+  register: _singbox_backend_log_raw
+  changed_when: false
+
+- name: Print sing-box client journal
+  ansible.builtin.debug:
+    var: _singbox_log_raw.stdout
+
+- name: Print HAProxy journal (last 500 lines)
+  ansible.builtin.debug:
+    var: _singbox_haproxy_log_raw.stdout
+
+- name: Print naive backend journal (last 500 lines)
+  ansible.builtin.debug:
+    var: _singbox_backend_log_raw.stdout
+
+- name: Locate failure markers in sing-box journal
+  ansible.builtin.set_fact:
+    _singbox_log_hits: >-
+      {{ singbox_log_failure_markers
+         | select('in', _singbox_log_raw.stdout)
+         | list }}
+
+- name: Assert sing-box journal has no naive H2 / proxy errors
+  ansible.builtin.assert:
+    that:
+      - _singbox_log_hits | length == 0
+    fail_msg: >-
+      sing-box client journal contains failure markers under stress:
+      {{ _singbox_log_hits | join(', ') }}.
+      This reproduces the reported sing-box / SFA HTTP/2 protocol error
+      against the deployed naive_proxy stack. See journals printed above
+      for the full context (sing-box, HAProxy, naive backend).
+
+# -- Cleanup -----------------------------------------------------------
+
+- name: Stop iperf3 benchmark container
+  ansible.builtin.systemd:
+    name: "{{ iperf_unit }}"
+    state: stopped
+  failed_when: false
+
+- name: Stop sing-box client container
+  ansible.builtin.systemd:
+    name: "{{ singbox_client_unit }}"
+    state: stopped
+  failed_when: false

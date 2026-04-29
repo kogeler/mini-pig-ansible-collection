@@ -1,0 +1,74 @@
+---
+# Shared: install + start the iperf3 throughput benchmark server inside
+# the naive pod. Used by both the official-naive benchmark
+# (shared/tasks/benchmark.yml) and the sing-box stress benchmark
+# (shared/tasks/singbox-benchmark.yml). Kept here verbatim so both
+# benchmarks measure against the same server-side conditions.
+#
+# Reads from shared/vars/benchmark.yml:
+#   iperf_unit, iperf_image, iperf_container_name, iperf_port
+
+- name: Install molecule iperf3 systemd unit
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ iperf_unit }}"
+    mode: "0600"
+    content: |
+      [Unit]
+      Description=Podman container-{{ iperf_container_name }}.service
+      Requires=podman-naive-pod.service
+      After=network-online.target podman-naive-pod.service
+      RequiresMountsFor=%t/containers
+
+      [Service]
+      Environment=PODMAN_SYSTEMD_UNIT=%n
+      Type=notify
+      NotifyAccess=all
+      Restart=on-failure
+      RestartSec=30
+      TimeoutStartSec=300
+      TimeoutStopSec=70
+      Delegate=yes
+      KillMode=mixed
+      ExecStartPre=/bin/rm \
+              -f %t/%n.ctr-id
+      ExecStartPre=/bin/sh -c '\
+              /usr/bin/podman image exists {{ iperf_image }} \
+              || /usr/bin/podman pull {{ iperf_image }}'
+      ExecStart=/usr/bin/podman container run \
+              --cidfile=%t/%n.ctr-id \
+              --cgroups=split \
+              --log-driver=passthrough \
+              --sdnotify=conmon \
+              --replace \
+              --name {{ iperf_container_name }} \
+              --pull=never \
+              --read-only \
+              --security-opt=no-new-privileges \
+              --security-opt=apparmor=unconfined \
+              --cap-drop=ALL \
+              --pod=naive-pod \
+              {{ iperf_image }} -s -p {{ iperf_port }}
+      ExecStop=/usr/bin/podman stop \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+      ExecStopPost=/usr/bin/podman rm \
+              -f \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Start iperf3 benchmark server inside naive pod via systemd
+  ansible.builtin.systemd:
+    name: "{{ iperf_unit }}"
+    state: restarted
+    daemon_reload: true
+
+- name: Wait for iperf3 benchmark service to become active
+  ansible.builtin.systemd:
+    name: "{{ iperf_unit }}"
+  register: _iperf_server_state
+  retries: 10
+  delay: 1
+  until: _iperf_server_state.status.ActiveState == 'active'

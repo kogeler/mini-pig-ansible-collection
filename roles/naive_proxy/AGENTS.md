@@ -180,19 +180,31 @@ roles/naive_proxy/
     │   ├── prepare.yml
     │   ├── inventory/hosts.yml
     │   └── ENABLE_CI
+    ├── singbox-stress/    # Opt-in: sing-box Naive outbound H2 reproducer (no ENABLE_CI)
+    │   ├── molecule.yml   # mirrors default (dual-driver, MP_DRIVER)
+    │   └── prepare.yml
     └── shared/            # Common playbooks and tasks for all scenarios
         ├── converge.yml
         ├── verify.yml
         ├── benchmark.yml
+        ├── singbox-verify.yml      # verify entry-point for singbox-stress
+        ├── singbox-benchmark.yml   # standalone sing-box stress benchmark
         ├── utils.yml
         ├── tasks/
         │   ├── prepare.yml
         │   ├── wait-services.yml
-        │   └── benchmark.yml
+        │   ├── benchmark.yml             # official-naive client + shared bench tasks
+        │   ├── singbox-benchmark.yml     # sing-box client + shared bench tasks
+        │   ├── socks-decoy-smoke.yml     # shared: curl decoy via SOCKS5 + assert
+        │   ├── iperf-server.yml          # shared: iperf3 server unit in naive-pod
+        │   └── iperf-bench.yml           # shared: proxychains + iperf3 + CPU + assert
         └── vars/
             ├── common.yml     # Shared variables (domain, ports, naive version)
-            └── benchmark.yml
+            ├── benchmark.yml
+            └── singbox-benchmark.yml
 ```
+
+The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own only client-specific bits (which binary, which systemd unit, which journal markers to scan). All shared transport-level steps — the SOCKS5 smoke test, the iperf3 server unit inside `naive-pod`, the proxychains4 + iperf3 client run with CPU counters and throughput assertion — live in `tasks/socks-decoy-smoke.yml`, `tasks/iperf-server.yml`, and `tasks/iperf-bench.yml`. `iperf-bench.yml` is parameterized through `_iperf_bench_*` vars (socks host/port, parallel streams, duration, label, min Mbps); `socks-decoy-smoke.yml` through `_socks_smoke_*` vars.
 
 ## Tags
 
@@ -214,6 +226,7 @@ roles/naive_proxy/
 ### Required
 
 - `naive_proxy_domain` — server FQDN
+- `naive_proxy_external_ip` — public IP that `naive_proxy_domain` resolves to. Generated client configs put this in the naive outbound `server` field (SNI stays the FQDN via `tls.server_name`), so sing-box / cronet skips the chicken-and-egg bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through naive)
 - `naive_proxy_users` — dict `{ name: password }`, at least one user
 
 ### Important
@@ -241,9 +254,7 @@ The role defaults to a speed-first profile for a dedicated VPN edge:
 
 - `naive_proxy_haproxy_cpu_policy: "performance"`
 - `naive_proxy_haproxy_ssl_cache_size: 40000`
-- `naive_proxy_haproxy_expected_bandwidth_mbps: 1000`
-- `naive_proxy_haproxy_expected_rtt_ms: 100`
-- `naive_proxy_haproxy_h2_frontend_rxbuf: ""` — empty means "derive automatically from bandwidth and RTT"
+- `naive_proxy_haproxy_h2_frontend_rxbuf: ""` — sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax (bytes default, `k`/`m`/`g` for KiB/MiB/GiB, base 1024 — e.g. `1638400`, `1600k`, `12m`). Empty → directive omitted, HAProxy uses its built-in default `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT).
 - `naive_proxy_haproxy_notsent_lowat: 0` — optional, disabled by default
 
 ### HAProxy timeout defaults
@@ -268,7 +279,6 @@ All internals are `_naive_proxy_*`.
 - `_naive_proxy_decoy_port: 8081` — Caddy decoy
 - `_naive_proxy_acme_alpn_port: 10443` — ACME TLS-ALPN responder
 - `_naive_proxy_pebble_port: 14000` — Pebble ACME directory
-- `_naive_proxy_haproxy_h2_frontend_rxbuf_effective` — final H2 frontend receive buffer after applying auto-sizing or explicit override
 
 ## Handler cascade
 
@@ -304,6 +314,7 @@ naive-acme-renew.timer (daily, RandomizedDelaySec=3600)
 | `default` | vagrant-libvirt (VM) | `default-vagrant-` | Local dev on a real VM, Debian trixie |
 | `debian-bookworm` | podman | `bookworm-podman-` | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native (delegated) | `gha-native-` | GitHub Actions, role applied to runner VM |
+| `singbox-stress` | podman / vagrant-libvirt | `singbox-stress-podman-` / `singbox-stress-vagrant-` | Opt-in sing-box Naive H2 reproducer (no `ENABLE_CI` marker; mirrors `default`'s dual-driver layout) |
 
 The `default` scenario supports two drivers selected at runtime via `MP_DRIVER` (podman | vagrant). The platforms block carries keys for both drivers in the same `molecule.yml`; each driver reads only what it understands.
 
@@ -334,6 +345,10 @@ make bookworm-podman-test
 
 # gha (localhost, no containers)
 make gha-native-test
+
+# sing-box stress reproducer (opt-in; same converge as default)
+make singbox-stress-podman-converge
+make singbox-stress-podman-verify
 ```
 
 During iterative work, do not destroy the instance between changes. Re-run `make ...-converge` and `make ...-verify` against the same instance. Use `make ...-test` only at the end of a session.
@@ -389,6 +404,18 @@ Box comes from Vagrant Cloud on first `create`; cached afterwards. `generic/debi
 
 The naive SOCKS5 client runs inside a container (Debian/Ubuntu based, `--network host`) rather than as a bare host binary. This is required because the naive binary (Chromium networking stack) fails on some host environments (Ubuntu 24.04 / kernel 6.17) while working correctly inside containers. The client container image and tag are configurable via `naive_client_image` and `naive_client_image_tag` in `molecule/shared/vars/benchmark.yml`.
 
+### Sing-box stress reproducer (`singbox-stress`)
+
+A separate Molecule scenario uses a **scenario-local `converge.yml`** (not `shared/converge.yml`) that applies `kogeler.mini_pig.naive_proxy` followed by `kogeler.mini_pig.ssl_router` — mirroring the production topology where `ssl_router` (nginx with `ssl_preread`) sits on `:443` in front of HAProxy and SNI-routes incoming traffic to the HAProxy frontend. Verify is `shared/singbox-verify.yml` which imports `shared/tasks/singbox-benchmark.yml`. Used to reproduce the HTTP/2 protocol errors reported by real sing-box / SFA users:
+
+- A Linux sing-box client runs in an unprivileged Podman container (`--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--network host`, no `/dev/net/tun`).
+- The client config is shaped after `templates/singbox-client.json.j2` (`direct` outbound + full `route.rules`) so the test exercises the same code paths real users hit. The naive outbound's `server` is the molecule's `molecule_naive_proxy_external_ip` (127.0.0.1 — same idea as `naive_proxy_external_ip` in prod, no bootstrap DNS for the proxy itself). Molecule-specific deviations: `tun` inbound replaced with `mixed` (iperf3 already drives SOCKS5 via proxychains4, the failure surface is the Naive H2 stream not VpnService); `dns` block dropped entirely (the prod `dns-remote-cloudflare` would target `1.1.1.1` which is unreachable in the sandbox) along with the `hijack-dns` route rule that depends on it — `mixed` inbound is TCP-only so no DNS queries flow through the proxy anyway; `tls.certificate_path` added for the Pebble test CA; `log.level=debug` for surface visibility.
+- The sing-box client targets `naive.test:443` (ssl-router, `ssl_router_https_port`), not HAProxy directly. ssl-router does pure TCP/SNI forwarding to `127.0.0.1:{{ molecule_naive_proxy_listen_port }}` (HAProxy on :8443), so the TLS handshake is end-to-end between cronet and HAProxy — exactly like in prod.
+- `iperf3 -P {{ iperf_parallel }}` (shared between both benchmarks via `shared/vars/benchmark.yml`, default 16) drives parallel CONNECT streams to surface H2 multiplexing failures and keeps throughput numbers comparable across the official-naive control and the sing-box reproducer.
+- The task fails when `stream failed: http2 protocol error`, `connection upload closed: http2 protocol error`, `connection download closed: http2 protocol error`, `unexpected EOF`, `ERR_PROXY`, or `ERR_TUNNEL` appears in the sing-box journal, or when iperf3 reports per-stream errors / sub-1Mbps throughput.
+- The sing-box binary is built into the molecule instance image by `molecule/singbox-stress/Dockerfile.j2` (`go install ... -tags=...,with_naive_outbound github.com/sagernet/sing-box/cmd/sing-box@${SINGBOX_VERSION}`). Build-time pins (`singbox_build_version`, `singbox_build_tags`, `singbox_build_go_version`) live in `molecule/singbox-stress/molecule.yml` under `provisioner.inventory.group_vars.all` so molecule passes them to both the create play (renders `Dockerfile.j2`) and the converge / verify plays. Defaults track [SFA](https://github.com/SagerNet/sing-box-for-android)'s `version.properties` (`VERSION_NAME` + `GO_VERSION`); bumping SFA means bumping those vars and rebuilding the molecule image (`molecule destroy` + `molecule converge`). `with_naive_outbound` in sing-box ≥ 1.14 pulls in `github.com/sagernet/cronet-go`, whose linux/amd64 backend is gated by `// +build cgo`, so the Dockerfile builds with `CGO_ENABLED=1` and the client container runs the same Debian trixie base as the molecule instance for glibc symbol compatibility.
+- The official-naive benchmark in `default` / `debian-bookworm` remains the control test. Do not delete or replace it — both must coexist.
+
 ### Built-in post-deploy healthchecks
 
 At the end of `tasks/main.yml` the role runs `tasks/healthchecks.yml` unless Ansible is in check mode.
@@ -407,7 +434,7 @@ At the end of `tasks/main.yml` the role runs `tasks/healthchecks.yml` unless Ans
 Expected output includes lines like:
 
 ```text
-iperf3 through SOCKS5 tunnel: 3039.7 Mbps
+iperf3 -P 1 through official-naive SOCKS5 tunnel: 3039.7 Mbps
 naive-haproxy avg_cpu=156.06% cpu_time=55.793s
 naive-backend avg_cpu=58.72% cpu_time=20.991s
 ```
