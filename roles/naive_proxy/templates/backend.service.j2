@@ -47,6 +47,9 @@ ExecStart=/usr/bin/podman container run \
 {% if naive_proxy_padding %}
         --padding \
 {% endif %}
+{% for arg in naive_proxy_backend_naive_args %}
+        {{ arg }} \
+{% endfor %}
         --log
 ExecStop=/usr/bin/podman stop \
         --ignore -t 10 \

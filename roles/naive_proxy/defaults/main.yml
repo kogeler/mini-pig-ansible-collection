@@ -143,10 +143,23 @@ naive_proxy_read_only_rootfs: true
 naive_proxy_selinux_relabel: false
 
 # -- Extra options for naive backend container ---------------------------------
+# `*_extra_env` / `*_extra_volumes` / `*_extra_args` are passed to
+# `podman container run` *before* the image (i.e. they are podman-level
+# flags). To pass flags to the `naive` binary itself (chromium net stack
+# CLI: `--v=N`, `--vmodule=...`, `--log-net-log=...`, `--insecure-tls=`,
+# etc.) use `naive_proxy_backend_naive_args` below — those are appended
+# after the image, so podman treats them as ENTRYPOINT arguments.
 
 naive_proxy_backend_extra_env: {}
 naive_proxy_backend_extra_volumes: []
 naive_proxy_backend_extra_args: []
+
+# Extra CLI flags forwarded to the `naive` binary entrypoint. Useful for
+# tuning chromium net-stack verbosity without rebuilding the backend
+# image. Example: `["--v=1"]` enables VLOG(1) across all modules;
+# `["--vmodule=naive_proxy*=2"]` limits verbose logging to naive_proxy
+# source files only (less noisy than `--v=2`).
+naive_proxy_backend_naive_args: []
 
 # -- Decoy site ---------------------------------------------------------------
 # Caddy serves a static decoy page for unauthenticated visitors.

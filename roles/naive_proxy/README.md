@@ -133,7 +133,8 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | `naive_proxy_backend_base_image_tag` | `"22.04"` | Base image tag |
 | `naive_proxy_backend_extra_env` | `{}` | Extra environment for the backend container |
 | `naive_proxy_backend_extra_volumes` | `[]` | Extra volumes for the backend container |
-| `naive_proxy_backend_extra_args` | `[]` | Extra Podman arguments for the backend container |
+| `naive_proxy_backend_extra_args` | `[]` | Extra **podman** flags inserted before the image (e.g. `--shm-size`, `--ulimit`). NOT for the naive binary — those flags would be eaten by `podman container run` and produce `unknown flag` errors |
+| `naive_proxy_backend_naive_args` | `[]` | Extra flags appended to the **naive** binary entrypoint (after the image). Use for chromium net-stack tuning: `["--v=1"]` for verbose logging, `["--vmodule=naive_proxy*=2"]` for module-targeted verbose, `["--log-net-log=/var/log/naive/netlog.json"]` for chrome://net-export dumps, etc. |
 
 ### Images
 
