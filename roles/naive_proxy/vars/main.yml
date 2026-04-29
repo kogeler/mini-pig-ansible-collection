@@ -50,4 +50,3 @@ _naive_proxy_certs_dir: "{{ naive_proxy_config_dir }}/certs"
 _naive_proxy_acme_data_dir: "{{ naive_proxy_config_dir }}/acme-data"
 _naive_proxy_decoy_html_dir: "{{ naive_proxy_config_dir }}/decoy-html"
 _naive_proxy_decoy_data_dir: "{{ naive_proxy_config_dir }}/caddy-data"
-

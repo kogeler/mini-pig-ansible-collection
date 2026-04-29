@@ -2,7 +2,9 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- block:
+- name: ssl-router | tasks
+  tags: ["ssl-router", "ssl_router"]
+  block:
 
     - name: ssl-route | install packages
       ansible.builtin.apt:
@@ -11,11 +13,11 @@
           - "runc"
           - "uidmap"
           - "slirp4netns"
-        update_cache: yes
-        install_recommends: no
+        update_cache: true
+        install_recommends: false
 
     - name: ssl-route | create directory
-      file:
+      ansible.builtin.file:
         path: "{{ item.path }}"
         state: directory
         mode: "{{ item.mode | default('0755') }}"
@@ -25,7 +27,7 @@
         - { path: "{{ ssl_router_base_dir }}" }
 
     - name: ssl-route | copy templates
-      template:
+      ansible.builtin.template:
         src: "{{ item.dst }}.j2"
         dest: "{{ ssl_router_base_dir }}/{{ item.dst_path }}/{{ item.dst }}"
         mode: "{{ item.mode | default('600') }}"
@@ -52,8 +54,6 @@
       ansible.builtin.systemd:
         name: "{{ _ssl_router_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
-
-  tags: ["ssl-router", "ssl_router"]
