@@ -7,10 +7,12 @@
 ## stays in the target so the schema is uniform.
 ##
 ## Scenarios x drivers:
-##   default-podman-<action>    default scenario, podman-in-podman
-##   default-vagrant-<action>   default scenario, vagrant-libvirt
-##   bookworm-podman-<action>   debian-bookworm scenario, podman-in-podman
-##   gha-native-<action>        gha scenario, ansible-native (used in CI)
+##   default-podman-<action>          default scenario, podman-in-podman
+##   default-vagrant-<action>         default scenario, vagrant-libvirt
+##   bookworm-podman-<action>         debian-bookworm scenario, podman-in-podman
+##   gha-native-<action>              gha scenario, ansible-native (used in CI)
+##   singbox-stress-podman-<action>   sing-box stress scenario, podman-in-podman
+##   singbox-stress-vagrant-<action>  sing-box stress scenario, vagrant-libvirt
 ##
 ## Supported actions (forwarded verbatim to molecule):
 ##   test create converge verify idempotence destroy login reset prepare check
@@ -22,6 +24,8 @@
 ##   make default-vagrant-verify
 ##   make bookworm-podman-test
 ##   make gha-native-test
+##   make singbox-stress-podman-converge
+##   make singbox-stress-podman-verify
 
 MOLECULE ?= molecule
 PY       ?= python
@@ -52,10 +56,12 @@ help:
 	@echo "Molecule wrapper targets for the naive_proxy role."
 	@echo ""
 	@echo "Scenarios x drivers:"
-	@echo "  default-podman-<action>    default scenario, podman-in-podman"
-	@echo "  default-vagrant-<action>   default scenario, vagrant-libvirt"
-	@echo "  bookworm-podman-<action>   debian-bookworm scenario, podman-in-podman"
-	@echo "  gha-native-<action>        gha scenario, ansible-native"
+	@echo "  default-podman-<action>          default scenario, podman-in-podman"
+	@echo "  default-vagrant-<action>         default scenario, vagrant-libvirt"
+	@echo "  bookworm-podman-<action>         debian-bookworm scenario, podman-in-podman"
+	@echo "  gha-native-<action>              gha scenario, ansible-native"
+	@echo "  singbox-stress-podman-<action>   sing-box stress scenario, podman-in-podman"
+	@echo "  singbox-stress-vagrant-<action>  sing-box stress scenario, vagrant-libvirt"
 	@echo ""
 	@echo "Actions:"
 	@echo "  test create converge verify idempotence destroy login reset prepare check"
@@ -65,6 +71,8 @@ help:
 	@echo "  make default-vagrant-converge"
 	@echo "  make bookworm-podman-verify"
 	@echo "  make gha-native-test"
+	@echo "  make singbox-stress-podman-converge"
+	@echo "  make singbox-stress-podman-verify"
 
 .PHONY: _check-vagrant
 _check-vagrant:
@@ -85,3 +93,9 @@ bookworm-podman-%:
 
 gha-native-%:
 	cd $(ROLE_DIR) && $(NATIVE_ENV) $(MOLECULE) $* -s gha
+
+singbox-stress-podman-%:
+	cd $(ROLE_DIR) && $(PODMAN_ENV) $(MOLECULE) $* -s singbox-stress
+
+singbox-stress-vagrant-%: _check-vagrant
+	cd $(ROLE_DIR) && $(VAGRANT_ENV) $(MOLECULE) $* -s singbox-stress

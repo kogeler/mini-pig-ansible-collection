@@ -13,9 +13,8 @@ global
 {% if naive_proxy_haproxy_ssl_cache_size | int > 0 %}
     tune.ssl.cachesize {{ naive_proxy_haproxy_ssl_cache_size }}
 {% endif %}
-{% set haproxy_h2_frontend_rxbuf = _naive_proxy_haproxy_h2_frontend_rxbuf_effective | string | trim %}
-{% if haproxy_h2_frontend_rxbuf %}
-    tune.h2.fe.rxbuf {{ haproxy_h2_frontend_rxbuf }}
+{% if (naive_proxy_haproxy_h2_frontend_rxbuf | string | trim) | length > 0 %}
+    tune.h2.fe.rxbuf {{ naive_proxy_haproxy_h2_frontend_rxbuf | string | trim }}
 {% endif %}
 {% if naive_proxy_haproxy_notsent_lowat | int > 0 %}
     tune.notsent-lowat.client {{ naive_proxy_haproxy_notsent_lowat }}

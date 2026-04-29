@@ -9,6 +9,12 @@ iperf_image: "docker.io/networkstatic/iperf3"
 iperf_container_name: "naive-iperf-bench"
 iperf_port: 5201
 iperf_duration: 30
+# iperf3 -P value used by both the official-naive benchmark and the
+# sing-box stress benchmark. 16 exercises HAProxy / naive backend H2
+# stream multiplexing under burst CONNECT load — that is the failure
+# surface sing-box / SFA users report. Kept symmetrical between the
+# two benchmarks so their throughput numbers are directly comparable.
+iperf_parallel: 16
 iperf_cpu_units:
   - unit: "podman-naive-haproxy.service"
     label: "naive-haproxy"

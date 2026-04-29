@@ -1,4 +1,12 @@
 ---
+# Official-naive SOCKS5 benchmark. The client-specific bits stay here
+# (download/extract are done in shared/tasks/prepare.yml; this file
+# launches the naive client container, runs a smoke test, and asserts
+# the journal looks healthy). The transport-level pieces — SOCKS smoke
+# test, iperf3 server, iperf3 + proxychains + CPU run, throughput
+# assertion — are pulled in from shared tasks so the sing-box stress
+# benchmark can reuse them without duplication.
+
 - name: Download pebble root CA cert
   ansible.builtin.get_url:
     url: "{{ molecule_naive_proxy_pebble_root_url }}"
@@ -68,26 +76,16 @@
     port: "{{ naive_client_socks_port }}"
     timeout: 30
 
-- name: Fetch decoy site through naive SOCKS5 tunnel # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >
-      curl -sf --max-time 10
-      --socks5-hostname {{ molecule_naive_proxy_domain }}:{{ naive_client_socks_port }}
-      {{ molecule_naive_proxy_decoy_url }}
-  changed_when: false
-  register: _vpn_socks_decoy
-  retries: 10
-  delay: 5
-  until: _vpn_socks_decoy.rc == 0
+# -- SOCKS5 smoke test (shared) ------------------------------------------
 
-- name: Assert decoy page received through SOCKS5 tunnel
-  ansible.builtin.assert:
-    that:
-      - "'Welcome' in _vpn_socks_decoy.stdout"
-      - "'under construction' in _vpn_socks_decoy.stdout"
-    fail_msg: >-
-      Failed to fetch decoy site through naive SOCKS5 tunnel.
-      Got: {{ _vpn_socks_decoy.stdout | default('empty') }}
+- name: Smoke-test the official-naive SOCKS5 tunnel
+  ansible.builtin.include_tasks: socks-decoy-smoke.yml
+  vars:
+    _socks_smoke_proxy_host: "{{ molecule_naive_proxy_domain }}"
+    _socks_smoke_proxy_port: "{{ naive_client_socks_port }}"
+    _socks_smoke_label: "official-naive SOCKS5 tunnel"
+
+# -- naive client journal sanity (client-specific) ----------------------
 
 - name: Read naive client log
   ansible.builtin.command:
@@ -113,165 +111,23 @@
       - "'ERR_PROXY_CERTIFICATE_INVALID' not in _naive_log"
       - "'ERR_PROXY_AUTH' not in _naive_log"
 
-- name: Install molecule iperf3 systemd unit
-  ansible.builtin.copy:
-    dest: "/etc/systemd/system/{{ iperf_unit }}"
-    mode: "0600"
-    content: |
-      [Unit]
-      Description=Podman container-{{ iperf_container_name }}.service
-      Requires=podman-naive-pod.service
-      After=network-online.target podman-naive-pod.service
-      RequiresMountsFor=%t/containers
+# -- iperf3 server + iperf3 client + CPU + assertions (all shared) -------
 
-      [Service]
-      Environment=PODMAN_SYSTEMD_UNIT=%n
-      Type=notify
-      NotifyAccess=all
-      Restart=on-failure
-      RestartSec=30
-      TimeoutStartSec=300
-      TimeoutStopSec=70
-      Delegate=yes
-      KillMode=mixed
-      ExecStartPre=/bin/rm \
-              -f %t/%n.ctr-id
-      ExecStartPre=/bin/sh -c '\
-              /usr/bin/podman image exists {{ iperf_image }} \
-              || /usr/bin/podman pull {{ iperf_image }}'
-      ExecStart=/usr/bin/podman container run \
-              --cidfile=%t/%n.ctr-id \
-              --cgroups=split \
-              --log-driver=passthrough \
-              --sdnotify=conmon \
-              --replace \
-              --name {{ iperf_container_name }} \
-              --pull=never \
-              --read-only \
-              --security-opt=no-new-privileges \
-              --security-opt=apparmor=unconfined \
-              --cap-drop=ALL \
-              --pod=naive-pod \
-              {{ iperf_image }} -s -p {{ iperf_port }}
-      ExecStop=/usr/bin/podman stop \
-              --ignore -t 10 \
-              --cidfile=%t/%n.ctr-id
-      ExecStopPost=/usr/bin/podman rm \
-              -f \
-              --ignore -t 10 \
-              --cidfile=%t/%n.ctr-id
+- name: Start iperf3 server inside naive pod
+  ansible.builtin.import_tasks: iperf-server.yml
 
-      [Install]
-      WantedBy=multi-user.target
-
-- name: Start iperf3 benchmark server inside naive pod via systemd
-  ansible.builtin.systemd:
-    name: "{{ iperf_unit }}"
-    state: restarted
-    daemon_reload: true
-
-- name: Wait for iperf3 benchmark service to become active
-  ansible.builtin.systemd:
-    name: "{{ iperf_unit }}"
-  register: _iperf_server_state
-  retries: 10
-  delay: 1
-  until: _iperf_server_state.status.ActiveState == 'active'
-
-- name: Render proxychains config for naive SOCKS tunnel
-  ansible.builtin.copy:
-    dest: /tmp/proxychains-naive.conf
-    mode: "0644"
-    content: |
-      strict_chain
-      proxy_dns
-      tcp_read_time_out 30000
-      tcp_connect_time_out 15000
-
-      [ProxyList]
-      socks5 127.0.0.1 {{ naive_client_socks_port }}
-
-- name: Read systemd CPU counters before iperf3 benchmark
-  ansible.builtin.systemd:
-    name: "{{ item.unit }}"
-  loop: "{{ iperf_cpu_units }}"
-  loop_control:
-    label: "{{ item.label }}"
-  register: _iperf_cpu_before
-
-- name: Record iperf3 benchmark start timestamp
-  ansible.builtin.command:
-    cmd: date +%s%N
-  register: _iperf_started_ns
-  changed_when: false
-
-- name: Run iperf3 benchmark through naive SOCKS5 tunnel
-  ansible.builtin.command:
-    cmd: >
-      proxychains4 -f /tmp/proxychains-naive.conf
-      iperf3 -c {{ molecule_naive_proxy_domain }} -p {{ iperf_port }} -t {{ iperf_duration }} -J
-  register: _vpn_iperf_raw
-  changed_when: false
-
-- name: Record iperf3 benchmark end timestamp
-  ansible.builtin.command:
-    cmd: date +%s%N
-  register: _iperf_finished_ns
-  changed_when: false
-
-- name: Parse iperf3 benchmark result
-  ansible.builtin.set_fact:
-    _vpn_iperf: "{{ _vpn_iperf_raw.stdout | from_json }}"
-    _vpn_iperf_bps: >-
-      {{ (_vpn_iperf_raw.stdout | from_json).end.sum_received.bits_per_second
-         | default((_vpn_iperf_raw.stdout | from_json).end.sum_sent.bits_per_second, true)
-         | float }}
-
-- name: Read systemd CPU counters after iperf3 benchmark
-  ansible.builtin.systemd:
-    name: "{{ item.unit }}"
-  loop: "{{ iperf_cpu_units }}"
-  loop_control:
-    label: "{{ item.label }}"
-  register: _iperf_cpu_after
-
-- name: Build average CPU report for benchmark interval
-  ansible.builtin.set_fact:
-    _iperf_elapsed_ns: "{{ (_iperf_finished_ns.stdout | int) - (_iperf_started_ns.stdout | int) }}"
-    _iperf_cpu_avg_report: "{{ _iperf_cpu_avg_report | default([]) + [_iperf_cpu_line] }}"
+- name: Run iperf3 stress through official-naive SOCKS5 tunnel
+  ansible.builtin.include_tasks: iperf-bench.yml
   vars:
-    _iperf_cpu_before_ns: "{{ _iperf_cpu_before.results[iperf_cpu_idx].status.CPUUsageNSec | default('0') | int }}"
-    _iperf_cpu_after_ns: "{{ item.status.CPUUsageNSec | default('0') | int }}"
-    _iperf_cpu_delta_ns: "{{ (_iperf_cpu_after_ns | int) - (_iperf_cpu_before_ns | int) }}"
-    _iperf_cpu_pct: "{{ ((_iperf_cpu_delta_ns | float) / ((_iperf_finished_ns.stdout | int) - (_iperf_started_ns.stdout | int)) * 100.0) | round(2) }}"
-    _iperf_cpu_line: >-
-      {{ iperf_cpu_units[iperf_cpu_idx].label }} avg_cpu={{ _iperf_cpu_pct }}%
-      cpu_time={{ (_iperf_cpu_delta_ns / 1000000000.0) | round(3) }}s
-  loop: "{{ _iperf_cpu_after.results }}"
-  loop_control:
-    index_var: iperf_cpu_idx
-  when: ((_iperf_finished_ns.stdout | int) - (_iperf_started_ns.stdout | int)) > 0
+    _iperf_bench_socks_host: "127.0.0.1"
+    _iperf_bench_socks_port: "{{ naive_client_socks_port }}"
+    _iperf_bench_proxychains_conf: /tmp/proxychains-naive.conf
+    _iperf_bench_parallel: "{{ iperf_parallel }}"
+    _iperf_bench_duration: "{{ iperf_duration }}"
+    _iperf_bench_min_bps: 1000000
+    _iperf_bench_label: "official-naive SOCKS5 tunnel"
 
-- name: Print iperf3 throughput over SOCKS5 tunnel
-  ansible.builtin.debug:
-    msg: >-
-      iperf3 through SOCKS5 tunnel: {{
-        (_vpn_iperf_bps / 1000000) | round(2)
-      }} Mbps
-
-- name: Assert iperf3 moved traffic through SOCKS5 tunnel
-  ansible.builtin.assert:
-    that:
-      - _vpn_iperf.end is defined
-      - _vpn_iperf_bps > 1000000
-    fail_msg: >-
-      iperf3 benchmark over SOCKS5 tunnel did not produce usable traffic.
-      stdout={{ _vpn_iperf_raw.stdout | default('') }}
-      stderr={{ _vpn_iperf_raw.stderr | default('') }}
-
-- name: Print average CPU load over iperf3 interval
-  ansible.builtin.debug:
-    var: _iperf_cpu_avg_report
+# -- Cleanup -------------------------------------------------------------
 
 - name: Stop iperf3 benchmark container
   ansible.builtin.systemd:

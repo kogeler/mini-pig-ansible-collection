@@ -6,7 +6,7 @@
 - name: restart ssl-router
   ansible.builtin.systemd:
     name: "{{ _ssl_router_systemd_unit_name }}"
-    enabled: yes
-    daemon_reload: yes
+    enabled: true
+    daemon_reload: true
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"

@@ -55,6 +55,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
     - role: kogeler.mini_pig.naive_proxy
       vars:
         naive_proxy_domain: "cdn.example.org"
+        naive_proxy_external_ip: "203.0.113.10"
         naive_proxy_users:
           alice: "s3cret-passw0rd"
         naive_proxy_acme_email: "admin@example.org"
@@ -101,6 +102,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_domain` | `""` | Public server FQDN |
+| `naive_proxy_external_ip` | `""` | Public IPv4 / IPv6 that `naive_proxy_domain` resolves to. Generated sing-box client configs put this directly in the naive outbound's `server` field so the client never bootstraps DNS for the proxy itself; SNI continues to be `naive_proxy_domain` via `tls.server_name` |
 | `naive_proxy_users` | `{}` | Dict of `name: password`, at least one user |
 
 ### General
@@ -194,12 +196,8 @@ When this is enabled:
 | `naive_proxy_haproxy_global_maxconn` | `0` | Optional global connection cap; `0` keeps HAProxy defaults |
 | `naive_proxy_haproxy_cpu_policy` | `"performance"` | HAProxy 3.2 CPU policy |
 | `naive_proxy_haproxy_ssl_cache_size` | `40000` | SSL session cache blocks |
-| `naive_proxy_haproxy_h2_frontend_rxbuf` | `""` | Optional explicit H2 frontend rx buffer; empty means auto-calculate |
-| `naive_proxy_haproxy_expected_bandwidth_mbps` | `1000` | Expected symmetric bandwidth for H2 rx buffer auto-sizing |
-| `naive_proxy_haproxy_expected_rtt_ms` | `100` | Expected RTT for H2 rx buffer auto-sizing |
+| `naive_proxy_haproxy_h2_frontend_rxbuf` | `""` | Per-stream H2 frontend receive buffer. Sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax — bytes by default, with optional `k` / `m` / `g` suffixes (KiB / MiB / GiB, base 1024). Examples: `1638400`, `1600k`, `12500000`, `12m`. Empty omits the directive and HAProxy uses its own default of `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT). Raise on high-BDP links: rough sizing `BDP_bytes ≈ bandwidth_mbps × rtt_ms × 125` |
 | `naive_proxy_haproxy_notsent_lowat` | `0` | Optional Linux-only low-water mark; disabled by default |
-
-The role defaults to a speed-first profile for dedicated VPN edges. Auto-sizing for `h2_frontend_rxbuf` is derived from bandwidth and RTT.
 
 ## Tags
 
@@ -233,6 +231,7 @@ The probe intentionally ignores certificate validation so the initial bootstrap 
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 ```
@@ -241,6 +240,7 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_acme_email: "admin@example.org"
 naive_proxy_users:
   alice: "pass1"
@@ -252,6 +252,7 @@ HAProxy may listen locally on one port while clients see another public port.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_listen_port: 8443
 naive_proxy_external_port: 443
 naive_proxy_users:
@@ -262,6 +263,7 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_index_html: "{{ playbook_dir }}/files/decoy-index.html"
@@ -277,6 +279,7 @@ that does not leak its own domain through absolute URLs or redirects (see
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_upstream_url: "https://example.com"
@@ -288,11 +291,14 @@ When set, `naive_proxy_decoy_index_html` is ignored.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
+naive_proxy_external_ip: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_haproxy_cpu_policy: "performance"
-naive_proxy_haproxy_expected_bandwidth_mbps: 500
-naive_proxy_haproxy_expected_rtt_ms: 50
+# Per-stream H2 frontend rx buffer. HAProxy size syntax (bytes / k / m / g);
+# this is BDP for 500 Mbps × 50 ms ≈ 3.125 MB. Empty / unset would leave
+# HAProxy's own 1600k (1638400 bytes ≈ 1.6 MiB) default.
+naive_proxy_haproxy_h2_frontend_rxbuf: "3125k"
 ```
 
 ### Force-Pull Runtime Images On An Existing Host
@@ -304,6 +310,10 @@ naive_proxy_update_runtime_images: true
 ## Generated Client Configs
 
 The role prints a `naive+https://` link for each user and writes sing-box JSON configs on the controller.
+The generated sing-box config requires sing-box 1.13.0 or newer with Naive outbound support. On Linux, use an official build variant that includes Cronet support.
+The generated TUN profile is IPv4-only: global IPv6 destinations are rejected to avoid IPv6 leaks.
+
+The naive outbound's `server` field is set to `naive_proxy_external_ip`, **not** the FQDN. SNI is preserved as `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the naive outbound.
 
 Example output:
 
@@ -365,6 +375,7 @@ The role ships with multiple Molecule scenarios sharing common playbooks from `m
 | `default` | podman, vagrant-libvirt | Local dev, Debian trixie (container or VM) |
 | `debian-bookworm` | podman | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native | GitHub Actions, role applied directly to runner VM |
+| `singbox-stress` | podman, vagrant-libvirt | Reproduce sing-box / SFA HTTP/2 errors with `iperf3 -P` over a Linux sing-box `naive` outbound; opt-in (no `ENABLE_CI` marker) |
 
 The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (`podman` by default, `vagrant` for vagrant-libvirt). The same platform block carries keys for both drivers; each driver reads only what it understands. A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
 
@@ -407,6 +418,10 @@ make bookworm-podman-test
 
 # GHA scenario (localhost)
 make gha-native-test
+
+# sing-box stress scenario (reproducer for sing-box / SFA H2 errors)
+make singbox-stress-podman-converge
+make singbox-stress-podman-verify
 ```
 
 `<action>` is forwarded verbatim to `molecule` and may be any of: `test`, `create`, `converge`, `verify`, `idempotence`, `destroy`, `login`, `reset`, `prepare`, `check`.
@@ -439,6 +454,124 @@ INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
 ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
   ansible-playbook -i "$INV" shared/benchmark.yml
 ```
+
+### Sing-box Stress Scenario
+
+`singbox-stress` is an opt-in scenario for reproducing the HTTP/2 protocol
+errors reported by real sing-box / SFA clients against a deployed
+naive_proxy stack:
+
+```text
+outbound/naive: stream failed: http2 protocol error
+connection upload closed: http2 protocol error
+connection download closed: http2 protocol error
+```
+
+It mirrors the `default` scenario layout (dual-driver, `MP_DRIVER`-selected
+podman or vagrant) but uses a **scenario-local `converge.yml`** that
+applies the `kogeler.mini_pig.naive_proxy` role followed by
+`kogeler.mini_pig.ssl_router` — replicating the production topology
+where `ssl_router` (nginx with `ssl_preread`) sits on `:443` in front
+of HAProxy and SNI-routes incoming traffic to the HAProxy frontend on
+`{{ molecule_naive_proxy_listen_port }}`. The sing-box client targets
+`naive.test:443` (ssl-router), so the TLS handshake is end-to-end
+between cronet and HAProxy through nginx's TCP/SNI proxy. Verify swaps
+the official-naive SOCKS5 path for a Linux sing-box client with a
+`naive` outbound and a [`mixed` inbound](https://sing-box.sagernet.org/configuration/inbound/mixed/),
+then drives `iperf3 -P {{ iperf_parallel }}` (shared with the official-naive benchmark via `shared/vars/benchmark.yml`, default 16) through
+the same proxychains4 + SOCKS5 setup as the official-naive benchmark.
+
+The sing-box client config is shaped after `templates/singbox-client.json.j2`
+(`direct` outbound + full `route.rules`). The naive outbound's `server`
+is the molecule's `molecule_naive_proxy_external_ip` (127.0.0.1 — same
+idea as the prod `naive_proxy_external_ip`, no bootstrap DNS for the
+proxy itself). Molecule-specific deviations: `tun` inbound → `mixed`;
+the `dns` block is dropped entirely (prod-only `dns-remote-cloudflare`
+targets 1.1.1.1 which is unreachable in the molecule sandbox) along
+with the `hijack-dns` route rule that depends on it — `mixed` inbound
+is TCP-only so no DNS queries flow through the proxy anyway;
+`tls.certificate_path` points at the Pebble test CA; `log.level: debug`
+for failure-surface visibility.
+
+`mixed` is used instead of `tun` because iperf3 already exercises the
+SOCKS5 path through proxychains4, and the failure surface is the Naive
+outbound HTTP/2 stream (not Android `VpnService` / TUN). The scenario is
+intentionally **TCP-only**; UDP-over-Naive is not exercised.
+
+The sing-box client container runs unprivileged: `--cap-drop=ALL`,
+`--security-opt=no-new-privileges`, `--security-opt=apparmor=unconfined`,
+no `/dev/net/tun` mount.
+
+#### Sing-box binary
+
+The sing-box binary is compiled inside `molecule/singbox-stress/Dockerfile.j2`
+and baked into the molecule instance image at `/usr/local/bin/sing-box`.
+Standard SagerNet linux releases ship without `with_naive_outbound`, so the
+Dockerfile installs the same Go toolchain SFA uses and runs:
+
+```text
+go install -tags=with_clash_api,with_quic,with_utls,with_naive_outbound \
+    github.com/sagernet/sing-box/cmd/sing-box@${SINGBOX_VERSION}
+```
+
+The build-time pins (`singbox_build_version`, `singbox_build_tags`,
+`singbox_build_go_version`) live in `molecule/singbox-stress/molecule.yml`
+under `provisioner.inventory.group_vars.all` — molecule loads those into
+both the create play (which renders `Dockerfile.j2`) and the
+converge / verify plays, so the Dockerfile picks them up via Jinja2
+substitution at template time. The defaults track SFA's
+`version.properties` (`VERSION_NAME` for the sing-box version,
+`GO_VERSION` for the toolchain). Bumping SFA → bump those vars and run
+`molecule destroy` + `molecule converge` to rebuild the image. The
+`with_naive_outbound` build pulls in `github.com/sagernet/cronet-go`
+whose linux/amd64 backend is gated by `// +build cgo`, so the image
+build uses `CGO_ENABLED=1`; the resulting binary links against glibc
+dynamically and the client container therefore runs the same Debian
+trixie base as the molecule instance to keep glibc symbols compatible.
+
+#### Running
+
+```bash
+cd naive_proxy/molecule
+
+# converge once, run the sing-box stress reproducer, keep instance alive
+make singbox-stress-podman-converge
+make singbox-stress-podman-verify
+
+# raise concurrency to chase the bug locally — bump `iperf_parallel`
+# in molecule/shared/vars/benchmark.yml (default 16) to 32+
+```
+
+#### Standalone sing-box benchmark
+
+```bash
+cd naive_proxy/molecule
+make singbox-stress-podman-converge
+
+INV=/home/verstak/.ansible/tmp/molecule.<id>.singbox-stress/inventory
+ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
+  ansible-playbook -i "$INV" shared/singbox-benchmark.yml
+```
+
+#### Failure conditions
+
+The stress task fails when any of the following appears in the sing-box
+client journal:
+
+- `stream failed: http2 protocol error`
+- `connection upload closed: http2 protocol error`
+- `connection download closed: http2 protocol error`
+- `unexpected EOF`
+- `ERR_PROXY`
+- `ERR_TUNNEL`
+
+It also fails when iperf3 returns no JSON, when iperf3 reports
+per-stream errors, or when measured throughput drops below
+`singbox_iperf_min_bps` (default 1 Mbps — high enough to detect a stall,
+low enough to avoid flagging slow CI nodes).
+
+The official-naive benchmark in `default` and `debian-bookworm`
+remains the control test; both should pass on a healthy stack.
 
 ### Standalone Runtime Image Refresh Test
 

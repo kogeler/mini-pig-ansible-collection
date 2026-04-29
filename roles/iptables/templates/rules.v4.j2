@@ -39,7 +39,11 @@ COMMIT
 -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 -A FORWARD -m state --state INVALID -j DROP
 {% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
 -A FORWARD -d {{ port.dst_address }}/32 -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -m state --state NEW -j ACCEPT
+{% else %}
+-A FORWARD -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -m state --state NEW -j ACCEPT
+{% endif %}
 {% endfor %}
 -A FORWARD -i {{ iptables_inf_ext }} -m state --state NEW -j DROP
 -A OUTPUT -o lo -j ACCEPT
@@ -65,7 +69,9 @@ COMMIT
 -A POSTROUTING -o {{ iptables_inf_ext }} -j MASQUERADE
 {% endif %}
 {% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
 -A PREROUTING -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -j DNAT --to-destination {{ port.dst_address }}:{{ port.dst_port }}
 -A POSTROUTING -d {{ port.dst_address }}/32 -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -j MASQUERADE
+{% endif %}
 {% endfor %}
 COMMIT

@@ -25,10 +25,15 @@
         that:
           - "(_haproxy_cfg | regex_search('(?m)^\\s*cpu-policy\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.ssl\\.cachesize\\s+\\S+\\s*$')) is not none"
-          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.h2\\.fe\\.rxbuf\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout client-fin\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout server-fin\\s+\\S+\\s*$')) is not none"
       when: naive_proxy_haproxy_cpu_policy | default('') | length > 0
+
+    - name: Assert tune.h2.fe.rxbuf is rendered when explicitly configured
+      ansible.builtin.assert:
+        that:
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.h2\\.fe\\.rxbuf\\s+\\S+\\s*$')) is not none"
+      when: (naive_proxy_haproxy_h2_frontend_rxbuf | default('') | string | trim) | length > 0
 
     # -- Decoy site smoke test -------------------------------------------------
 
@@ -235,6 +240,7 @@
             tasks_from: config.yml
           vars:
             naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+            naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip }}"
             naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
             naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
             naive_proxy_users:

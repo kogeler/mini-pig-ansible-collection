@@ -1,6 +1,12 @@
 ---
 naive_proxy_naive_version: "v147.0.7727.49-2"
 molecule_naive_proxy_domain: "naive.test"
+# IP that naive.test resolves to inside the molecule instance (set via
+# molecule.yml etc_hosts and shared/tasks/prepare.yml lineinfile). The
+# role's new naive_proxy_external_ip is plumbed from this so the
+# generated client configs (and the sing-box stress benchmark) hit the
+# server by IP — no chicken-and-egg with bootstrap DNS.
+molecule_naive_proxy_external_ip: "127.0.0.1"
 molecule_naive_proxy_listen_port: 8443
 molecule_naive_proxy_external_port: 9443
 molecule_naive_proxy_decoy_url: "http://{{ molecule_naive_proxy_domain }}:8081/"

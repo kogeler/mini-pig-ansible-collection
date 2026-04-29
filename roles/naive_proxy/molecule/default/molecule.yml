@@ -58,7 +58,7 @@ platforms:
     # ---- vagrant driver keys ----
     box: "${MP_BOX:-debian/trixie64}"
     memory: "${MP_VM_MEMORY:-2048}"
-    cpus: "${MP_VM_CPUS:-2}"
+    cpus: "${MP_VM_CPUS:-8}"
 provisioner:
   name: ansible
   options:

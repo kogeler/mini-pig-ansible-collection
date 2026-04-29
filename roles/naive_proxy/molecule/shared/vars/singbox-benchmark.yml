@@ -1,0 +1,70 @@
+---
+# Sing-box stress benchmark vars.
+#
+# Reproduces the failure mode reported by real sing-box / SFA clients:
+#
+#   outbound/naive: stream failed: http2 protocol error
+#   connection upload closed: http2 protocol error
+#   connection download closed: http2 protocol error
+#
+# The official naive client benchmark in tasks/benchmark.yml is the
+# control case. This benchmark exercises the same HAProxy + naive backend
+# stack with a Linux sing-box client using a "naive" outbound. The
+# "mixed" inbound (HTTP/SOCKS) is enough because iperf3 already runs via
+# proxychains4 over SOCKS5; we deliberately avoid TUN and UDP because the
+# observed failure is in Naive outbound HTTP/2 streams, not in
+# Android VpnService / TUN.
+
+# ---- sing-box client container -----------------------------------------
+singbox_client_unit: "podman-singbox-naive-molecule-client.service"
+singbox_client_container_name: "singbox-naive-molecule-client"
+# sing-box is built CGO_ENABLED=0 with `with_purego`, so the binary is
+# static Go and runs on any glibc/musl base image. The libcronet.so
+# (mounted into the client container) is built against glibc ≥ 2.31
+# per cronet-go README, so bookworm-slim (glibc 2.36) is enough.
+singbox_client_image: "docker.io/library/debian"
+singbox_client_image_tag: "bookworm-slim"
+singbox_client_mixed_port: 1081
+singbox_client_config_path: "/tmp/sing-box-naive-client.json"
+singbox_client_proxychains_conf: "/tmp/proxychains-singbox-naive.conf"
+# Public-facing port the sing-box client targets — `ssl_router_https_port`
+# in molecule/singbox-stress/converge.yml (default 443). ssl-router
+# SNI-routes naive.test traffic to molecule_naive_proxy_listen_port
+# (HAProxy on 8443).
+singbox_naive_server_port: 443
+
+# ---- sing-box binary acquisition ---------------------------------------
+# The sing-box binary is built into the molecule instance image at
+# /usr/local/bin/sing-box by molecule/singbox-stress/Dockerfile.j2.
+# Build-time pins (sing-box version, Go toolchain, build tags, cronet
+# release) live in molecule/singbox-stress/molecule.yml under
+# `provisioner.inventory.group_vars.all` as `singbox_build_*` — that's
+# the only scenario-level vars location molecule loads into both the
+# create play (which renders Dockerfile.j2 against `localhost`) and the
+# converge/verify plays. `with_naive_outbound,with_purego` makes
+# cronet-go dlopen libcronet.so at runtime via purego, so the build is
+# CGO_ENABLED=0 (static Go binary) and libcronet.so is downloaded
+# separately from the cronet-go GitHub release into /usr/local/lib;
+# the client container mounts both /usr/local/bin/sing-box and the .so.
+singbox_host_binary_path: /usr/local/bin/sing-box
+
+# ---- iperf3 stress mode ------------------------------------------------
+# `iperf_parallel` and `iperf_duration` are shared with the official-naive
+# benchmark (see shared/vars/benchmark.yml) so throughput numbers are
+# directly comparable. Only the throughput floor is kept benchmark-local:
+# the point of *this* test is to surface H2 protocol errors, not to
+# assert peak Mbps, so the floor stays intentionally low. A throughput
+# collapse here means the H2 / naive bug already triggered.
+singbox_iperf_min_bps: 1000000
+
+# ---- log poisoning markers --------------------------------------------
+# Substrings whose presence in the sing-box client journal must fail the
+# benchmark. These are the exact phrases reported by sing-box / SFA users
+# and what we expect to surface when the bug reproduces.
+singbox_log_failure_markers:
+  - "stream failed: http2 protocol error"
+  - "connection upload closed: http2 protocol error"
+  - "connection download closed: http2 protocol error"
+  - "unexpected EOF"
+  - "ERR_PROXY"
+  - "ERR_TUNNEL"

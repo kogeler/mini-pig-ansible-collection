@@ -14,11 +14,17 @@ iptables_ports:
 #    src_v6: ::/0
 #    skip_v6: false 
 iptables_forwarded_ports: []
+#  # DNAT + FORWARD allow
 #  - forwarded_inf: eth0
 #    forwarded_port: 22
 #    protocol: tcp
 #    dst_port: 22
 #    dst_address: 192.168.1.1
+#  # FORWARD allow only (no DNAT) — used when dst_* are omitted
+#  - forwarded_inf: wg0
+#    forwarded_port: 443
+#    protocol: tcp
+#    src_v4: 10.0.0.0/8
 iptables_docker_ports: []
 #  - port: 80
 #    protocol: tcp

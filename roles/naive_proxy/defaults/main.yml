@@ -17,6 +17,17 @@ naive_proxy_update_runtime_images: false
 
 naive_proxy_domain: ""
 
+# Public IP that `naive_proxy_domain` resolves to. Required: client
+# configs use this directly in the naive outbound `server` field so the
+# sing-box / cronet client never needs to do DNS for the proxy itself
+# (no chicken-and-egg with bootstrap DNS through a not-yet-established
+# tunnel). The TLS SNI continues to be `naive_proxy_domain` via
+# `tls.server_name`. Set to a public reachable IPv4 or IPv6 of the
+# server. The role itself does not bind to this address — it is only
+# rendered into the generated client configs.
+
+naive_proxy_external_ip: ""
+
 # -- Users (required) ---------------------------------------------------------
 # Dict of name -> password.  At least one user must be defined.
 # Passwords are used for HTTP basic auth (Proxy-Authorization header).
@@ -78,9 +89,30 @@ naive_proxy_haproxy_timeout_server_fin: "30s"
 # Optional global connection cap. 0 keeps HAProxy defaults.
 naive_proxy_haproxy_global_maxconn: 0
 
-# HAProxy 3.2+ CPU placement policy. "performance" is the recommended starting
-# point for busy dedicated proxies where client speed matters more than keeping
-# the daemon on as few CPUs as possible. Set to "" to keep HAProxy defaults.
+# HAProxy 3.2+ CPU placement policy. Sets the `cpu-policy <name>` directive
+# in the HAProxy `global` section, which decides how worker threads / thread
+# groups are pinned to CPU resources at startup.
+# Empty string keeps HAProxy's own default, which is `first-usable-node`
+# since HAProxy 3.0 (binds to the first usable NUMA node).
+#
+# Accepted values (see HAProxy 3.2 manual `3.1. cpu-policy`):
+#   none                  — no specific placement; threads run wherever the OS schedules them.
+#   first-usable-node     — pin all threads to the first usable NUMA node (HAProxy default).
+#   group-by-cluster      — one thread group per CPU cluster (typically per L3 cache).
+#   group-by-2-clusters / group-by-3-clusters / group-by-4-clusters
+#                         — like above, grouping N clusters together.
+#   group-by-ccx          — one thread group per CCX (e.g. AMD core complex).
+#   group-by-2-ccx / group-by-3-ccx / group-by-4-ccx
+#                         — like above, grouping N CCX together.
+#   group-by-node         — one thread group per NUMA node.
+#   performance           — performance-oriented; spreads threads across cores to
+#                           maximize throughput.
+#   efficiency            — efficiency-oriented; consolidates threads on fewer cores.
+#   resource              — minimal-resource; even more aggressive consolidation.
+#
+# `performance` is the recommended starting point for a busy dedicated VPN
+# edge where client throughput matters more than packing the daemon onto as
+# few CPUs as possible.
 naive_proxy_haproxy_cpu_policy: "performance"
 
 # SSL session cache size in blocks. HAProxy documents roughly 200 bytes per
@@ -88,13 +120,17 @@ naive_proxy_haproxy_cpu_policy: "performance"
 # reuse bursts than the upstream default.
 naive_proxy_haproxy_ssl_cache_size: 40000
 
-# Optional explicit frontend H2 receive buffer. When empty, the role derives it
-# from the expected symmetric bandwidth and RTT below using the HAProxy BDP
-# guidance for H2 uploads. Lower expected_bandwidth_mbps to reduce per-client
-# memory usage on smaller servers.
+# Per-stream H2 frontend receive buffer.
+# Sets the `tune.h2.fe.rxbuf <size>` directive in the HAProxy `global`
+# section. Units: HAProxy size syntax — bytes by default; suffixes
+# `k`, `m`, `g` accepted (kibibytes / mebibytes / gibibytes, base 1024).
+# Examples: `1638400`, `1600k`, `12500000`, `12500k`, `12m`.
+# When empty, the directive is omitted from haproxy.cfg and HAProxy
+# applies its own built-in default of `1600k` (1638400 bytes / 1.6 MiB,
+# ≈ enough for ~130 Mbps × 100 ms RTT). Raise on high-BDP links —
+# rough sizing: `BDP_bytes ≈ bandwidth_mbps × rtt_ms × 125`. RAM cost
+# is per-stream × concurrent H2 streams.
 naive_proxy_haproxy_h2_frontend_rxbuf: ""
-naive_proxy_haproxy_expected_bandwidth_mbps: 1000
-naive_proxy_haproxy_expected_rtt_ms: 100
 
 # Optional Linux-only low-water mark for client/server sockets. Set this to a
 # small value such as 16384 only after benchmarks confirm it helps your host.

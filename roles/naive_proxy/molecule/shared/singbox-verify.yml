@@ -1,0 +1,22 @@
+---
+# Verify playbook for the singbox-stress scenario.
+#
+# This is an intentionally narrow verify: it only exercises the sing-box
+# Naive outbound stress path. The full role contract (cert renewal,
+# decoy modes, official-naive SOCKS5 client, ...) is already covered by
+# shared/verify.yml which runs in the default and debian-bookworm
+# scenarios. Keeping this playbook focused on the reproducer makes
+# failures here unambiguous about *which* component is broken.
+- name: Verify (singbox stress)
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+    - vars/singbox-benchmark.yml
+  tasks:
+    - name: Wait for verify prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Run sing-box stress benchmark
+      ansible.builtin.import_tasks: tasks/singbox-benchmark.yml
