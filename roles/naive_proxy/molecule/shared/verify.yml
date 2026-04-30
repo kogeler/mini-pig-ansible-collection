@@ -11,6 +11,13 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- HAProxy diagnostics surface ------------------------------------------
+    - name: Verify HAProxy diagnostics surface
+      ansible.builtin.import_tasks: tasks/verify-diagnostics.yml
+      when: naive_proxy_haproxy_diagnostics_enabled | default(false)
+      vars:
+        naive_proxy_haproxy_diagnostics_port: "{{ naive_proxy_haproxy_diagnostics_port | default(19999) }}"
+
     - name: Read rendered HAProxy config
       ansible.builtin.slurp:
         src: /opt/naive-proxy/haproxy.cfg

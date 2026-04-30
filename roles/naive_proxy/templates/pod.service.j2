@@ -13,6 +13,9 @@ ExecStart=/usr/bin/podman pod create \
         --publish {{ _naive_proxy_pebble_port }}:{{ _naive_proxy_pebble_port }} \
         --publish {{ _naive_proxy_pebble_mgmt_port }}:{{ _naive_proxy_pebble_mgmt_port }} \
 {% endif %}
+{% if naive_proxy_haproxy_diagnostics_enabled %}
+        --publish 127.0.0.1:{{ naive_proxy_haproxy_diagnostics_port | int }}:{{ naive_proxy_haproxy_diagnostics_port | int }} \
+{% endif %}
         --publish {{ naive_proxy_listen_port }}:{{ naive_proxy_listen_port }}
 ExecStop=/usr/bin/podman pod stop \
         --ignore {{ _naive_proxy_pod_name }}

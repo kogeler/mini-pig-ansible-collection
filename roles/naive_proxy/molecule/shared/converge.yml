@@ -18,3 +18,8 @@
         # padding negotiation) that make CI failures self-diagnosable.
         naive_proxy_backend_naive_args:
           - "--v=1"
+        # Exercise the opt-in HAProxy diagnostics surface in CI: pod
+        # publishes the admin socket on 127.0.0.1:<port>, the H2 trace
+        # ring is declared in haproxy.cfg. shared/tasks/verify-diagnostics.yml
+        # asserts both are reachable and the CLI answers `show info`.
+        naive_proxy_haproxy_diagnostics_enabled: true

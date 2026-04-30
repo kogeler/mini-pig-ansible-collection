@@ -18,5 +18,15 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- HAProxy diagnostics surface ------------------------------------------
+    # Run before the stress benchmark so that if the diagnostics surface is
+    # broken we fail fast with a clear message instead of timing out on the
+    # 60+ second sing-box benchmark step.
+    - name: Verify HAProxy diagnostics surface
+      ansible.builtin.import_tasks: tasks/verify-diagnostics.yml
+      when: naive_proxy_haproxy_diagnostics_enabled | default(false)
+      vars:
+        naive_proxy_haproxy_diagnostics_port: "{{ naive_proxy_haproxy_diagnostics_port | default(19999) }}"
+
     - name: Run sing-box stress benchmark
       ansible.builtin.import_tasks: tasks/singbox-benchmark.yml

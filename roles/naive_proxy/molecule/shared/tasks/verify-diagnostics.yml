@@ -1,0 +1,98 @@
+---
+# Verifies the opt-in HAProxy diagnostics surface added by
+# `naive_proxy_haproxy_diagnostics_enabled: true`:
+#
+#   * `ring h2trace` block rendered in haproxy.cfg
+#   * `stats socket ipv4@*:<port> level admin` rendered in global
+#   * pod publishes 127.0.0.1:<port>:<port> so the admin socket is
+#     reachable on the molecule instance's loopback
+#   * the admin socket actually answers HAProxy CLI commands
+#
+# Run after wait-services.yml so the haproxy container is up.
+
+- name: diagnostics | read rendered haproxy.cfg
+  ansible.builtin.slurp:
+    src: /opt/naive-proxy/haproxy.cfg
+  register: _diag_haproxy_cfg_raw
+
+- name: diagnostics | set haproxy.cfg fact
+  ansible.builtin.set_fact:
+    _diag_haproxy_cfg: "{{ _diag_haproxy_cfg_raw.content | b64decode }}"
+
+- name: diagnostics | assert ring h2trace block is rendered
+  ansible.builtin.assert:
+    that:
+      - "(_diag_haproxy_cfg | regex_search('(?m)^\\s*ring\\s+h2trace\\s*$')) is not none"
+      - "(_diag_haproxy_cfg | regex_search('(?m)^\\s*size\\s+\\d+\\s*$')) is not none"
+    fail_msg: |-
+      Expected `ring h2trace` block with `size <bytes>` in haproxy.cfg
+      but it was not rendered. Either the diagnostics knob is not set
+      to true in converge, or the role template lost the ring block.
+
+- name: diagnostics | assert stats socket on configured port is rendered
+  vars:
+    _diag_socket_line: >-
+      stats socket ipv4@*:{{ naive_proxy_haproxy_diagnostics_port | int }} level admin
+  ansible.builtin.assert:
+    that:
+      - _diag_socket_line in _diag_haproxy_cfg
+    fail_msg: |-
+      Expected `{{ _diag_socket_line }}` in haproxy.cfg, did not find it.
+
+- name: diagnostics | wait for admin socket on 127.0.0.1
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ naive_proxy_haproxy_diagnostics_port | int }}"
+    state: started
+    timeout: 30
+
+# bash's /dev/tcp built-in lets us speak to the HAProxy CLI without
+# requiring nc/ncat to be installed inside the molecule instance.
+- name: diagnostics | query admin socket — show info # noqa: command-instead-of-shell risky-shell-pipe
+  ansible.builtin.shell: |-
+    set -eu
+    exec 3<>/dev/tcp/127.0.0.1/{{ naive_proxy_haproxy_diagnostics_port | int }}
+    printf 'show info\nquit\n' >&3
+    timeout 3 cat <&3 || true
+  args:
+    executable: /bin/bash
+  register: _diag_show_info
+  changed_when: false
+
+- name: diagnostics | assert show info returns HAProxy version
+  ansible.builtin.assert:
+    that:
+      - "(_diag_show_info.stdout | regex_search('(?m)^Version:\\s*\\S+')) is not none"
+      - "(_diag_show_info.stdout | regex_search('(?m)^Nbthread:\\s*\\d+')) is not none"
+    fail_msg: |-
+      `show info` did not return a HAProxy version line. The admin
+      socket is reachable but does not speak the CLI protocol — the
+      port may be NAT'd to something else, or HAProxy was started
+      without `level admin`.
+      Output was:
+      {{ _diag_show_info.stdout | default('<empty>') | truncate(800) }}
+
+- name: diagnostics | query admin socket — show events h2trace # noqa: command-instead-of-shell risky-shell-pipe
+  ansible.builtin.shell: |-
+    set -eu
+    exec 3<>/dev/tcp/127.0.0.1/{{ naive_proxy_haproxy_diagnostics_port | int }}
+    printf 'show events h2trace\nquit\n' >&3
+    timeout 3 cat <&3 || true
+  args:
+    executable: /bin/bash
+  register: _diag_show_events
+  changed_when: false
+
+# The h2trace ring is freshly initialised at this point so there may be
+# zero events in it. We only assert that the command was accepted (no
+# `Unknown event sink` error). An empty result is fine.
+- name: diagnostics | assert show events h2trace was accepted
+  ansible.builtin.assert:
+    that:
+      - "'Unknown event sink' not in _diag_show_events.stdout"
+      - "'No such ring buffer' not in _diag_show_events.stdout"
+    fail_msg: |-
+      `show events h2trace` was rejected by the admin socket. The
+      ring sink may not be declared in haproxy.cfg.
+      Output was:
+      {{ _diag_show_events.stdout | default('<empty>') | truncate(800) }}
