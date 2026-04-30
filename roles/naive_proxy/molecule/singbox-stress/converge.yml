@@ -27,6 +27,11 @@
         # padding negotiation) that make CI failures self-diagnosable.
         naive_proxy_backend_naive_args:
           - "--v=1"
+        # Exercise the opt-in HAProxy diagnostics surface in CI; the
+        # singbox-verify playbook (shared/singbox-verify.yml) asserts
+        # the admin socket is reachable on 127.0.0.1 and answers
+        # HAProxy CLI commands.
+        naive_proxy_haproxy_diagnostics_enabled: true
     - role: kogeler.mini_pig.ssl_router
       vars:
         # Public-facing port the sing-box client hits — same as a real

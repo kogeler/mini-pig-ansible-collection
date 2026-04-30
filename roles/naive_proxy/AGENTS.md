@@ -163,6 +163,14 @@ roles/naive_proxy/
 │   ├── pebble-config.json.j2
 │   └── singbox-client.json.j2
 ├── files/index.html
+├── debug/                    # Operator-side toolkit for prod H2 diagnostics (NOT applied by the role)
+│   ├── README.md             # Workflow, prerequisites, parametrisation, output interpretation
+│   ├── start-capture.sh      # tcpdump (host + pod-netns) + journal-follow + ss/nstat sampler
+│   ├── h2trace-start.sh      # enable HAProxy H2 trace into a custom 32 MiB ring sink
+│   ├── stop-capture-dump-h2.sh  # stop watchers + dump trace events into the capture dir
+│   ├── analyze.sh            # structured report (counters, time histograms, TCP zero-window, term-states)
+│   ├── upload-via-tty.sh     # operator-side: base64-stream a local file to a TCP-bridged TTY
+│   └── download-via-tty.sh   # operator-side: pull a file off the target through the same TTY
 └── molecule/
     ├── Makefile           # Thin wrapper: <scenario>-<driver>-<action>, hides MP_DRIVER/GIT_DIR/ANSIBLE_LIBRARY
     ├── default/           # Dual-driver scenario (podman-in-podman + vagrant-libvirt), Debian trixie
@@ -250,12 +258,25 @@ The utils refresh path is intentionally limited to long-running runtime services
 
 ### HAProxy tuning defaults
 
-The role defaults to a speed-first profile for a dedicated VPN edge:
+The role defaults to a speed-first profile for a dedicated VPN edge, with two H2 knobs set as workarounds for the demuxer-buffer-pressure bug reported upstream as haproxy/haproxy#3354:
 
+- `naive_proxy_haproxy_image_tag: "3.3-alpine"` — defaults to HAProxy 3.3 because that's the version that carries the `ring` infrastructure used by the optional diagnostics toggle, and where the H2 fixes that mitigate #3354 are most current. Override to `"3.2-alpine"` for the previous LTS branch with longer term support.
 - `naive_proxy_haproxy_cpu_policy: "performance"`
 - `naive_proxy_haproxy_ssl_cache_size: 40000`
-- `naive_proxy_haproxy_h2_frontend_rxbuf: ""` — sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax (bytes default, `k`/`m`/`g` for KiB/MiB/GiB, base 1024 — e.g. `1638400`, `1600k`, `12m`). Empty → directive omitted, HAProxy uses its built-in default `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT).
+- `naive_proxy_haproxy_h2_frontend_rxbuf: ""` — sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax (bytes default, `k`/`m`/`g` for KiB/MiB/GiB, base 1024 — e.g. `1638400`, `1600k`, `12m`). Empty → directive omitted, HAProxy uses its built-in default `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT). Empirical: bumping above default *worsened* #3354 failures in our tests; leave at default unless you have benchmarks proving otherwise.
+- `naive_proxy_haproxy_h2_initial_window_size: 1048576` — sets `tune.h2.fe.initial-window-size` (1 MiB). Reduces WINDOW_UPDATE round-trips and the chance of buffer-pressure-induced demuxer races on long-lived bidirectional streams. Set to `0` to keep RFC default of 65535. Requires HAProxy 3.0+.
+- `naive_proxy_haproxy_h2_max_frame_size: 1048576` — sets `tune.h2.max-frame-size` (1 MiB). Lowers the per-byte frame-header parse rate for CONNECT-tunnel and other long-DATA traffic. Set to `0` to keep HAProxy default of 16 KiB. Higher values up to RFC max 16777215 are accepted but cause head-of-line blocking on multiplexed connections; 1 MiB is the validated sweet spot. Requires HAProxy 3.0+.
 - `naive_proxy_haproxy_notsent_lowat: 0` — optional, disabled by default
+
+### HAProxy diagnostics (opt-in)
+
+Used to enable the `roles/naive_proxy/debug/` toolkit against a production deployment. Off by default.
+
+- `naive_proxy_haproxy_diagnostics_enabled: false` — when `true`, adds `ring h2trace { format timed; size 32 MiB }` and `stats socket ipv4@*:<port> level admin` to `haproxy.cfg`, and adds `--publish 127.0.0.1:<port>:<port>` to the pod so the admin socket is reachable from the host's loopback (and only there). Toggling forces the pod to be recreated, not just the haproxy container.
+- `naive_proxy_haproxy_diagnostics_port: 19999` — TCP port on `127.0.0.1` of the host.
+- `naive_proxy_haproxy_diagnostics_ring_size: 33554432` — trace ring sink size in bytes (32 MiB default).
+
+The `no-quic` global directive is rendered conditionally based on `naive_proxy_haproxy_image_tag` — emitted on `2.x` and `3.0`/`3.1`/`3.2` builds (defensive against `quic_test_socketopts()` startup crashes on Ubuntu 24.04 + rootful podman), omitted on `3.3+` where the directive was removed and QUIC is opt-in via listener.
 
 ### HAProxy timeout defaults
 
@@ -462,6 +483,25 @@ network: "${MP_NETWORK:-slirp4netns}"
 Supported values: `host`, `slirp4netns` (rootless default), `bridge`, `pasta` (podman >= 5.0). The molecule-podman create playbook reads `network`, not `network_mode` — using the wrong key silently falls back to the default.
 
 The test domain `naive.test` is mapped to `127.0.0.1` via `etc_hosts` in molecule.yml (podman driver) or via a `lineinfile` task gated on `when: mp_driver != 'podman'` in `shared/tasks/prepare.yml` (vagrant/gha). Two mechanisms because `/etc/hosts` inside the podman container is a bind-mount that `lineinfile` cannot atomic-replace.
+
+## Debug toolkit (`debug/`)
+
+Operator-side scripts for diagnosing **production** HAProxy H2 issues that Molecule does not reproduce — specifically the
+`received invalid H2 frame header : dft=DATA/00 dfl=0 glitches=1 → PROTOCOL_ERROR/01` GOAWAY storm that real-internet
+TCP backpressure can trigger on the H2 demuxer (confirmed on HAProxy 2.8 / 3.0 / 3.2 / 3.3, not a single-version regression).
+Loopback-only Molecule tests cannot reproduce the bug because loopback TCP has effectively infinite buffers and zero RTT.
+
+Use this toolkit when an external user reports H2 connection drops on a deployed naive_proxy stack, not for development testing.
+
+- `debug/start-capture.sh` — host + pod-netns tcpdump, journal-follow, ss/nstat sampler into `/tmp/naive-debug-<RUN_ID>/`. All knobs (NIC, container, ports, units, duration) are env vars or `--flag` CLI args.
+- `debug/h2trace-start.sh` — turn on HAProxy H2 trace into a custom 32 MiB `ring h2trace` sink (must be declared in `haproxy.cfg` first, the role does not render it). Trace state resets on container restart, re-run after every restart.
+- `debug/stop-capture-dump-h2.sh` — terminate the capture watchers and dump `show events <sink>` + `show trace h2` from the HAProxy admin socket (`stats socket ipv4@127.0.0.1:19999 level admin`, also not rendered by the role by default).
+- `debug/analyze.sh` — turn one capture dir into a structured text report: counters (BADREQ / ERR_CONNECTION_RESET / `bad_hdr` / `wait_room` / `demux_full`), bug-trigger frame distribution, time-to-first-failure, per-h2c stream-kill counts with `txw=`/`rxw=` at error time, BADREQ + RESET histograms, TCP-level zero-window/retransmits from the host pcap, term-state breakdown per backend. Appends one row per session to `/tmp/naive-history.tsv` (override with `HISTORY_FILE`).
+- `debug/upload-via-tty.sh` and `debug/download-via-tty.sh` — operator-side helpers for moving files when the only access is a TCP-bridged interactive shell (`socat - TCP:127.0.0.1:5555,...`). Stream base64 in 900-char chunks (longer single `nc` writes truncate on the wire) and verify SHA-256 on the remote side.
+
+`debug/README.md` has the full workflow, prerequisites, parametrisation table, and gotchas. **Important**: the toolkit also requires manual additions to `/opt/naive-proxy/haproxy.cfg` (the admin socket and the `ring h2trace` declaration) — these are not rendered by the role. Always back up the cfg before patching; the next idempotent role run will overwrite the edits.
+
+When iterating on the toolkit, fixes made directly to the live `/tmp/naive-*.sh` on a target host **must** be mirrored back to `roles/naive_proxy/debug/` in the same turn so the two copies do not drift. Same in reverse.
 
 ## Key references
 

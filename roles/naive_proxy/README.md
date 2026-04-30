@@ -141,7 +141,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_haproxy_image` | `"docker.io/library/haproxy"` | HAProxy image |
-| `naive_proxy_haproxy_image_tag` | `"3.2-alpine"` | Pinned HAProxy LTS major |
+| `naive_proxy_haproxy_image_tag` | `"3.3-alpine"` | Pinned HAProxy major. Default 3.3 carries the H2 demuxer fixes we exercise via the new `tune.h2.fe.initial-window-size` / `tune.h2.max-frame-size` knobs. Override to `"3.2-alpine"` (the previous LTS) for long-term-supported behaviour. |
 | `naive_proxy_decoy_image` | `"docker.io/library/caddy"` | Decoy image |
 | `naive_proxy_decoy_image_tag` | `"latest"` | Decoy image tag |
 | `naive_proxy_acme_image` | `"docker.io/neilpang/acme.sh"` | ACME image |
@@ -197,8 +197,20 @@ When this is enabled:
 | `naive_proxy_haproxy_global_maxconn` | `0` | Optional global connection cap; `0` keeps HAProxy defaults |
 | `naive_proxy_haproxy_cpu_policy` | `"performance"` | HAProxy 3.2 CPU policy |
 | `naive_proxy_haproxy_ssl_cache_size` | `40000` | SSL session cache blocks |
-| `naive_proxy_haproxy_h2_frontend_rxbuf` | `""` | Per-stream H2 frontend receive buffer. Sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax — bytes by default, with optional `k` / `m` / `g` suffixes (KiB / MiB / GiB, base 1024). Examples: `1638400`, `1600k`, `12500000`, `12m`. Empty omits the directive and HAProxy uses its own default of `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT). Raise on high-BDP links: rough sizing `BDP_bytes ≈ bandwidth_mbps × rtt_ms × 125` |
+| `naive_proxy_haproxy_h2_frontend_rxbuf` | `""` | Per-stream H2 frontend receive buffer. Sets `tune.h2.fe.rxbuf <size>` in HAProxy `global`. Units: HAProxy size syntax — bytes by default, with optional `k` / `m` / `g` suffixes (KiB / MiB / GiB, base 1024). Examples: `1638400`, `1600k`, `12500000`, `12m`. Empty omits the directive and HAProxy uses its own default of `1600k` (1638400 bytes ≈ 1.6 MiB, ~130 Mbps × 100 ms RTT). Raise on high-BDP links: rough sizing `BDP_bytes ≈ bandwidth_mbps × rtt_ms × 125`. Note: bumping above default *worsened* H2 demuxer backpressure failures we observed in real-internet load (haproxy/haproxy#3354). |
+| `naive_proxy_haproxy_h2_initial_window_size` | `1048576` | Per-stream H2 initial flow-control window (bytes). Sets `tune.h2.fe.initial-window-size`. Default 1 MiB reduces WINDOW_UPDATE chatter and the chance of buffer-pressure-induced demuxer misalignment we observed in real-internet load. Set to `0` to keep HAProxy default (RFC 7540: 65535). Requires HAProxy 3.0+. |
+| `naive_proxy_haproxy_h2_max_frame_size` | `1048576` | H2 max frame size HAProxy advertises to clients. Sets `tune.h2.max-frame-size`. Default 1 MiB reduces per-byte frame-header parsing on the demuxer for CONNECT-tunnel and other long-DATA-payload H2 traffic. Set to `0` to keep HAProxy default (16 KiB). RFC max is 16777215 but values that large cause head-of-line blocking on multiplexed connections. Requires HAProxy 3.0+. |
 | `naive_proxy_haproxy_notsent_lowat` | `0` | Optional Linux-only low-water mark; disabled by default |
+
+### HAProxy Diagnostics (opt-in)
+
+| Variable | Default | Description |
+|---|---|---|
+| `naive_proxy_haproxy_diagnostics_enabled` | `false` | Master switch. When `true`, the role declares a 32 MiB `ring h2trace` sink in `haproxy.cfg`, opens `stats socket ipv4@*:<port> level admin` in the `global` section, and adds `--publish 127.0.0.1:<port>:<port>` to the pod so the admin socket is reachable on the *host's loopback* (and only there). Toggling this var requires a *pod* restart, not just an haproxy restart. Off in production unless actively debugging. |
+| `naive_proxy_haproxy_diagnostics_port` | `19999` | TCP port for the admin socket. Reachable as `127.0.0.1:<port>` from the host only. |
+| `naive_proxy_haproxy_diagnostics_ring_size` | `33554432` | Trace ring sink size in bytes. Default 32 MiB is enough to keep a full 5-minute capture without rolling over even under heavy multi-stream load. |
+
+The `roles/naive_proxy/debug/` toolkit (start-capture, h2trace-start, stop-capture-dump-h2, analyze) needs both the admin socket and the ring sink. Enable diagnostics in the role, re-apply, and the toolkit can speak to the running stack via `nc 127.0.0.1 <port>` from the host. See `debug/README.md` for the workflow.
 
 ## Tags
 
@@ -364,6 +376,32 @@ The role is designed to be idempotent:
 - runtime image refresh is opt-in and restart-sensitive to image ID changes
 - ACME certs are kept on the host and reused between runs
 - repeated runs with unchanged inputs should not produce runtime churn
+
+## Debug Toolkit
+
+`debug/` contains operator-side shell scripts for diagnosing HAProxy H2
+issues against a deployed stack — packet captures (host + pod-netns),
+H2 trace ring dumps from the HAProxy admin socket, structured analysis
+reports, and bootstrap helpers for sending/receiving files when the
+only access to the target is a TCP-bridged TTY (e.g. `socat ... TCP:127.0.0.1:5555,...`).
+
+Not rendered by the role at apply time. Copy the scripts to `/tmp/` on
+the target host and invoke manually. All knobs (NIC name, container
+name, ports, admin socket, etc.) are exposed as env vars and `--flag`
+CLI options so the toolkit works against any naive_proxy deployment.
+
+See [`debug/README.md`](debug/README.md) for the full workflow,
+prerequisites, parametrisation table, output interpretation, and
+gotchas. Quick index of files:
+
+| script | runs on | purpose |
+|---|---|---|
+| `start-capture.sh` | target | tcpdump (host + pod-netns) + journal-follow + ss/nstat sampler |
+| `h2trace-start.sh` | target | enable HAProxy H2 trace into a configurable ring sink |
+| `stop-capture-dump-h2.sh` | target | stop watchers + dump trace events into the capture dir |
+| `analyze.sh` | target | structured report on a capture dir + cumulative TSV |
+| `upload-via-tty.sh` | operator | base64-stream a local file to a TCP-bridged TTY |
+| `download-via-tty.sh` | operator | the reverse — pull a file off the target |
 
 ## Molecule
 

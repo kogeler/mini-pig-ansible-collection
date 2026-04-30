@@ -2,3 +2,8 @@
 .ansible
 
 naive-proxy-json-configs
+
+# Local-only working tree for raw debug artefacts (pcaps, full HAProxy
+# trace dumps, captured journals). These can run into hundreds of MB and
+# may contain unsanitised client metadata, so they never go into git.
+/temp/
