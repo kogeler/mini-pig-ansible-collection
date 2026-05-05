@@ -5,27 +5,42 @@
 # re-run this script after every restart.
 #
 # Configurable knobs (env var or CLI flag, flag wins):
-#   --haproxy | HAPROXY  haproxy container name (default: naive-haproxy)
-#   --admin   | ADMIN    admin socket "host port" inside the haproxy netns
-#                        (default: "127.0.0.1 19999")
-#   --sink    | SINK     ring sink to write trace events to
-#                        (default: h2trace; must be declared with
-#                         `ring h2trace { format timed; size 33554432 }`
-#                         in haproxy.cfg, otherwise fall back to the
-#                         built-in 1 MiB 'buf0' sink)
+#   --haproxy   | HAPROXY    haproxy container name (default: naive-haproxy)
+#   --admin     | ADMIN      admin socket "host port" inside the haproxy netns
+#                            (default: "127.0.0.1 19999")
+#   --sink      | SINK       ring sink to write trace events to
+#                            (default: h2trace; must be declared with
+#                             `ring h2trace { format timed; size <bytes> }`
+#                             in haproxy.cfg, otherwise fall back to the
+#                             built-in 1 MiB 'buf0' sink)
+#   --verbosity | VERBOSITY  HAProxy trace verbosity (default: advanced;
+#                            use 'complete' to dump full frame contents
+#                            including DATA payload — needed when an
+#                            HAProxy maintainer asks for hexdumps to
+#                            disambiguate frame parser issues. WARNING:
+#                            'complete' fills the ring sink ~10x faster
+#                            per event AND dumps plaintext HTTP/2 headers
+#                            (Proxy-Authorization values, Cookie, etc.)
+#                            — if the trace will be shared publicly,
+#                            redact and/or rotate credentials first.)
+#   --level     | LEVEL      HAProxy trace level (default: developer)
 
 set -u
 
 : "${HAPROXY:=naive-haproxy}"
 : "${ADMIN:=127.0.0.1 19999}"
 : "${SINK:=h2trace}"
+: "${VERBOSITY:=advanced}"
+: "${LEVEL:=developer}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --haproxy) HAPROXY=$2; shift 2 ;;
-        --admin)   ADMIN=$2; shift 2 ;;
-        --sink)    SINK=$2; shift 2 ;;
-        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+        --haproxy)   HAPROXY=$2; shift 2 ;;
+        --admin)     ADMIN=$2; shift 2 ;;
+        --sink)      SINK=$2; shift 2 ;;
+        --verbosity) VERBOSITY=$2; shift 2 ;;
+        --level)     LEVEL=$2; shift 2 ;;
+        -h|--help)   sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -53,8 +68,8 @@ for ev in h2c_err h2s_err strm_err proto_err \
 done
 
 cli "trace h2 sink $SINK"
-cli 'trace h2 verbosity advanced'
-cli 'trace h2 level developer'
+cli "trace h2 verbosity $VERBOSITY"
+cli "trace h2 level $LEVEL"
 cli 'trace h2 start now'
 
 cli_out 'show trace h2' | sed -n '1,90p'
