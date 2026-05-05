@@ -57,6 +57,8 @@ unmodified rendering (container `naive-haproxy`, units
 | Capture dir glob | `OUT_GLOB` | `/tmp/naive-debug-*` | stop-capture-dump-h2, analyze |
 | Admin socket | `ADMIN` | `"127.0.0.1 19999"` | h2trace-start, stop-capture-dump-h2 |
 | Trace ring sink | `SINK` | `h2trace` | h2trace-start, stop-capture-dump-h2 |
+| Trace verbosity | `VERBOSITY` | `advanced` | h2trace-start (use `complete` for full hexdump — see warning below) |
+| Trace level | `LEVEL` | `developer` | h2trace-start |
 | Cumulative TSV | `HISTORY_FILE` | `/tmp/naive-history.tsv` | analyze |
 | TTY proxy address | `TTY_ADDR` | `127.0.0.1:5555` | upload-via-tty, download-via-tty |
 
@@ -72,13 +74,28 @@ unmodified rendering (container `naive-haproxy`, units
    when you need the toolkit, or override `--admin <H P>` if a
    different bind is in use.
 
-3. **`ring h2trace { format timed; size 33554432 }`** declared as a
-   top-level section in haproxy.cfg. Without this, `h2trace-start.sh`
-   falls back to the built-in 1 MiB `buf0` sink and the trace ring rolls
-   over within ~10 speedtest runs, biasing every counter you read out
-   of it. The role does not render this either; same deal — temporary
-   debug addition. Override `--sink <name>` if a different ring is
-   declared.
+3. **`ring h2trace { format timed; size 134217728 }`** declared as a
+   top-level section in haproxy.cfg (the role renders this when
+   `naive_proxy_haproxy_diagnostics_enabled: true`). Without it,
+   `h2trace-start.sh` falls back to the built-in 1 MiB `buf0` sink and
+   the trace ring rolls over within ~10 speedtest runs, biasing every
+   counter you read out of it. 128 MiB is the default because at
+   `verbosity complete` (full frame hex-dump per event) the ring fills
+   ~10x faster than at the `advanced` default. Override `--sink <name>`
+   if a different ring is declared.
+
+   **`verbosity complete` warning.** Setting `--verbosity complete` on
+   `h2trace-start.sh` makes HAProxy include the full frame contents
+   (HEADERS payload, DATA payload bytes, etc.) in every trace event.
+   For an HTTPS-terminating frontend this means **plaintext HTTP/2
+   headers — including `Proxy-Authorization`, `Cookie`, `Authorization`
+   — land in the trace ring**. Before sharing such a trace publicly,
+   either (a) rotate any credentials that may have been seen during
+   the capture window, or (b) substitute placeholder users in
+   `naive_proxy_users` for the duration of the capture. The
+   sanitiser at the bottom of `analyze.sh`'s output stack does not
+   redact these by default — you must scrub the raw event log
+   yourself.
 
 4. **`tshark`** installed on the target. Used by `analyze.sh` for
    TCP-level zero-window / retransmission counts. Not strictly required:
@@ -165,6 +182,9 @@ sudo /tmp/naive-h2trace-start.sh
 # override defaults if needed:
 # sudo HAPROXY=naive-edge ADMIN="10.0.0.1 9999" SINK=mytrace /tmp/naive-h2trace-start.sh
 # sudo /tmp/naive-h2trace-start.sh --haproxy naive-edge --sink mytrace
+# full hex-dump of frame contents (slows the demuxer + leaks plaintext
+# HTTP/2 headers; see warning above):
+# sudo /tmp/naive-h2trace-start.sh --verbosity complete
 
 # 3) Start the capture. Output: __CAPTURE_STARTED__ ... pids ...
 sudo /tmp/naive-start-capture.sh

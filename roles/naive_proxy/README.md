@@ -208,7 +208,7 @@ When this is enabled:
 |---|---|---|
 | `naive_proxy_haproxy_diagnostics_enabled` | `false` | Master switch. When `true`, the role declares a 32 MiB `ring h2trace` sink in `haproxy.cfg`, opens `stats socket ipv4@*:<port> level admin` in the `global` section, and adds `--publish 127.0.0.1:<port>:<port>` to the pod so the admin socket is reachable on the *host's loopback* (and only there). Toggling this var requires a *pod* restart, not just an haproxy restart. Off in production unless actively debugging. |
 | `naive_proxy_haproxy_diagnostics_port` | `19999` | TCP port for the admin socket. Reachable as `127.0.0.1:<port>` from the host only. |
-| `naive_proxy_haproxy_diagnostics_ring_size` | `33554432` | Trace ring sink size in bytes. Default 32 MiB is enough to keep a full 5-minute capture without rolling over even under heavy multi-stream load. |
+| `naive_proxy_haproxy_diagnostics_ring_size` | `134217728` | Trace ring sink size in bytes. Default 128 MiB keeps a full 5-minute capture without rolling over at `verbosity complete` (full frame hex-dumps, ~10x more bytes per event than `advanced`). 32 MiB suffices at `verbosity advanced`. |
 
 The `roles/naive_proxy/debug/` toolkit (start-capture, h2trace-start, stop-capture-dump-h2, analyze) needs both the admin socket and the ring sink. Enable diagnostics in the role, re-apply, and the toolkit can speak to the running stack via `nc 127.0.0.1 <port>` from the host. See `debug/README.md` for the workflow.
 

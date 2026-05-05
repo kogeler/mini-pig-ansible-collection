@@ -3,7 +3,7 @@ Copyright © 2025 kogeler
 SPDX-License-Identifier: Apache-2.0
 -#}
 
-{% if ansible_distribution_release in [ 'bookworm'] %}
+{% if ansible_distribution_major_version | int >= 12 %}
 {% set _init_apt_distributions = 'main contrib non-free non-free-firmware' %}
 {% else %}
 {% set _init_apt_distributions = 'main contrib non-free' %}

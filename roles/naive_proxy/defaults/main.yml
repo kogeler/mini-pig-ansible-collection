@@ -189,10 +189,13 @@ naive_proxy_haproxy_diagnostics_enabled: false
 # anything free.
 naive_proxy_haproxy_diagnostics_port: 19999
 
-# H2 trace ring sink size in bytes. The default 32 MiB is enough to keep
-# a full 5-minute capture without rolling over even under heavy multi-
-# stream load. Reduce on RAM-constrained hosts.
-naive_proxy_haproxy_diagnostics_ring_size: 33554432
+# H2 trace ring sink size in bytes. The default 128 MiB keeps a full
+# 5-minute capture without rolling over even under heavy multi-stream
+# load AT `verbosity complete` (where every event carries the full
+# frame hex-dump and the ring fills ~10x faster than at `advanced`).
+# Reduce on RAM-constrained hosts; 32 MiB is fine if you only ever run
+# the trace at `verbosity advanced` (the default in `h2trace-start.sh`).
+naive_proxy_haproxy_diagnostics_ring_size: 134217728
 
 # -- Container options --------------------------------------------------------
 

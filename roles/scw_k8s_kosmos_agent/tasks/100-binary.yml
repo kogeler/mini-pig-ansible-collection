@@ -25,6 +25,25 @@
       check_mode: false
       changed_when: false
 
+    - name: scw_k8s_kosmos_agent | binary | check downloaded binary
+      ansible.builtin.command:
+        argv:
+          - "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+          - "-version"
+      register: _scw_k8s_kosmos_agent_downloaded_binary_version_register
+      check_mode: false
+      changed_when: false
+
+    - name: scw_k8s_kosmos_agent | binary | check downloaded binary supports kosmos
+      ansible.builtin.command:
+        argv:
+          - "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+          - "-h"
+      register: _scw_k8s_kosmos_agent_downloaded_binary_help_register
+      check_mode: false
+      changed_when: false
+      failed_when: "'-kosmos' not in _scw_k8s_kosmos_agent_downloaded_binary_help_register.stderr"
+
     - name: scw_k8s_kosmos_agent | binary | copy binary
       ansible.builtin.copy:
         src: "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"

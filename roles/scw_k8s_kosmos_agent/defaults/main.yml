@@ -3,8 +3,26 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-scw_k8s_kosmos_agent_binary_url: "https://github.com/scaleway/k8s-agent/releases/latest/download/k8s-agent_linux_amd64"
+scw_k8s_kosmos_agent_version: "v0.1.4"
+scw_k8s_kosmos_agent_binary_url: "https://github.com/scaleway/k8s-agent/releases/download/{{ scw_k8s_kosmos_agent_version }}/k8s-agent_linux_amd64"
 
 scw_k8s_kosmos_agent_pool_region: ""
 scw_k8s_kosmos_agent_pool_id: ""
 scw_k8s_kosmos_agent_secret_key: ""
+
+scw_k8s_kosmos_agent_run_agent: true
+scw_k8s_kosmos_agent_legacy_apt_cleanup_enabled: true
+scw_k8s_kosmos_agent_legacy_apt_packages:
+  - scaleway-cni-plugins
+  - scaleway-containerd
+  - scaleway-crictl
+  - scaleway-kubectl
+  - scaleway-kubelet
+  - scaleway-runc
+scw_k8s_kosmos_agent_legacy_apt_files:
+  - /etc/apt/sources.list.d/scaleway-container.list
+  - /etc/apt/keyrings/scaleway-container-apt-keyring.asc
+scw_k8s_kosmos_agent_legacy_apt_reboot_timeout: 1200
+
+scw_k8s_kosmos_agent_remove_containerd_path_override: true
+scw_k8s_kosmos_agent_containerd_path_override_file: /etc/systemd/system/containerd.service.d/10-path.conf

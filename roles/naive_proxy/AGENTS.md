@@ -274,7 +274,7 @@ Used to enable the `roles/naive_proxy/debug/` toolkit against a production deplo
 
 - `naive_proxy_haproxy_diagnostics_enabled: false` — when `true`, adds `ring h2trace { format timed; size 32 MiB }` and `stats socket ipv4@*:<port> level admin` to `haproxy.cfg`, and adds `--publish 127.0.0.1:<port>:<port>` to the pod so the admin socket is reachable from the host's loopback (and only there). Toggling forces the pod to be recreated, not just the haproxy container.
 - `naive_proxy_haproxy_diagnostics_port: 19999` — TCP port on `127.0.0.1` of the host.
-- `naive_proxy_haproxy_diagnostics_ring_size: 33554432` — trace ring sink size in bytes (32 MiB default).
+- `naive_proxy_haproxy_diagnostics_ring_size: 134217728` — trace ring sink size in bytes (128 MiB default; sized for `verbosity complete` runs that dump full frame hex). 32 MiB suffices at `verbosity advanced`.
 
 The `no-quic` global directive is rendered conditionally based on `naive_proxy_haproxy_image_tag` — emitted on `2.x` and `3.0`/`3.1`/`3.2` builds (defensive against `quic_test_socketopts()` startup crashes on Ubuntu 24.04 + rootful podman), omitted on `3.3+` where the directive was removed and QUIC is opt-in via listener.
 
