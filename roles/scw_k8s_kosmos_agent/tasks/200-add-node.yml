@@ -3,13 +3,80 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: scw_k8s_kosmos_agent | add node | ensure /usr/local/sbin exists
+- name: scw_k8s_kosmos_agent | add node | check installed legacy apt packages
+  ansible.builtin.shell: |
+    set -eu
+    dpkg-query -W -f='${Package}\t${db:Status-Abbrev}\n' {{ scw_k8s_kosmos_agent_legacy_apt_packages | map('quote') | join(' ') }} \
+      | awk '$2 ~ /^.i/ {print $1}'
+  args:
+    executable: /bin/bash
+  register: _scw_k8s_kosmos_agent_legacy_apt_packages_register
+  changed_when: false
+  failed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | set legacy apt packages
+  ansible.builtin.set_fact:
+    _scw_k8s_kosmos_agent_legacy_apt_packages_installed: "{{ _scw_k8s_kosmos_agent_legacy_apt_packages_register.stdout_lines | default([]) }}"
+  changed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | set legacy apt cleanup state
+  ansible.builtin.set_fact:
+    _scw_k8s_kosmos_agent_legacy_apt_cleanup_required: >-
+      {{
+        scw_k8s_kosmos_agent_legacy_apt_cleanup_enabled | bool
+        and (_scw_k8s_kosmos_agent_legacy_apt_packages_installed | length > 0)
+      }}
+  changed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation
+  when: _scw_k8s_kosmos_agent_legacy_apt_cleanup_required | bool
+  block:
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | print plan
+      ansible.builtin.debug:
+        msg:
+          - "cleanup required: {{ _scw_k8s_kosmos_agent_legacy_apt_cleanup_required | bool }}"
+          - "legacy packages: {{ _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+          - "will reboot after package cleanup"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | unhold packages
+      ansible.builtin.command:
+        argv: "{{ ['apt-mark', 'unhold'] + _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+      register: _scw_k8s_kosmos_agent_legacy_apt_unhold_register
+      changed_when: "'Canceled hold' in _scw_k8s_kosmos_agent_legacy_apt_unhold_register.stdout"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | remove packages
+      ansible.builtin.apt:
+        name: "{{ _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+        state: absent
+        purge: true
+        autoremove: true
+        allow_change_held_packages: true
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | remove repository files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ scw_k8s_kosmos_agent_legacy_apt_files }}"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | reboot
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ scw_k8s_kosmos_agent_legacy_apt_reboot_timeout }}"
+        msg: "Rebooting after Scaleway legacy apt k8s packages cleanup"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | refresh service facts
+      ansible.builtin.service_facts:
+
+- name: scw_k8s_kosmos_agent | add node | ensure runtime binary directories exist
   ansible.builtin.file:
-    path: /usr/local/sbin
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - /usr/local/bin
+    - /usr/local/sbin
 
 - name: scw_k8s_kosmos_agent | add node | run agent
   ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -kosmos"
@@ -18,8 +85,24 @@
     POOL_ID: "{{ scw_k8s_kosmos_agent_pool_id }}"
     SCW_SECRET_KEY: "{{ scw_k8s_kosmos_agent_secret_key }}"
   register: _scw_k8s_kosmos_agent_add_node_register
+  when: scw_k8s_kosmos_agent_run_agent | bool
 
 - name: scw_k8s_kosmos_agent | add node | run agent (print output)
   ansible.builtin.debug:
-    msg: "{{ _scw_k8s_kosmos_agent_add_node_register.stdout.split('\n') }}"
-  when: _scw_k8s_kosmos_agent_add_node_register.stdout is defined
+    msg: >-
+      {{
+        (
+          _scw_k8s_kosmos_agent_add_node_register.stdout_lines | default([])
+        ) + (
+          _scw_k8s_kosmos_agent_add_node_register.stderr_lines | default([])
+        )
+      }}
+  when:
+    - _scw_k8s_kosmos_agent_add_node_register is defined
+    - >-
+      (
+        _scw_k8s_kosmos_agent_add_node_register.stdout_lines | default([])
+      ) | length > 0
+      or (
+        _scw_k8s_kosmos_agent_add_node_register.stderr_lines | default([])
+      ) | length > 0
