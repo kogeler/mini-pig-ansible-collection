@@ -52,11 +52,9 @@ molecule_naive_proxy_singbox_urltest_interval: "5m"
 molecule_naive_proxy_users:
   testuser: "testpass"
 
-# `mp_driver` is intentionally NOT defined here. It must come from the
-# scenario's inventory (molecule.yml `provisioner.inventory.host_vars`
-# or, for the gha scenario, `inventory/hosts.yml`) because Ansible's
-# `vars_files` precedence (14) is higher than inventory host_vars (9):
-# any default value here would silently override a per-scenario
-# inventory setting and break, e.g., the lineinfile branch the gha
-# scenario relies on. Each scenario's molecule.yml defines `mp_driver`
-# itself.
+# `mp_driver` is intentionally NOT defined here. It is sourced from
+# inventory: `.config/molecule/config.yml` provides `podman` as the
+# default for every podman-driven scenario, and `gha/inventory/hosts.yml`
+# overrides it to `native` for the gha scenario. Defining `mp_driver` in
+# this vars_files would mask those inventory values — `vars_files`
+# precedence (14) is higher than inventory host_vars (9).

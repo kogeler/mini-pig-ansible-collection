@@ -1,5 +1,5 @@
 ---
-# debian-bookworm scenario: single-driver podman, Debian bookworm.
+# debian-bookworm scenario: podman-in-podman, Debian bookworm.
 # Shared config in `.config/molecule/config.yml` at the repo root.
 driver:
   name: podman
@@ -24,10 +24,3 @@ platforms:
       - /dev/fuse:/dev/fuse
     command: ""
     override_command: false
-provisioner:
-  inventory:
-    # Single-driver podman: pin mp_driver. Overrides the env-driven
-    # default in the shared base config.
-    host_vars:
-      molecule-naive-proxy:
-        mp_driver: podman

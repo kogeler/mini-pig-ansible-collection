@@ -1,31 +1,21 @@
 ---
-# Default scenario: dual-driver (podman / vagrant), Debian trixie.
+# Default scenario: podman-in-podman, Debian trixie.
 # Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
 # default playbooks) lives in `.config/molecule/config.yml` at the repo
 # root and is auto-loaded by molecule. Only scenario-specific bits live
 # here.
-#
-# Driver selection at runtime via MP_DRIVER (default: podman).
-# Vagrant tunables (env vars):
-#   MP_DRIVER=vagrant MP_VAGRANT_PROVIDER=libvirt MP_BOX=debian/trixie64
-#   MP_VM_MEMORY=2048 MP_VM_CPUS=8 MP_NETWORK=slirp4netns
-# NOTE: env vars must NOT start with "MOLECULE_" — molecule keeps those
-# names as literals (see MOLECULE_KEEP_STRING).
 driver:
-  name: "${MP_DRIVER:-podman}"
-  # vagrant-only; podman ignores this
-  provider:
-    name: "${MP_VAGRANT_PROVIDER:-libvirt}"
+  name: podman
 platforms:
-  # Single platforms entry; carries keys for both drivers (each driver
-  # reads only what it understands, ignores the rest). Lists in molecule
-  # configs are REPLACED on merge — so each scenario must include the
-  # full block.
   - name: molecule-naive-proxy
-    # ---- podman driver keys ----
     image: "docker.io/library/debian:trixie"
     pre_build_image: false
     systemd: always
+    # Rootless podman network mode for the molecule instance.
+    # Supported values: host, slirp4netns (rootless default), bridge,
+    # pasta (podman >= 5.0). NOTE: the molecule-podman create play
+    # reads "network", not "network_mode" — using the wrong key
+    # silently falls back to the default.
     network: "${MP_NETWORK:-slirp4netns}"
     # podman-in-podman: unmask /proc for newuidmap, caps for nested userns
     security_opts:
@@ -43,7 +33,3 @@ platforms:
       - /dev/fuse:/dev/fuse
     command: ""
     override_command: false
-    # ---- vagrant driver keys ----
-    box: "${MP_BOX:-debian/trixie64}"
-    memory: "${MP_VM_MEMORY:-2048}"
-    cpus: "${MP_VM_CPUS:-8}"

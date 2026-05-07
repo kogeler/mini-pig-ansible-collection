@@ -433,14 +433,14 @@ The role ships with multiple Molecule scenarios sharing common playbooks from `m
 
 ### Scenarios
 
-| Scenario | Driver(s) | Purpose |
-|----------|-----------|---------|
-| `default` | podman, vagrant-libvirt | Local dev, Debian trixie (container or VM) |
+| Scenario | Driver | Purpose |
+|----------|--------|---------|
+| `default` | podman | Local dev, podman-in-podman, Debian trixie |
 | `debian-bookworm` | podman | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native | GitHub Actions, role applied directly to runner VM |
-| `singbox-stress` | podman, vagrant-libvirt | Reproduce sing-box / SFA HTTP/2 errors with `iperf3 -P` over a Linux sing-box `naive` outbound; opt-in (no `ENABLE_CI` marker) |
+| `singbox-stress` | podman | Reproduce sing-box / SFA HTTP/2 errors with `iperf3 -P` over a Linux sing-box `naive` outbound; opt-in (no `ENABLE_CI` marker) |
 
-The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (`podman` by default, `vagrant` for vagrant-libvirt). The same platform block carries keys for both drivers; each driver reads only what it understands. A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
+A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
 
 ### What `molecule verify` Covers
 
@@ -457,7 +457,7 @@ The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (
 
 ### Running Tests
 
-All runs go through the wrapper Makefile at `molecule/Makefile`. It hides the env-var plumbing (`GIT_DIR`, `MP_DRIVER`, `ANSIBLE_LIBRARY`) and exposes a uniform `<scenario>-<driver>-<action>` target schema.
+All runs go through the wrapper Makefile at `molecule/Makefile`. It exposes a uniform `<scenario>-<driver>-<action>` target schema.
 
 ```bash
 cd naive_proxy/molecule
@@ -470,11 +470,6 @@ make default-podman-test
 make default-podman-converge
 make default-podman-verify
 make default-podman-login
-
-# default scenario on vagrant-libvirt
-make default-vagrant-converge
-make default-vagrant-verify
-make default-vagrant-destroy
 
 # Debian 12 scenario
 make bookworm-podman-test
@@ -491,19 +486,8 @@ make singbox-stress-podman-verify
 
 Why the wrapper exists:
 
-- `GIT_DIR=/dev/null` — required for podman/vagrant scenarios because `collections/` is gitignored at the repo root and without this shim molecule misidentifies the role as a collection.
-- `MP_DRIVER` — switches the `default` scenario between podman and vagrant at runtime. The prefix is `MP_` (mini-pig) because molecule silently drops env vars named `MOLECULE_*` before interpolation.
-- `ANSIBLE_LIBRARY` — points at `molecule_plugins/vagrant/modules/`. Molecule 26 no longer auto-injects this for third-party drivers (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)); the Makefile resolves the path from the active Python env.
-
-#### Vagrant driver prerequisites
-
-Host-side, one-time:
-
-- `python-vagrant` and `molecule-plugins[vagrant]` installed in the same venv as `molecule`.
-- `vagrant` with the `vagrant-libvirt` plugin.
-- libvirt with the nftables firewall backend: `firewall_backend = "nftables"` in `/etc/libvirt/network.conf`, then `systemctl restart libvirtd`.
-- User in the `libvirt` and `kvm` groups.
-- Default box used is `debian/trixie64`; override with `MP_BOX=<box-name>` if desired. Other knobs: `MP_VM_MEMORY`, `MP_VM_CPUS`, `MP_VAGRANT_PROVIDER` (defaults to `libvirt`).
+- `GIT_DIR=/dev/null` — `collections/` is gitignored at the repo root and without this shim molecule misidentifies the role as a collection.
+- `MP_NETWORK` (default `slirp4netns`) — selects the rootless podman network mode for the molecule instance. Use `MP_NETWORK=host` to share the runner's network stack.
 
 ### Standalone Benchmark
 
@@ -511,7 +495,7 @@ The benchmark playbook runs the throughput portion without the rest of `verify`:
 
 ```bash
 cd naive_proxy/molecule
-make default-podman-converge   # or default-vagrant-converge
+make default-podman-converge
 
 INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
 ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
@@ -530,9 +514,9 @@ connection upload closed: http2 protocol error
 connection download closed: http2 protocol error
 ```
 
-It mirrors the `default` scenario layout (dual-driver, `MP_DRIVER`-selected
-podman or vagrant) but uses a **scenario-local `converge.yml`** that
-applies the `kogeler.mini_pig.naive_proxy` role followed by
+It mirrors the `default` scenario (podman-in-podman, Debian trixie) but
+uses a **scenario-local `converge.yml`** that applies the
+`kogeler.mini_pig.naive_proxy` role followed by
 `kogeler.mini_pig.ssl_router` — replicating the production topology
 where `ssl_router` (nginx with `ssl_preread`) sits on `:443` in front
 of HAProxy and SNI-routes incoming traffic to the HAProxy frontend on

@@ -2,9 +2,9 @@
 # Shared prepare playbook for every scenario. Each scenario's molecule.yml
 # points its `prepare:` at `../shared/prepare.yml`. The actual prepare
 # steps (etc_hosts, dependency install, naive client download/extract)
-# live in `tasks/prepare.yml`. Driver-specific divergence
-# (podman injects /etc/hosts via molecule.yml, native/vagrant uses
-# lineinfile) is gated by `mp_driver` inside the task file.
+# live in `tasks/prepare.yml`. Driver-specific divergence (podman
+# injects /etc/hosts via molecule.yml, gha-native uses lineinfile) is
+# gated by `mp_driver` inside the task file.
 - name: Prepare
   hosts: all
   gather_facts: false

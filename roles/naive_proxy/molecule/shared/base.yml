@@ -1,9 +1,11 @@
 ---
-# Project-wide molecule base config. Auto-loaded by molecule from the
-# VCS root (this repo); each scenario's `molecule.yml` deep-merges on
-# top of this. `lookup_config_file()` in molecule walks up to the .git
-# root, so this works both for local invocation and for CI (which
-# checks out into `ansible_collections/kogeler/mini_pig/`).
+# Role-scoped molecule base config for the naive_proxy role.
+#
+# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
+# (the Makefile and CI workflow inject the flag for every scenario).
+# Each scenario's `molecule.yml` deep-merges on top of this — anything
+# common across scenarios lives here, anything scenario-specific stays
+# in the scenario file.
 #
 # Important caveats about molecule's deep-merge:
 #   * Dicts are deep-merged; values from the scenario override base.
@@ -30,14 +32,15 @@ provisioner:
   inventory:
     # Default host_vars for the molecule-managed instance. Each
     # scenario overrides what it needs in its own molecule.yml — deep
-    # merge keeps the rest. `mp_driver` MUST live in inventory
-    # (precedence 9) rather than in any `vars_files` (priority 14):
-    # otherwise vars_files would silently mask scenario-specific
-    # inventory values, breaking e.g. the gha scenario's `native`.
+    # merge keeps the rest. `mp_driver` is the single source of truth
+    # for driver-conditional behaviour (e.g. `when: mp_driver !=
+    # 'podman'` in shared prepare); MUST live in inventory
+    # (precedence 9), not in any `vars_files` (priority 14), or
+    # vars_files would silently mask scenario-specific values and
+    # break e.g. the gha scenario's `native`.
     host_vars:
       molecule-naive-proxy:
-        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
-        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
+        mp_driver: podman
 
 ansible:
   cfg:

@@ -1,18 +1,15 @@
 ---
-# singbox-stress scenario.
+# singbox-stress scenario: podman-in-podman, Debian trixie.
 #
-# Mirrors the `default` scenario (dual-driver, MP_DRIVER selects podman
-# or vagrant at runtime) but swaps the verify playbook for the sing-box
-# Naive outbound stress reproducer. Use this scenario to chase the
-# "stream failed: http2 protocol error" / "connection upload closed"
-# failures reported by sing-box / SFA clients against a deployed
-# naive_proxy stack.
+# Mirrors the `default` scenario but swaps the verify playbook for the
+# sing-box Naive outbound stress reproducer. Use this scenario to
+# chase the "stream failed: http2 protocol error" / "connection upload
+# closed" failures reported by sing-box / SFA clients against a
+# deployed naive_proxy stack.
 #
 # Shared config in `.config/molecule/config.yml` at the repo root.
 driver:
-  name: "${MP_DRIVER:-podman}"
-  provider:
-    name: "${MP_VAGRANT_PROVIDER:-libvirt}"
+  name: podman
 platforms:
   - name: molecule-naive-proxy
     image: "docker.io/library/debian:trixie"
@@ -34,9 +31,6 @@ platforms:
       - /dev/fuse:/dev/fuse
     command: ""
     override_command: false
-    box: "${MP_BOX:-debian/trixie64}"
-    memory: "${MP_VM_MEMORY:-2048}"
-    cpus: "${MP_VM_CPUS:-8}"
 provisioner:
   inventory:
     # Build-time pins for Dockerfile.j2. `group_vars.all` is the only
@@ -65,8 +59,13 @@ provisioner:
         singbox_cronet_version: "v147.0.7727.49-1"
 ansible:
   playbooks:
-    # Override the shared default `../shared/converge.yml`. This
-    # scenario-local converge applies kogeler.mini_pig.ssl_router on top
-    # of the naive_proxy role to mirror the prod ssl-router → HAProxy
-    # chain (see converge.yml). prepare/verify stay shared.
+    # Override base config defaults:
+    #   - converge: scenario-local. Applies kogeler.mini_pig.ssl_router
+    #     on top of the naive_proxy role to mirror the prod
+    #     ssl-router → HAProxy chain (see converge.yml).
+    #   - verify: swap shared/verify.yml (which exercises the official
+    #     naive client) for shared/singbox-verify.yml (which drives the
+    #     sing-box stress reproducer instead).
+    # prepare stays the shared default.
     converge: converge.yml
+    verify: ../shared/singbox-verify.yml
