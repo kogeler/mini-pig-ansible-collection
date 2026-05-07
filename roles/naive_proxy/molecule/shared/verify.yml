@@ -20,7 +20,7 @@
         _verify_clients_users:
           testuser: "testpass"
         _verify_clients_ip_map: "{{ molecule_naive_proxy_external_ip_map }}"
-        _verify_clients_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+        _verify_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
         _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
         _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
         _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"

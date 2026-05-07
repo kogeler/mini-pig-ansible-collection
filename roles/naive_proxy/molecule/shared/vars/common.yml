@@ -17,6 +17,15 @@ molecule_naive_proxy_external_ip_map:
   secondary: "127.0.0.2"
 molecule_naive_proxy_listen_port: 8443
 molecule_naive_proxy_external_port: 9443
+# Controller-side path where the role writes generated sing-box client
+# configs. Anchored to `molecule/shared/` regardless of which scenario is
+# loading this file: the scenario-local singbox-stress converge would
+# otherwise have its own `playbook_dir` and write configs where the
+# shared verify play (which always runs from `molecule/shared/`) does
+# not look. Using `{{ playbook_dir }}/../shared/...` collapses to
+# `molecule/shared/naive-proxy-json-configs` from both `playbook_dir`
+# values (`molecule/shared/` and `molecule/singbox-stress/`).
+molecule_naive_proxy_client_config_dir: "{{ playbook_dir }}/../shared/naive-proxy-json-configs"
 molecule_naive_proxy_decoy_url: "http://{{ molecule_naive_proxy_domain }}:8081/"
 molecule_naive_proxy_pebble_root_url: "https://{{ molecule_naive_proxy_domain }}:15000/roots/0"
 

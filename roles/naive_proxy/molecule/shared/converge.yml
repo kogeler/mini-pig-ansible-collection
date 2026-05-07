@@ -11,6 +11,11 @@
         # the same loopback address — the goal is to verify per-suffix
         # config files are produced, not separate routes.
         naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip_map }}"
+        # Single source of truth across scenarios (see common.yml); also
+        # keeps default / debian-bookworm / gha aligned with singbox-stress
+        # which has to override the role default for its scenario-local
+        # converge play.
+        naive_proxy_client_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
         naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
         naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
         naive_proxy_users:

@@ -21,6 +21,12 @@
         # singbox-stress reproducer can keep using
         # `molecule_naive_proxy_external_ip` as its single client target.
         naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip_map }}"
+        # Anchored to `molecule/shared/` (see common.yml). This converge
+        # is scenario-local, so without an explicit override the role
+        # would write configs under `molecule/singbox-stress/` while the
+        # shared verify play (always loaded from `molecule/shared/`)
+        # would look under `molecule/shared/`.
+        naive_proxy_client_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
         naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
         naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
         naive_proxy_users:
