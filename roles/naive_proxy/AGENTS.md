@@ -205,7 +205,9 @@ roles/naive_proxy/
         │   ├── singbox-benchmark.yml     # sing-box client + shared bench tasks
         │   ├── socks-decoy-smoke.yml     # shared: curl decoy via SOCKS5 + assert
         │   ├── iperf-server.yml          # shared: iperf3 server unit in naive-pod
-        │   └── iperf-bench.yml           # shared: proxychains + iperf3 + CPU + assert
+        │   ├── iperf-bench.yml           # shared: proxychains + iperf3 + CPU + assert
+        │   ├── verify-diagnostics.yml    # shared: HAProxy admin socket + ring h2trace
+        │   └── verify-clients.yml        # shared: per-user×IP sing-box config assertions
         └── vars/
             ├── common.yml     # Shared variables (domain, ports, naive version)
             ├── benchmark.yml
@@ -234,7 +236,7 @@ The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own on
 ### Required
 
 - `naive_proxy_domain` — server FQDN
-- `naive_proxy_external_ip` — public IP that `naive_proxy_domain` resolves to. Generated client configs put this in the naive outbound `server` field (SNI stays the FQDN via `tls.server_name`), so sing-box / cronet skips the chicken-and-egg bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through naive)
+- `naive_proxy_external_ip` — **map** of `<suffix>: <ip>`, at least one entry. Each entry is a public IP that `naive_proxy_domain` resolves to. The role renders one sing-box client config per user × IP at `singbox-<host>-<user>-<suffix>.json` and prints one set of `naive+https://` / `naive://` links per pair. Each config puts its IP into the naive outbound `server` field (SNI stays the FQDN via `tls.server_name`), so sing-box / cronet skips bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through naive). Use multiple entries to ship the same user several network paths (IPv4 / IPv6, primary / fallback)
 - `naive_proxy_users` — dict `{ name: password }`, at least one user
 
 ### Important
@@ -413,13 +415,14 @@ Box comes from Vagrant Cloud on first `create`; cached afterwards. `generic/debi
 ### What `molecule verify` checks
 
 1. Pod, HAProxy, decoy, and backend services are active
-2. Decoy site is served through HAProxy TLS
-3. Pebble-issued certificate replaces the bootstrap self-signed cert
-4. `naive-acme-renew.timer` is enabled
-5. Forced renewal changes the certificate serial and HAProxy serves the new cert
-6. Direct HTTPS proxy mode works: `curl -x`
-7. naive SOCKS5 mode works through HAProxy and receives padding
-8. The benchmark task moves real traffic through the SOCKS5 tunnel with `iperf3`
+2. **Per-IP sing-box client configs (`tasks/verify-clients.yml`)** — one config per user × `naive_proxy_external_ip` map entry, file name suffixed by the map key, naive outbound `server` field equal to the entry's IP, and per-user (suffix → server) mapping equal to the input map (catches loop collapse / overwrite regressions). Reused by both `shared/verify.yml` and `shared/singbox-verify.yml`
+3. Decoy site is served through HAProxy TLS
+4. Pebble-issued certificate replaces the bootstrap self-signed cert
+5. `naive-acme-renew.timer` is enabled
+6. Forced renewal changes the certificate serial and HAProxy serves the new cert
+7. Direct HTTPS proxy mode works: `curl -x`
+8. naive SOCKS5 mode works through HAProxy and receives padding
+9. The benchmark task moves real traffic through the SOCKS5 tunnel with `iperf3`
 
 ### SOCKS5 test client
 

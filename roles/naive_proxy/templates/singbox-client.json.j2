@@ -36,7 +36,7 @@
   ],
   'outbounds': [
     {'type': 'naive', 'tag': 'naive-' ~ _naive_proxy_singbox_user,
-     'server': naive_proxy_external_ip,
+     'server': _naive_proxy_singbox_server_ip,
      'server_port': naive_proxy_external_port | int,
      'username': _naive_proxy_singbox_user,
      'password': _naive_proxy_singbox_pass,

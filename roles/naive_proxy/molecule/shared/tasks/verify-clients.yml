@@ -1,0 +1,137 @@
+---
+# Verifies the per-IP sing-box client configs produced by
+# `tasks/clients.yml`. Asserts that for each user × ip_suffix pair:
+#
+#   * `<config_dir>/singbox-<host>-<user>-<suffix>.json` exists
+#   * the file is valid JSON
+#   * the naive outbound's `server` field equals the IP for that suffix
+#   * username / password match the user dict
+#   * suffix-specific configs are independent (different `server`
+#     values across suffixes for the same user)
+#
+# Runs on the controller (`localhost`) because that's where the role
+# delegates the file write. Reusable across scenarios via:
+#
+#   - import_tasks: tasks/verify-clients.yml
+#     vars:
+#       _verify_clients_users: { testuser: testpass }
+#       _verify_clients_ip_map:
+#         primary: 127.0.0.1
+#         secondary: 127.0.0.2
+#       _verify_clients_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+#       _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+#       _verify_clients_external_port: 9443
+#       _verify_clients_domain: naive.test
+#
+# `_verify_clients_matrix` is a cartesian product of the expected users
+# and IP map, materialised as `[user_item, ip_item]` tuples (matching
+# the shape used by the role's own `tasks/clients.yml`).
+
+- name: verify-clients | build expected matrix
+  ansible.builtin.set_fact:
+    _verify_clients_matrix: >-
+      {{ (_verify_clients_users | dict2items)
+         | product(_verify_clients_ip_map | dict2items)
+         | list }}
+
+- name: verify-clients | print expected matrix
+  ansible.builtin.debug:
+    var: _verify_clients_matrix
+
+- name: verify-clients | assert each config file exists
+  ansible.builtin.stat:
+    path: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1.key }}.json
+  register: _verify_clients_stats
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_matrix }}"
+  loop_control:
+    label: "{{ item.0.key }}@{{ item.1.key }}"
+
+- name: verify-clients | fail if any config file is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Expected sing-box client config not found: {{ item.invocation.module_args.path }}
+      (user={{ item.item.0.key }}, suffix={{ item.item.1.key }}).
+  loop: "{{ _verify_clients_stats.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}@{{ item.item.1.key }}"
+
+- name: verify-clients | read each config file
+  ansible.builtin.slurp:
+    src: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1.key }}.json
+  register: _verify_clients_slurps
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_matrix }}"
+  loop_control:
+    label: "{{ item.0.key }}@{{ item.1.key }}"
+
+- name: verify-clients | assert per-config naive outbound shape
+  vars:
+    _config: "{{ item.content | b64decode | from_json }}"
+    _naive_outbound: >-
+      {{ (_config.outbounds
+          | selectattr('type', 'equalto', 'naive')
+          | list
+          | first) }}
+  ansible.builtin.assert:
+    that:
+      - _naive_outbound.server == item.item.1.value
+      - _naive_outbound.server_port == (_verify_clients_external_port | int)
+      - _naive_outbound.username == item.item.0.key
+      - _naive_outbound.password == item.item.0.value
+      - _naive_outbound.tls.server_name == _verify_clients_domain
+      - _naive_outbound.tag == ('naive-' ~ item.item.0.key)
+    fail_msg: >-
+      Sing-box config for user={{ item.item.0.key }} suffix={{ item.item.1.key }}
+      naive outbound mismatch. Expected server={{ item.item.1.value }};
+      got: {{ _naive_outbound | to_json }}
+  loop: "{{ _verify_clients_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}@{{ item.item.1.key }}"
+
+# -- Cross-suffix uniqueness assertion ---------------------------------
+# A regression that collapses the loop (e.g. a stray `last` in a filter
+# chain) would silently produce N identical configs. Building a per-user
+# (suffix → server) map from what was actually rendered and comparing
+# it to the input map catches that.
+
+- name: verify-clients | collect per-user rendered (suffix → server) maps
+  ansible.builtin.set_fact:
+    _verify_clients_actual_by_user: >-
+      {{ _verify_clients_actual_by_user | default({})
+         | combine({
+             item.item.0.key: (
+               (_verify_clients_actual_by_user | default({})).get(item.item.0.key, {})
+               | combine({
+                   item.item.1.key: ((item.content | b64decode | from_json).outbounds
+                                      | selectattr('type', 'equalto', 'naive')
+                                      | map(attribute='server')
+                                      | list
+                                      | first)
+                 })
+             )
+           }) }}
+  loop: "{{ _verify_clients_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}@{{ item.item.1.key }}"
+
+- name: verify-clients | assert per-user (suffix → server) matches input map
+  ansible.builtin.assert:
+    that:
+      - _verify_clients_actual_by_user[item.key] == _verify_clients_ip_map
+    fail_msg: >-
+      User {{ item.key }} suffix→server mapping does not match the
+      configured naive_proxy_external_ip map.
+      Expected: {{ _verify_clients_ip_map }}
+      Got:      {{ _verify_clients_actual_by_user[item.key] }}
+  loop: "{{ _verify_clients_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

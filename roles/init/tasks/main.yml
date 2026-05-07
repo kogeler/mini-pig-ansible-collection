@@ -49,6 +49,14 @@
   when: init_flow_control_kernel | bool
   tags: ['init', 'init-kernel']
 
+- name: init | sysctl
+  ansible.builtin.include_tasks:
+    file: sysctl.yml
+    apply:
+      tags: ['init', 'init-sysctl']
+  when: init_flow_control_sysctl | bool
+  tags: ['init', 'init-sysctl']
+
 - name: init | hosts
   ansible.builtin.include_tasks:
     file: hosts.yml

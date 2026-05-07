@@ -55,7 +55,8 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
     - role: kogeler.mini_pig.naive_proxy
       vars:
         naive_proxy_domain: "cdn.example.org"
-        naive_proxy_external_ip: "203.0.113.10"
+        naive_proxy_external_ip:
+  v4: "203.0.113.10"
         naive_proxy_users:
           alice: "s3cret-passw0rd"
         naive_proxy_acme_email: "admin@example.org"
@@ -102,7 +103,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_domain` | `""` | Public server FQDN |
-| `naive_proxy_external_ip` | `""` | Public IPv4 / IPv6 that `naive_proxy_domain` resolves to. Generated sing-box client configs put this directly in the naive outbound's `server` field so the client never bootstraps DNS for the proxy itself; SNI continues to be `naive_proxy_domain` via `tls.server_name` |
+| `naive_proxy_external_ip` | `{}` | Map of `<suffix>: <ip>`, at least one entry. Each entry is a publicly reachable IPv4 / IPv6 that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user × IP**, with the file name suffixed by the map key (`singbox-<host>-<user>-<suffix>.json`). Each rendered config puts its own IP into the naive outbound's `server` field so the client never bootstraps DNS for the proxy itself; SNI continues to be `naive_proxy_domain` via `tls.server_name`. Use multiple entries to ship the same user several network paths (IPv4 / IPv6, primary / fallback) side by side |
 | `naive_proxy_users` | `{}` | Dict of `name: password`, at least one user |
 
 ### General
@@ -244,7 +245,8 @@ The probe intentionally ignores certificate validation so the initial bootstrap 
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 ```
@@ -253,7 +255,8 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_acme_email: "admin@example.org"
 naive_proxy_users:
   alice: "pass1"
@@ -265,7 +268,8 @@ HAProxy may listen locally on one port while clients see another public port.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_listen_port: 8443
 naive_proxy_external_port: 443
 naive_proxy_users:
@@ -276,7 +280,8 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_index_html: "{{ playbook_dir }}/files/decoy-index.html"
@@ -292,7 +297,8 @@ that does not leak its own domain through absolute URLs or redirects (see
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_upstream_url: "https://example.com"
@@ -304,7 +310,8 @@ When set, `naive_proxy_decoy_index_html` is ignored.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_haproxy_cpu_policy: "performance"
@@ -322,17 +329,29 @@ naive_proxy_update_runtime_images: true
 
 ## Generated Client Configs
 
-The role prints a `naive+https://` link for each user and writes sing-box JSON configs on the controller.
+The role prints a `naive+https://` link for each user × IP entry in `naive_proxy_external_ip` and writes one sing-box JSON config per pair on the controller. The map key is appended to the file name as a suffix (`singbox-<host>-<user>-<suffix>.json`) so multiple network paths to the same proxy can sit side by side without overwriting each other.
 The generated sing-box config requires sing-box 1.13.0 or newer with Naive outbound support. On Linux, use an official build variant that includes Cronet support.
 The generated TUN profile is IPv4-only: global IPv6 destinations are rejected to avoid IPv6 leaks.
 
-The naive outbound's `server` field is set to `naive_proxy_external_ip`, **not** the FQDN. SNI is preserved as `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the naive outbound.
+The naive outbound's `server` field is set to the IP from the matching map entry, **not** the FQDN. SNI is preserved as `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the naive outbound.
+
+Example input:
+
+```yaml
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
+  v6: "2001:db8::10"
+naive_proxy_users:
+  alice: "s3cret-passw0rd"
+```
 
 Example output:
 
 ```text
-[alice] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice
-[alice] ./naive-proxy-json-configs/singbox-proxy-1-alice.json
+[alice@v4] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v4
+[alice@v4] ./naive-proxy-json-configs/singbox-proxy-1-alice-v4.json
+[alice@v6] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v6
+[alice@v6] ./naive-proxy-json-configs/singbox-proxy-1-alice-v6.json
 ```
 
 For direct naive CLI usage:
@@ -536,6 +555,13 @@ for failure-surface visibility.
 SOCKS5 path through proxychains4, and the failure surface is the Naive
 outbound HTTP/2 stream (not Android `VpnService` / TUN). The scenario is
 intentionally **TCP-only**; UDP-over-Naive is not exercised.
+
+**TODO:** rework `singbox-stress` to drive traffic through a sing-box
+`tun` inbound instead of the current `mixed`/SOCKS5 + proxychains path.
+The current harness still validates the Naive outbound H2 stream, but
+HAProxy issue #3354 investigation showed that matching the Android/SFA
+client path more closely matters for reproducing client-generated
+PADDED DATA / END_STREAM frame patterns.
 
 The sing-box client container runs unprivileged: `--cap-drop=ALL`,
 `--security-opt=no-new-privileges`, `--security-opt=apparmor=unconfined`,

@@ -17,16 +17,25 @@ naive_proxy_update_runtime_images: false
 
 naive_proxy_domain: ""
 
-# Public IP that `naive_proxy_domain` resolves to. Required: client
-# configs use this directly in the naive outbound `server` field so the
-# sing-box / cronet client never needs to do DNS for the proxy itself
-# (no chicken-and-egg with bootstrap DNS through a not-yet-established
+# Public IPs that `naive_proxy_domain` resolves to. Required: at least
+# one entry. Map of `<suffix>: <ip>` — one sing-box client config is
+# rendered per user × IP, with the file name suffixed by the map key so
+# multiple network paths (IPv4 / IPv6, primary / fallback, etc.) can be
+# distributed to the same user side by side. Client configs put the IP
+# directly in the naive outbound `server` field so the sing-box / cronet
+# client never has to bootstrap DNS for the proxy itself (no
+# chicken-and-egg with bootstrap DNS through a not-yet-established
 # tunnel). The TLS SNI continues to be `naive_proxy_domain` via
-# `tls.server_name`. Set to a public reachable IPv4 or IPv6 of the
-# server. The role itself does not bind to this address — it is only
-# rendered into the generated client configs.
+# `tls.server_name`. Set each value to a publicly reachable IPv4 or
+# IPv6 of the server. The role itself does not bind to these addresses
+# — they are only rendered into the generated client configs.
+#
+# Example:
+#   naive_proxy_external_ip:
+#     v4: "203.0.113.10"
+#     v6: "2001:db8::10"
 
-naive_proxy_external_ip: ""
+naive_proxy_external_ip: {}
 
 # -- Users (required) ---------------------------------------------------------
 # Dict of name -> password.  At least one user must be defined.

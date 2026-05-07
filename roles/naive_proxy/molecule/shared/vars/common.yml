@@ -3,10 +3,18 @@ naive_proxy_naive_version: "v148.0.7778.96-2"
 molecule_naive_proxy_domain: "naive.test"
 # IP that naive.test resolves to inside the molecule instance (set via
 # molecule.yml etc_hosts and shared/tasks/prepare.yml lineinfile). The
-# role's new naive_proxy_external_ip is plumbed from this so the
-# generated client configs (and the sing-box stress benchmark) hit the
-# server by IP — no chicken-and-egg with bootstrap DNS.
+# sing-box stress benchmark hits the server by this IP — no
+# chicken-and-egg with bootstrap DNS.
 molecule_naive_proxy_external_ip: "127.0.0.1"
+# Map form for `naive_proxy_external_ip`. Two entries so converge / verify
+# exercise the multi-IP code path: each suffix produces its own sing-box
+# client config with the matching `server` value embedded. Both addresses
+# point back at the molecule loopback; the second (`secondary`) is
+# 127.0.0.2 — same /8, also routable inside the netns — so we can assert
+# `server` field separation without standing up a second listener.
+molecule_naive_proxy_external_ip_map:
+  primary: "{{ molecule_naive_proxy_external_ip }}"
+  secondary: "127.0.0.2"
 molecule_naive_proxy_listen_port: 8443
 molecule_naive_proxy_external_port: 9443
 molecule_naive_proxy_decoy_url: "http://{{ molecule_naive_proxy_domain }}:8081/"

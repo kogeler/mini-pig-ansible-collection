@@ -18,6 +18,23 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- Per-IP sing-box client configs ----------------------------------------
+    # Same coverage as in shared/verify.yml: assert that each entry in
+    # `naive_proxy_external_ip` produced its own per-user sing-box config
+    # with the expected `server` IP. This file's converge.yml plumbs the
+    # role's external_ip from `molecule_naive_proxy_external_ip_map`, so
+    # we assert against the same map here.
+    - name: Verify per-IP sing-box client configs
+      ansible.builtin.import_tasks: tasks/verify-clients.yml
+      vars:
+        _verify_clients_users:
+          testuser: "testpass"
+        _verify_clients_ip_map: "{{ molecule_naive_proxy_external_ip_map }}"
+        _verify_clients_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+        _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
+        _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"
+
     # -- HAProxy diagnostics surface ------------------------------------------
     # Run before the stress benchmark so that if the diagnostics surface is
     # broken we fail fast with a clear message instead of timing out on the

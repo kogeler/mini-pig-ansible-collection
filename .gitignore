@@ -1,5 +1,6 @@
 .idea
 .ansible
+.claude
 
 naive-proxy-json-configs
 
