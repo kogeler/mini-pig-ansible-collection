@@ -176,30 +176,29 @@ roles/naive_proxy/
     ├── default/           # Dual-driver scenario (podman-in-podman + vagrant-libvirt), Debian trixie
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
-    │   ├── prepare.yml
     │   └── ENABLE_CI      # Marker: include in CI matrix
     ├── debian-bookworm/   # Local podman-in-podman scenario (Debian bookworm)
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
-    │   ├── prepare.yml
     │   └── ENABLE_CI
     ├── gha/               # GitHub Actions localhost scenario (ansible-native)
     │   ├── molecule.yml
-    │   ├── prepare.yml
-    │   ├── inventory/hosts.yml
+    │   ├── inventory/hosts.yml   # sets mp_driver: native so the shared prepare task fires its lineinfile branch
     │   └── ENABLE_CI
     ├── singbox-stress/    # Opt-in: sing-box Naive outbound H2 reproducer (no ENABLE_CI)
     │   ├── molecule.yml   # mirrors default (dual-driver, MP_DRIVER)
-    │   └── prepare.yml
+    │   └── converge.yml   # scenario-local converge: imports shared converge-naive-proxy + applies ssl_router
     └── shared/            # Common playbooks and tasks for all scenarios
-        ├── converge.yml
-        ├── verify.yml
-        ├── benchmark.yml
+        ├── prepare.yml             # single prepare entry-point used by every scenario
+        ├── converge.yml            # default converge (used by default / debian-bookworm / gha)
+        ├── verify.yml              # full verify (cert renewal, decoy modes, official-naive SOCKS5, benchmark)
         ├── singbox-verify.yml      # verify entry-point for singbox-stress
+        ├── benchmark.yml           # standalone official-naive benchmark
         ├── singbox-benchmark.yml   # standalone sing-box stress benchmark
         ├── utils.yml
         ├── tasks/
-        │   ├── prepare.yml
+        │   ├── prepare.yml               # etc_hosts + deps + naive client download
+        │   ├── converge-naive-proxy.yml  # shared: include_role naive_proxy with the molecule role-vars dict
         │   ├── wait-services.yml
         │   ├── benchmark.yml             # official-naive client + shared bench tasks
         │   ├── singbox-benchmark.yml     # sing-box client + shared bench tasks
@@ -209,7 +208,7 @@ roles/naive_proxy/
         │   ├── verify-diagnostics.yml    # shared: HAProxy admin socket + ring h2trace
         │   └── verify-clients.yml        # shared: per-user×IP sing-box config assertions
         └── vars/
-            ├── common.yml     # Shared variables (domain, ports, naive version)
+            ├── common.yml     # Shared variables (domain, ports, naive version, role-vars dict, test users)
             ├── benchmark.yml
             └── singbox-benchmark.yml
 ```
@@ -236,7 +235,7 @@ The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own on
 ### Required
 
 - `naive_proxy_domain` — server FQDN
-- `naive_proxy_external_ip` — **map** of `<suffix>: <ip>`, at least one entry. Each entry is a public IP that `naive_proxy_domain` resolves to. The role renders one sing-box client config per user × IP at `singbox-<host>-<user>-<suffix>.json` and prints one set of `naive+https://` / `naive://` links per pair. Each config puts its IP into the naive outbound `server` field (SNI stays the FQDN via `tls.server_name`), so sing-box / cronet skips bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through naive). Use multiple entries to ship the same user several network paths (IPv4 / IPv6, primary / fallback)
+- `naive_proxy_external_ip` — **map** of `<suffix>: <ip>`, at least one entry. Each entry is a public IP that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user** at `singbox-<host>-<user>.json`; inside the file every entry becomes a separate naive outbound (`naive-<user>-<suffix>`) with its own `server` IP, and a `urltest` selector (`naive-<user>`) on top probes them every `naive_proxy_singbox_urltest_interval` and routes traffic through the lowest-latency one. DNS detour and route default both reference the urltest tag, so failover between IPs is automatic. SNI stays the FQDN via `tls.server_name` so sing-box / cronet skips bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through the urltest tag). Use multiple entries to give clients automatic IPv4 / IPv6 or primary / fallback failover. Probe URL is `naive_proxy_singbox_urltest_url`, default `https://www.gstatic.com/generate_204`
 - `naive_proxy_users` — dict `{ name: password }`, at least one user
 
 ### Important
@@ -415,7 +414,7 @@ Box comes from Vagrant Cloud on first `create`; cached afterwards. `generic/debi
 ### What `molecule verify` checks
 
 1. Pod, HAProxy, decoy, and backend services are active
-2. **Per-IP sing-box client configs (`tasks/verify-clients.yml`)** — one config per user × `naive_proxy_external_ip` map entry, file name suffixed by the map key, naive outbound `server` field equal to the entry's IP, and per-user (suffix → server) mapping equal to the input map (catches loop collapse / overwrite regressions). Reused by both `shared/verify.yml` and `shared/singbox-verify.yml`
+2. **Per-user sing-box client configs (`tasks/verify-clients.yml`)** — one config per user at `singbox-<host>-<user>.json`. The file must contain one naive outbound per `naive_proxy_external_ip` entry (`naive-<user>-<suffix>` with the matching `server` IP) plus one `urltest` outbound (`naive-<user>`) listing every per-suffix tag and referencing the configured probe URL + interval. DNS detour and route default both target the urltest tag. Reused by both `shared/verify.yml` and `shared/singbox-verify.yml`. Singbox-stress goes further and asserts urltest events actually fire in the sing-box journal during the iperf3 run (probe URL pointed at the molecule decoy so probes are reachable inside the sandbox)
 3. Decoy site is served through HAProxy TLS
 4. Pebble-issued certificate replaces the bootstrap self-signed cert
 5. `naive-acme-renew.timer` is enabled

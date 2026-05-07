@@ -103,7 +103,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_domain` | `""` | Public server FQDN |
-| `naive_proxy_external_ip` | `{}` | Map of `<suffix>: <ip>`, at least one entry. Each entry is a publicly reachable IPv4 / IPv6 that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user × IP**, with the file name suffixed by the map key (`singbox-<host>-<user>-<suffix>.json`). Each rendered config puts its own IP into the naive outbound's `server` field so the client never bootstraps DNS for the proxy itself; SNI continues to be `naive_proxy_domain` via `tls.server_name`. Use multiple entries to ship the same user several network paths (IPv4 / IPv6, primary / fallback) side by side |
+| `naive_proxy_external_ip` | `{}` | Map of `<suffix>: <ip>`, at least one entry. Each entry is a publicly reachable IPv4 / IPv6 that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user** (`singbox-<host>-<user>.json`); inside the file every entry becomes a separate naive outbound (`naive-<user>-<suffix>`) and a `urltest` selector (`naive-<user>`) on top probes them periodically and routes traffic through the lowest-latency one. DNS detour and route default both target the urltest tag so failover between IPs is automatic. SNI stays `naive_proxy_domain` via `tls.server_name`. Use multiple entries to give clients automatic failover between e.g. an IPv4 path, an IPv6 path, or primary / fallback CDN edges |
 | `naive_proxy_users` | `{}` | Dict of `name: password`, at least one user |
 
 ### General
@@ -329,11 +329,14 @@ naive_proxy_update_runtime_images: true
 
 ## Generated Client Configs
 
-The role prints a `naive+https://` link for each user × IP entry in `naive_proxy_external_ip` and writes one sing-box JSON config per pair on the controller. The map key is appended to the file name as a suffix (`singbox-<host>-<user>-<suffix>.json`) so multiple network paths to the same proxy can sit side by side without overwriting each other.
+The role writes **one sing-box JSON config per user** (`singbox-<host>-<user>.json`) on the controller. Inside the file every entry from `naive_proxy_external_ip` becomes its own naive outbound tagged `naive-<user>-<suffix>`, and a `urltest` selector on top (tagged `naive-<user>`) periodically probes `naive_proxy_singbox_urltest_url` through each child outbound and routes traffic through the lowest-latency one. The DNS detour and the route default both reference the urltest tag, so failover between IPs is automatic — no client-side reconfiguration when one path becomes lossy.
+The role also prints a `naive+https://` URL per user × IP pair so an operator can hand a specific IP path to a specific user out of band; the underlying naive proxy accepts the same `Proxy-Authorization` header regardless of which IP the client reaches it through.
 The generated sing-box config requires sing-box 1.13.0 or newer with Naive outbound support. On Linux, use an official build variant that includes Cronet support.
 The generated TUN profile is IPv4-only: global IPv6 destinations are rejected to avoid IPv6 leaks.
 
-The naive outbound's `server` field is set to the IP from the matching map entry, **not** the FQDN. SNI is preserved as `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the naive outbound.
+Each naive outbound's `server` field is set to the IP from its matching map entry, **not** the FQDN. SNI stays `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the urltest tag.
+
+The urltest probe URL and interval are tunable via `naive_proxy_singbox_urltest_url` (default `https://www.gstatic.com/generate_204`) and `naive_proxy_singbox_urltest_interval` (default `3m`). Override the URL to a self-hosted endpoint when reaching Google directly is undesired.
 
 Example input:
 
@@ -349,9 +352,11 @@ Example output:
 
 ```text
 [alice@v4] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v4
-[alice@v4] ./naive-proxy-json-configs/singbox-proxy-1-alice-v4.json
 [alice@v6] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v6
-[alice@v6] ./naive-proxy-json-configs/singbox-proxy-1-alice-v6.json
+[alice]    ./naive-proxy-json-configs/singbox-proxy-1-alice.json
+```
+
+The single rendered file contains both `naive-alice-v4` and `naive-alice-v6` outbounds plus a `naive-alice` urltest selector listing them.
 ```
 
 For direct naive CLI usage:

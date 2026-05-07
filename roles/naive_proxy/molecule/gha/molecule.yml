@@ -17,7 +17,7 @@ ansible:
     privilege_escalation:
       become: "true"
   playbooks:
-    prepare: prepare.yml
+    prepare: ../shared/prepare.yml
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
 

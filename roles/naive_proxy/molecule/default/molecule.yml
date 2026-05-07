@@ -64,7 +64,7 @@ provisioner:
   options:
     D: true
   playbooks:
-    prepare: prepare.yml
+    prepare: ../shared/prepare.yml
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
   inventory:

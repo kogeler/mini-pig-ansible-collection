@@ -2,22 +2,18 @@
 # Copyright © 2026 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-# `naive_proxy_external_ip` is a map of `<suffix>: <ip>`. For each
-# user × ip pair we render one sing-box client config and emit one set
-# of client URLs. The suffix is appended to the rendered file name so
-# the same user can carry several network paths (IPv4 / IPv6, primary /
-# fallback) side by side without overwriting each other.
+# `naive_proxy_external_ip` is a map of `<suffix>: <ip>`. The role
+# renders **one sing-box client config per user**; inside the file every
+# IP entry becomes a separate naive outbound (`naive-<user>-<suffix>`)
+# and a `urltest` selector (`naive-<user>`) chooses the fastest one.
+# DNS and the route default both point at the urltest tag, so the
+# client transparently fails over between IPs without any extra config.
 #
-# `_naive_proxy_client_matrix` is a cartesian product of the user dict
-# and the IP dict, materialised as a list of `[user_item, ip_item]`
-# tuples (where each `*_item` is a `{key, value}` pair from `dict2items`).
-
-- name: naive-proxy | clients | build user/ip matrix
-  ansible.builtin.set_fact:
-    _naive_proxy_client_matrix: >-
-      {{ (naive_proxy_users | dict2items)
-         | product(naive_proxy_external_ip | dict2items)
-         | list }}
+# We still print one URL per user × IP pair so operators can hand a
+# specific URL to a specific user/path if they need to bypass the
+# selector — the underlying naive proxy accepts the same
+# `Proxy-Authorization` header regardless of which IP the client
+# reaches it through.
 
 - name: naive-proxy | clients | display proxy links
   ansible.builtin.debug:
@@ -30,7 +26,9 @@
         naive://{{ item.0.key }}:{{ item.0.value }}\
         @{{ naive_proxy_domain }}:{{ naive_proxy_external_port }}?security=tls\
         #{{ item.0.key }}-{{ item.1.key }}"
-  loop: "{{ _naive_proxy_client_matrix }}"
+  loop: "{{ (naive_proxy_users | dict2items)
+            | product(naive_proxy_external_ip | dict2items)
+            | list }}"
   loop_control:
     label: "{{ item.0.key }}@{{ item.1.key }}"
 
@@ -47,25 +45,24 @@
 - name: naive-proxy | clients | write sing-box client configs
   ansible.builtin.template:
     src: singbox-client.json.j2
-    dest: "{{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1.key }}.json"
+    dest: "{{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.key }}.json"
     mode: "0600"
   vars:
-    _naive_proxy_singbox_user: "{{ item.0.key }}"
-    _naive_proxy_singbox_pass: "{{ item.0.value }}"
-    _naive_proxy_singbox_server_ip: "{{ item.1.value }}"
-    _naive_proxy_singbox_ip_suffix: "{{ item.1.key }}"
+    _naive_proxy_singbox_user: "{{ item.key }}"
+    _naive_proxy_singbox_pass: "{{ item.value }}"
+    _naive_proxy_singbox_ip_map: "{{ naive_proxy_external_ip }}"
   delegate_to: localhost
   connection: local
   become: false
-  loop: "{{ _naive_proxy_client_matrix }}"
+  loop: "{{ naive_proxy_users | dict2items }}"
   loop_control:
-    label: "{{ item.0.key }}@{{ item.1.key }}"
+    label: "{{ item.key }}"
 
 - name: naive-proxy | clients | display client config paths
   ansible.builtin.debug:
     msg: >-
-      [{{ item.0.key }}@{{ item.1.key }}]
-      {{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1.key }}.json
-  loop: "{{ _naive_proxy_client_matrix }}"
+      [{{ item.key }}]
+      {{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.key }}.json
+  loop: "{{ naive_proxy_users | dict2items }}"
   loop_control:
-    label: "{{ item.0.key }}@{{ item.1.key }}"
+    label: "{{ item.key }}"

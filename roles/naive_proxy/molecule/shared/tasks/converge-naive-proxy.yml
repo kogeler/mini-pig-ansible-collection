@@ -1,0 +1,33 @@
+---
+# Shared role-application step used by every converge play (default,
+# debian-bookworm, gha via shared/converge.yml; singbox-stress via its
+# scenario-local converge.yml). Centralised here so the role-vars
+# dict — domain, listen/external ports, IP map, users, molecule_mode,
+# diagnostics surface, naive backend verbosity — has exactly one
+# definition. Reads from `shared/vars/common.yml`.
+#
+# Crank chromium net-stack verbosity (`--v=1`) so the backend journal
+# carries VERBOSE1 lines (TLS handshakes, HTTP/2 frames, padding
+# negotiation) that make CI failures self-diagnosable. Diagnostics
+# surface is enabled so `tasks/verify-diagnostics.yml` can confirm the
+# admin socket and `ring h2trace` are reachable on 127.0.0.1.
+
+- name: Apply naive_proxy role with molecule overrides
+  ansible.builtin.include_role:
+    name: kogeler.mini_pig.naive_proxy
+  vars:
+    naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+    naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip_map }}"
+    naive_proxy_client_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+    naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+    naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+    naive_proxy_users: "{{ molecule_naive_proxy_users }}"
+    naive_proxy_molecule_mode: true
+    naive_proxy_backend_naive_args:
+      - "--v=1"
+    naive_proxy_haproxy_diagnostics_enabled: true
+    # Override the role's prod urltest defaults so probes target the
+    # molecule's own decoy (no internet egress) and fire often enough to
+    # actually run during verify.
+    naive_proxy_singbox_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+    naive_proxy_singbox_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"

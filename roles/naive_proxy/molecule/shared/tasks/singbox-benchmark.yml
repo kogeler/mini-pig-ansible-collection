@@ -73,12 +73,53 @@
 #     test CA. Real prod uses a public CA chain that cronet trusts.
 #   * `log.level=debug` (prod uses `info`) so H2 stream errors surface.
 
+# Build one naive outbound per entry in `molecule_naive_proxy_external_ip_map`,
+# then wire a `urltest` selector tagged `naive-test` on top. This mirrors
+# the role's prod template shape (one `naive-<user>-<suffix>` outbound
+# per IP + a `urltest` tag the rest of the config references), so the
+# singbox-stress reproducer exercises the same code path real users hit
+# when the role generates a multi-IP config. The 30 s urltest interval
+# ensures at least one probe fires during the verify cycle.
+
+- name: Build per-IP sing-box naive outbounds for urltest selector
+  ansible.builtin.set_fact:
+    _singbox_naive_outbounds: >-
+      {{ _singbox_naive_outbounds | default([]) + [{
+           'type': 'naive',
+           'tag': 'naive-test-' ~ item.key,
+           'server': item.value,
+           'server_port': singbox_naive_server_port | int,
+           'username': (molecule_naive_proxy_users | dict2items)[0].key,
+           'password': (molecule_naive_proxy_users | dict2items)[0].value,
+           'tls': {
+             'enabled': true,
+             'server_name': molecule_naive_proxy_domain,
+             'certificate_path': '/etc/ssl/certs/pebble-ca.crt'
+           }
+         }] }}
+  loop: "{{ molecule_naive_proxy_external_ip_map | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
 - name: Render sing-box client config
   ansible.builtin.copy:
     dest: "{{ singbox_client_config_path }}"
     mode: "0644"
     content: "{{ _singbox_client_config | to_nice_json }}"
   vars:
+    # Per-IP naive outbound tags collected from the IP map.
+    _singbox_per_ip_tags: >-
+      {{ molecule_naive_proxy_external_ip_map | dict2items
+         | map(attribute='key')
+         | map('regex_replace', '^', 'naive-test-')
+         | list }}
+    # urltest selector tagged `naive-test` listing every per-IP child.
+    _singbox_urltest_outbound:
+      type: urltest
+      tag: naive-test
+      outbounds: "{{ _singbox_per_ip_tags }}"
+      url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+      interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
     _singbox_client_config:
       log:
         level: debug
@@ -87,25 +128,10 @@
           tag: mixed-in
           listen: 127.0.0.1
           listen_port: "{{ singbox_client_mixed_port | int }}"
-      outbounds:
-        - type: naive
-          tag: naive-test
-          # IP, not hostname — same approach as the prod template
-          # (naive_proxy_external_ip). Cronet skips DNS for the proxy
-          # itself, no bootstrap dns is needed.
-          server: "{{ molecule_naive_proxy_external_ip }}"
-          server_port: "{{ singbox_naive_server_port | int }}"
-          username: testuser
-          password: testpass
-          tls:
-            enabled: true
-            server_name: "{{ molecule_naive_proxy_domain }}"
-            # PEM read by sing-box and injected into cronet's
-            # TrustedRootCertificates — only path naive outbound
-            # exposes for adding a non-public CA.
-            certificate_path: /etc/ssl/certs/pebble-ca.crt
-        - type: direct
-          tag: direct
+      # Per-IP naive outbounds + urltest selector + direct fallback.
+      # iperf3 traffic flows through the `naive-test` urltest tag, so
+      # selection between the two naive children is actively exercised.
+      outbounds: "{{ _singbox_naive_outbounds + [_singbox_urltest_outbound, {'type': 'direct', 'tag': 'direct'}] }}"
       route:
         rules:
           - action: sniff
@@ -263,6 +289,18 @@
       This reproduces the reported sing-box / SFA HTTP/2 protocol error
       against the deployed naive_proxy stack. See journals printed above
       for the full context (sing-box, HAProxy, naive backend).
+
+# urltest is exercised end-to-end by the fact that ALL traffic flows
+# through `naive-test` (the urltest tag): the SOCKS5 smoke test
+# (socks-decoy-smoke.yml) triggers sing-box's lazy initial probe of
+# every child outbound on first connection, then iperf3 -P 16 drives
+# 30 s of CONNECT streams through whichever child urltest selected.
+# A successful smoke-test + a clean iperf3 JSON means the urltest
+# wrapper passed both correctness (right child picked) and live load
+# (no disruption when probing). We deliberately do NOT scan the journal
+# for urltest log lines — sing-box's urltest log format is unstable
+# across versions and probe interval is intentionally long enough that
+# only the lazy initial probe fires during the test.
 
 # -- Cleanup -----------------------------------------------------------
 

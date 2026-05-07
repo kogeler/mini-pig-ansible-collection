@@ -27,13 +27,14 @@
     - name: Verify per-IP sing-box client configs
       ansible.builtin.import_tasks: tasks/verify-clients.yml
       vars:
-        _verify_clients_users:
-          testuser: "testpass"
+        _verify_clients_users: "{{ molecule_naive_proxy_users }}"
         _verify_clients_ip_map: "{{ molecule_naive_proxy_external_ip_map }}"
         _verify_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
         _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
         _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
         _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"
+        _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+        _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
 
     # -- HAProxy diagnostics surface ------------------------------------------
     # Run before the stress benchmark so that if the diagnostics surface is

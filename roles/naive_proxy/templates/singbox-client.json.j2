@@ -1,4 +1,10 @@
-{#- Sing-box client config rendered by `tasks/clients.yml`.
+{#- Sing-box client config rendered by `tasks/clients.yml`. One file
+  per user. Every entry in `naive_proxy_external_ip` (a `<suffix>: <ip>`
+  map) becomes its own naive outbound `naive-<user>-<suffix>`, and a
+  `urltest` selector tagged `naive-<user>` picks the lowest-latency
+  child by periodically probing `naive_proxy_singbox_urltest_url`.
+  DNS detour and route default both target the urltest tag, so
+  failover between IPs is automatic.
 
   Routing notes:
     * `reject ip_cidr 2000::/3` — block IPv6 globals, avoid v6 leaks.
@@ -14,13 +20,29 @@
     * `route network=udp outbound=direct` — non-443 UDP bypasses the
       naive outbound (which is TCP-only). DNS already handled above.
 -#}
+{%- set _user_tag = 'naive-' ~ _naive_proxy_singbox_user -%}
+{%- set _per_ip_outbounds = [] -%}
+{%- set _per_ip_tags = [] -%}
+{%- for _suffix, _ip in (_naive_proxy_singbox_ip_map | dictsort) -%}
+  {%- set _tag = _user_tag ~ '-' ~ _suffix -%}
+  {%- set _ = _per_ip_tags.append(_tag) -%}
+  {%- set _ = _per_ip_outbounds.append({
+    'type': 'naive',
+    'tag': _tag,
+    'server': _ip,
+    'server_port': naive_proxy_external_port | int,
+    'username': _naive_proxy_singbox_user,
+    'password': _naive_proxy_singbox_pass,
+    'tls': {'enabled': true, 'server_name': naive_proxy_domain}
+  }) -%}
+{%- endfor -%}
 {{ {
   'log': {'level': 'info'},
   'dns': {
     'servers': [
       {'type': 'https', 'tag': 'dns-remote-cloudflare',
        'server': '1.1.1.1', 'server_port': 443,
-       'detour': 'naive-' ~ _naive_proxy_singbox_user,
+       'detour': _user_tag,
        'tls': {'enabled': true,
                'server_name': 'cloudflare-dns.com'}}
     ],
@@ -34,13 +56,12 @@
      'stack': 'mixed',
      'exclude_package': ['com.android.captiveportallogin']}
   ],
-  'outbounds': [
-    {'type': 'naive', 'tag': 'naive-' ~ _naive_proxy_singbox_user,
-     'server': _naive_proxy_singbox_server_ip,
-     'server_port': naive_proxy_external_port | int,
-     'username': _naive_proxy_singbox_user,
-     'password': _naive_proxy_singbox_pass,
-     'tls': {'enabled': true, 'server_name': naive_proxy_domain}},
+  'outbounds': _per_ip_outbounds + [
+    {'type': 'urltest',
+     'tag': _user_tag,
+     'outbounds': _per_ip_tags,
+     'url': naive_proxy_singbox_urltest_url,
+     'interval': naive_proxy_singbox_urltest_interval},
     {'type': 'direct', 'tag': 'direct'}
   ],
   'route': {
@@ -59,6 +80,6 @@
       {'action': 'route', 'outbound': 'direct',
        'network': ['udp']}
     ],
-    'final': 'naive-' ~ _naive_proxy_singbox_user
+    'final': _user_tag
   }
 } | to_nice_json }}

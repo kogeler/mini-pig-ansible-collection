@@ -251,6 +251,23 @@ naive_proxy_decoy_upstream_url: ""
 
 naive_proxy_client_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
 
+# Sing-box `urltest` selector knobs. Each generated client config
+# bundles every entry of `naive_proxy_external_ip` as a separate naive
+# outbound (`naive-<user>-<suffix>`) and wires a `urltest` outbound
+# (`naive-<user>`) on top that periodically probes the URL below
+# through each child outbound and picks the lowest-latency one. DNS and
+# the route default both target the urltest tag, so failover between
+# IPs is automatic.
+#
+# Default URL is the sing-box / shadowsocks-rust convention — Google's
+# generate_204 endpoint that returns an empty 204 (small payload, very
+# stable, anycast). Override to a self-hosted endpoint if your clients
+# operate in environments where reaching Google directly is undesired.
+naive_proxy_singbox_urltest_url: "https://www.gstatic.com/generate_204"
+# Sing-box duration syntax (`30s`, `3m`, `1h`). Lower = faster failover
+# but more probe traffic per outbound.
+naive_proxy_singbox_urltest_interval: "3m"
+
 # -- Molecule testing mode ----------------------------------------------------
 # Deploys pebble (test ACME CA) as an additional container in the pod.
 # Sets acme_server and acme_insecure automatically. Never enable in production.

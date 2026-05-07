@@ -45,7 +45,7 @@ provisioner:
   options:
     D: true
   playbooks:
-    prepare: prepare.yml
+    prepare: ../shared/prepare.yml
     # Scenario-local converge — applies kogeler.mini_pig.ssl_router on
     # top of the naive_proxy role to mirror the real-prod topology
     # (ssl-router on :443 in front of HAProxy on :8443).
