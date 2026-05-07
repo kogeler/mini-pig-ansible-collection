@@ -1,7 +1,11 @@
 ---
-# GHA scenario: applies the role directly to the runner VM (no nested containers).
-# Uses ansible-native configuration — no driver/platforms sections.
+# GHA scenario: applies the role directly to the runner VM (no nested
+# containers). Uses ansible-native configuration — no driver/platforms.
 # Locally, use the default (podman) scenario instead.
+#
+# Shared config (deps, verifier, callbacks_enabled, default playbooks)
+# inherited from `.config/molecule/config.yml` at the repo root. Only
+# the GHA-specific overrides live here.
 ansible:
   executor:
     backend: ansible-playbook
@@ -12,21 +16,12 @@ ansible:
   env:
     ANSIBLE_FORCE_COLOR: "true"
   cfg:
-    defaults:
-      callbacks_enabled: ansible.posix.profile_tasks
+    # Adds to the shared `defaults.callbacks_enabled` (deep-merged).
     privilege_escalation:
       become: "true"
-  playbooks:
-    prepare: ../shared/prepare.yml
-    converge: ../shared/converge.yml
-    verify: ../shared/verify.yml
-
 scenario:
   test_sequence:
     - prepare
     - converge
     - idempotence
     - verify
-
-verifier:
-  name: ansible

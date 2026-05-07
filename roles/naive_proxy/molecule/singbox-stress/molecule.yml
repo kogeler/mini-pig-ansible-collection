@@ -7,16 +7,14 @@
 # "stream failed: http2 protocol error" / "connection upload closed"
 # failures reported by sing-box / SFA clients against a deployed
 # naive_proxy stack.
-dependency:
-  name: galaxy
+#
+# Shared config in `.config/molecule/config.yml` at the repo root.
 driver:
   name: "${MP_DRIVER:-podman}"
-  # vagrant-only; podman ignores it
   provider:
     name: "${MP_VAGRANT_PROVIDER:-libvirt}"
 platforms:
   - name: molecule-naive-proxy
-    # ---- podman driver keys ----
     image: "docker.io/library/debian:trixie"
     pre_build_image: false
     systemd: always
@@ -36,30 +34,19 @@ platforms:
       - /dev/fuse:/dev/fuse
     command: ""
     override_command: false
-    # ---- vagrant driver keys ----
     box: "${MP_BOX:-debian/trixie64}"
     memory: "${MP_VM_MEMORY:-2048}"
     cpus: "${MP_VM_CPUS:-8}"
 provisioner:
-  name: ansible
-  options:
-    D: true
-  playbooks:
-    prepare: ../shared/prepare.yml
-    # Scenario-local converge — applies kogeler.mini_pig.ssl_router on
-    # top of the naive_proxy role to mirror the real-prod topology
-    # (ssl-router on :443 in front of HAProxy on :8443).
-    converge: converge.yml
-    verify: ../shared/singbox-verify.yml
   inventory:
     # Build-time pins for Dockerfile.j2. `group_vars.all` is the only
     # scenario-level vars location molecule loads into BOTH the create
     # play (which renders Dockerfile.j2 against `localhost`) and the
-    # converge/verify plays. Pin the sing-box version + Go toolchain to
+    # converge / verify plays. Pin sing-box version + Go toolchain to
     # whatever SagerNet/sing-box-for-android currently ships
-    # (version.properties → VERSION_NAME, GO_VERSION). Bumping SFA → bump
-    # these values and run `molecule destroy` + `molecule converge` to
-    # rebuild the molecule instance image.
+    # (version.properties → VERSION_NAME, GO_VERSION). Bumping SFA →
+    # bump these values and run `molecule destroy` + `molecule converge`
+    # to rebuild the molecule instance image.
     group_vars:
       all:
         singbox_build_version: "v1.14.0-alpha.20"
@@ -76,14 +63,10 @@ provisioner:
         # chromium revision and so its libcronet.so matches the bindings
         # SFA ships in libbox.aar. Bump together with `singbox_build_version`.
         singbox_cronet_version: "v147.0.7727.49-1"
-    host_vars:
-      molecule-naive-proxy:
-        # See default/molecule.yml for the rationale — `mp_driver` must
-        # live in inventory host_vars, not shared/vars/common.yml.
-        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
-        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
-  config_options:
-    defaults:
-      callbacks_enabled: ansible.posix.profile_tasks
-verifier:
-  name: ansible
+ansible:
+  playbooks:
+    # Override the shared default `../shared/converge.yml`. This
+    # scenario-local converge applies kogeler.mini_pig.ssl_router on top
+    # of the naive_proxy role to mirror the prod ssl-router → HAProxy
+    # chain (see converge.yml). prepare/verify stay shared.
+    converge: converge.yml

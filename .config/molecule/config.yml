@@ -1,0 +1,49 @@
+---
+# Project-wide molecule base config. Auto-loaded by molecule from the
+# VCS root (this repo); each scenario's `molecule.yml` deep-merges on
+# top of this. `lookup_config_file()` in molecule walks up to the .git
+# root, so this works both for local invocation and for CI (which
+# checks out into `ansible_collections/kogeler/mini_pig/`).
+#
+# Important caveats about molecule's deep-merge:
+#   * Dicts are deep-merged; values from the scenario override base.
+#   * **Lists are REPLACED entirely** (see molecule.util.merge_dicts).
+#     That is why `driver` (a dict, can be in base) is shared from
+#     here, but `platforms` (a list) MUST stay in each scenario.
+#   * Legacy `provisioner.{config_options, playbooks, env,
+#     ansible_args}` get migrated to `ansible.{cfg, playbooks, env,
+#     executor.args.ansible_playbook}` after merge — and the migration
+#     REPLACES the destination wholesale. We therefore use the new
+#     `ansible.*` syntax everywhere so deep-merge happens in one place
+#     and the migration short-circuits with no destructive replace.
+
+dependency:
+  name: galaxy
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    # Default host_vars for the molecule-managed instance. Each
+    # scenario overrides what it needs in its own molecule.yml — deep
+    # merge keeps the rest. `mp_driver` MUST live in inventory
+    # (precedence 9) rather than in any `vars_files` (priority 14):
+    # otherwise vars_files would silently mask scenario-specific
+    # inventory values, breaking e.g. the gha scenario's `native`.
+    host_vars:
+      molecule-naive-proxy:
+        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
+        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

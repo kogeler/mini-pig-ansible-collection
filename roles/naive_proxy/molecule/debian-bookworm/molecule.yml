@@ -1,6 +1,6 @@
 ---
-dependency:
-  name: galaxy
+# debian-bookworm scenario: single-driver podman, Debian bookworm.
+# Shared config in `.config/molecule/config.yml` at the repo root.
 driver:
   name: podman
 platforms:
@@ -8,24 +8,11 @@ platforms:
     image: "docker.io/library/debian:bookworm"
     pre_build_image: false
     systemd: always
-    # Rootless podman network mode for the Molecule instance.
-    # Supported values:
-    #   host        — share the host network namespace, no port mapping needed
-    #   slirp4netns — userspace TCP/IP stack via slirp4netns (rootless default)
-    #   bridge      — CNI/netavark bridge with veth pairs
-    #   pasta       — replacement for slirp4netns using passt (podman >= 5.0)
-    # "host" avoids the extra NAT layer so container ports are reachable
-    # directly; this simplifies testing services that bind to :443.
-    # NOTE: the molecule-podman create playbook reads "network", not
-    # "network_mode" — using the wrong key silently falls back to the default.
-    network: "${MOLECULE_NETWORK:-slirp4netns}"
-    # podman-in-podman: unmask /proc for newuidmap, caps for nested userns
+    network: "${MP_NETWORK:-slirp4netns}"
     security_opts:
       - "label=disable"
       - "unmask=/proc/*"
-      # for ubuntu
       - "apparmor=unconfined"
-      # - "seccomp=unconfined"
     capabilities:
       - SYS_ADMIN
       - SETUID
@@ -35,27 +22,12 @@ platforms:
       naive.test: "127.0.0.1"
     devices:
       - /dev/fuse:/dev/fuse
-      # for pasta network
-      # - /dev/net/tun:/dev/net/tun
     command: ""
     override_command: false
 provisioner:
-  name: ansible
-  options:
-    D: true
-  playbooks:
-    prepare: ../shared/prepare.yml
-    converge: ../shared/converge.yml
-    verify: ../shared/verify.yml
   inventory:
-    # Single-driver podman scenario; mp_driver is constant. Defined in
-    # inventory host_vars rather than shared/vars/common.yml because
-    # vars_files precedence would mask per-scenario inventory values.
+    # Single-driver podman: pin mp_driver. Overrides the env-driven
+    # default in the shared base config.
     host_vars:
       molecule-naive-proxy:
         mp_driver: podman
-  config_options:
-    defaults:
-      callbacks_enabled: ansible.posix.profile_tasks
-verifier:
-  name: ansible

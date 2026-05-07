@@ -173,6 +173,16 @@ roles/naive_proxy/
 │   └── download-via-tty.sh   # operator-side: pull a file off the target through the same TTY
 └── molecule/
     ├── Makefile           # Thin wrapper: <scenario>-<driver>-<action>, hides MP_DRIVER/GIT_DIR/ANSIBLE_LIBRARY
+    │
+    │ # Cross-scenario base config: `<repo>/.config/molecule/config.yml`.
+    │ # Auto-loaded by molecule from the VCS root and deep-merged below
+    │ # each scenario's molecule.yml. Holds dependency, verifier,
+    │ # provisioner.{name, options, inventory.host_vars defaults},
+    │ # ansible.cfg.defaults, and ansible.playbooks (default paths to
+    │ # `../shared/{prepare,converge,verify}.yml`). Lists are NOT
+    │ # deep-merged by molecule, so `driver` and `platforms` MUST stay
+    │ # in each scenario's molecule.yml.
+    │
     ├── default/           # Dual-driver scenario (podman-in-podman + vagrant-libvirt), Debian trixie
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
