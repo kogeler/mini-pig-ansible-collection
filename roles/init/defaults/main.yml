@@ -7,6 +7,7 @@ init_flow_control_apt: true
 init_flow_control_users: true
 init_flow_control_time: true
 init_flow_control_kernel: true
+init_flow_control_sysctl: true
 init_flow_control_hosts: true
 init_flow_control_ssh: true
 init_flow_control_mount: true
@@ -58,6 +59,9 @@ init_apt_xanmod_kernel_apt_gpg_url: "https://dl.xanmod.org/archive.key"
 init_apt_google_cloud_sdk_enable: false
 
 init_cmdline_linux: ""
+
+init_sysctl_conf_filename: "90-init-role.conf"
+init_sysctl_parameters: {}
 
 init_journald_system_max_use: "5G"
 init_journald_system_keep_free: "1G"

@@ -1,25 +1,13 @@
 ---
+# Default converge for default / debian-bookworm / gha. The
+# singbox-stress scenario uses its own scenario-local converge that
+# applies kogeler.mini_pig.ssl_router on top to mirror the prod
+# topology — both converge plays share the same naive_proxy role-vars
+# dict via tasks/converge-naive-proxy.yml.
 - name: Converge
   hosts: all
   vars_files:
     - vars/common.yml
-  roles:
-    - role: kogeler.mini_pig.naive_proxy
-      vars:
-        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
-        naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip }}"
-        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
-        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
-        naive_proxy_users:
-          testuser: "testpass"
-        naive_proxy_molecule_mode: true
-        # Crank chromium net-stack verbosity in molecule so the backend
-        # journal carries VERBOSE1 lines (TLS handshakes, HTTP/2 frames,
-        # padding negotiation) that make CI failures self-diagnosable.
-        naive_proxy_backend_naive_args:
-          - "--v=1"
-        # Exercise the opt-in HAProxy diagnostics surface in CI: pod
-        # publishes the admin socket on 127.0.0.1:<port>, the H2 trace
-        # ring is declared in haproxy.cfg. shared/tasks/verify-diagnostics.yml
-        # asserts both are reachable and the CLI answers `show info`.
-        naive_proxy_haproxy_diagnostics_enabled: true
+  tasks:
+    - name: Apply naive_proxy
+      ansible.builtin.import_tasks: tasks/converge-naive-proxy.yml

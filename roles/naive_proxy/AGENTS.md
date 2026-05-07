@@ -2,7 +2,7 @@
 
 ## Rules for AI agents running Molecule
 
-1. **Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule` commands.** It hides three env-var workarounds (`GIT_DIR=/dev/null`, `MP_DRIVER=<driver>`, `ANSIBLE_LIBRARY=.../molecule_plugins/vagrant/modules`). Target schema is `make <scenario>-<driver>-<action>`; run `make help` for the full list.
+1. **Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule` commands.** It hides the `GIT_DIR=/dev/null` workaround molecule needs in this collection layout. Target schema is `make <scenario>-<driver>-<action>`; run `make help` for the full list.
 2. **Never pipe molecule output through `tail`.** Always redirect full output to a temporary file, then inspect it:
    ```bash
    cd molecule && make default-podman-converge > /tmp/mol-converge.log 2>&1; echo "exit=$?"
@@ -15,10 +15,8 @@
    podman exec molecule-naive-proxy podman logs <container>
    podman exec molecule-naive-proxy ss -tlnp
    ```
-   For the vagrant driver use `make default-vagrant-login` (drops you into SSH on the VM).
 5. **Keep the Molecule instance alive** between iterations. Re-run the `converge` and `verify` actions without destroying. Only destroy when the instance state is suspect or you need to test from scratch.
 6. **Always activate the venv** before any make/molecule/ansible command: `source /media/data/app/python/venv3/bin/activate`
-7. **Do not switch drivers against a live instance.** If a vagrant VM is up, `make default-podman-*` will route to the vagrant driver (molecule keeps driver state per scenario). Run `make default-vagrant-destroy` first, then the podman target.
 
 ## What this role does
 
@@ -173,41 +171,54 @@ roles/naive_proxy/
 │   └── download-via-tty.sh   # operator-side: pull a file off the target through the same TTY
 └── molecule/
     ├── Makefile           # Thin wrapper: <scenario>-<driver>-<action>, hides MP_DRIVER/GIT_DIR/ANSIBLE_LIBRARY
-    ├── default/           # Dual-driver scenario (podman-in-podman + vagrant-libvirt), Debian trixie
+    │
+    │ # Cross-scenario base config: `molecule/shared/base.yml`.
+    │ # Loaded explicitly via `molecule -c molecule/shared/base.yml ...`
+    │ # (Makefile + CI workflow inject the flag) and deep-merged below
+    │ # each scenario's molecule.yml. Holds dependency, verifier,
+    │ # provisioner.{name, options, inventory.host_vars defaults},
+    │ # ansible.cfg.defaults, and ansible.playbooks (default paths to
+    │ # `../shared/{prepare,converge,verify}.yml`). Lists are NOT
+    │ # deep-merged by molecule, so `driver` and `platforms` MUST stay
+    │ # in each scenario's molecule.yml.
+    │
+    ├── default/           # Local podman-in-podman scenario, Debian trixie
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
-    │   ├── prepare.yml
     │   └── ENABLE_CI      # Marker: include in CI matrix
     ├── debian-bookworm/   # Local podman-in-podman scenario (Debian bookworm)
     │   ├── molecule.yml
     │   ├── Dockerfile.j2
-    │   ├── prepare.yml
     │   └── ENABLE_CI
     ├── gha/               # GitHub Actions localhost scenario (ansible-native)
     │   ├── molecule.yml
-    │   ├── prepare.yml
-    │   ├── inventory/hosts.yml
+    │   ├── inventory/hosts.yml   # sets mp_driver: native so the shared prepare task fires its lineinfile branch
     │   └── ENABLE_CI
     ├── singbox-stress/    # Opt-in: sing-box Naive outbound H2 reproducer (no ENABLE_CI)
     │   ├── molecule.yml   # mirrors default (dual-driver, MP_DRIVER)
-    │   └── prepare.yml
+    │   └── converge.yml   # scenario-local converge: imports shared converge-naive-proxy + applies ssl_router
     └── shared/            # Common playbooks and tasks for all scenarios
-        ├── converge.yml
-        ├── verify.yml
-        ├── benchmark.yml
+        ├── base.yml                # shared molecule base config (loaded via -c)
+        ├── prepare.yml             # single prepare entry-point used by every scenario
+        ├── converge.yml            # default converge (used by default / debian-bookworm / gha)
+        ├── verify.yml              # full verify (cert renewal, decoy modes, official-naive SOCKS5, benchmark)
         ├── singbox-verify.yml      # verify entry-point for singbox-stress
+        ├── benchmark.yml           # standalone official-naive benchmark
         ├── singbox-benchmark.yml   # standalone sing-box stress benchmark
         ├── utils.yml
         ├── tasks/
-        │   ├── prepare.yml
+        │   ├── prepare.yml               # etc_hosts + deps + naive client download
+        │   ├── converge-naive-proxy.yml  # shared: include_role naive_proxy with the molecule role-vars dict
         │   ├── wait-services.yml
         │   ├── benchmark.yml             # official-naive client + shared bench tasks
         │   ├── singbox-benchmark.yml     # sing-box client + shared bench tasks
         │   ├── socks-decoy-smoke.yml     # shared: curl decoy via SOCKS5 + assert
         │   ├── iperf-server.yml          # shared: iperf3 server unit in naive-pod
-        │   └── iperf-bench.yml           # shared: proxychains + iperf3 + CPU + assert
+        │   ├── iperf-bench.yml           # shared: proxychains + iperf3 + CPU + assert
+        │   ├── verify-diagnostics.yml    # shared: HAProxy admin socket + ring h2trace
+        │   └── verify-clients.yml        # shared: per-user×IP sing-box config assertions
         └── vars/
-            ├── common.yml     # Shared variables (domain, ports, naive version)
+            ├── common.yml     # Shared variables (domain, ports, naive version, role-vars dict, test users)
             ├── benchmark.yml
             └── singbox-benchmark.yml
 ```
@@ -234,7 +245,7 @@ The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own on
 ### Required
 
 - `naive_proxy_domain` — server FQDN
-- `naive_proxy_external_ip` — public IP that `naive_proxy_domain` resolves to. Generated client configs put this in the naive outbound `server` field (SNI stays the FQDN via `tls.server_name`), so sing-box / cronet skips the chicken-and-egg bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through naive)
+- `naive_proxy_external_ip` — **map** of `<suffix>: <ip>`, at least one entry. Each entry is a public IP that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user** at `singbox-<host>-<user>.json`; inside the file every entry becomes a separate naive outbound (`naive-<user>-<suffix>`) with its own `server` IP, and a `urltest` selector (`naive-<user>`) on top probes them every `naive_proxy_singbox_urltest_interval` and routes traffic through the lowest-latency one. DNS detour and route default both reference the urltest tag, so failover between IPs is automatic. SNI stays the FQDN via `tls.server_name` so sing-box / cronet skips bootstrap DNS for the proxy itself. DNS through the tunnel still flows via `dns-remote-cloudflare` (DoH detoured through the urltest tag). Use multiple entries to give clients automatic IPv4 / IPv6 or primary / fallback failover. Probe URL is `naive_proxy_singbox_urltest_url`, default `https://www.gstatic.com/generate_204`
 - `naive_proxy_users` — dict `{ name: password }`, at least one user
 
 ### Important
@@ -332,14 +343,11 @@ naive-acme-renew.timer (daily, RandomizedDelaySec=3600)
 | Scenario | Driver | Make target prefix | Purpose |
 |----------|--------|--------------------|---------|
 | `default` | podman (container) | `default-podman-` | Local dev, podman-in-podman, Debian trixie |
-| `default` | vagrant-libvirt (VM) | `default-vagrant-` | Local dev on a real VM, Debian trixie |
 | `debian-bookworm` | podman | `bookworm-podman-` | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native (delegated) | `gha-native-` | GitHub Actions, role applied to runner VM |
-| `singbox-stress` | podman / vagrant-libvirt | `singbox-stress-podman-` / `singbox-stress-vagrant-` | Opt-in sing-box Naive H2 reproducer (no `ENABLE_CI` marker; mirrors `default`'s dual-driver layout) |
+| `singbox-stress` | podman | `singbox-stress-podman-` | Opt-in sing-box Naive H2 reproducer (no `ENABLE_CI` marker) |
 
-The `default` scenario supports two drivers selected at runtime via `MP_DRIVER` (podman | vagrant). The platforms block carries keys for both drivers in the same `molecule.yml`; each driver reads only what it understands.
-
-All scenarios share playbooks and tasks from `molecule/shared/`. Each has its own `molecule.yml` and `prepare.yml`. Shared variables live in `molecule/shared/vars/common.yml`.
+All scenarios share playbooks and tasks from `molecule/shared/`. Each has its own `molecule.yml`. Shared variables live in `molecule/shared/vars/common.yml`.
 
 A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
 
@@ -356,11 +364,6 @@ make default-podman-converge
 make default-podman-verify
 make default-podman-login
 
-# default scenario on vagrant-libvirt
-make default-vagrant-converge
-make default-vagrant-verify
-make default-vagrant-destroy
-
 # debian-bookworm (podman-only)
 make bookworm-podman-test
 
@@ -376,50 +379,39 @@ During iterative work, do not destroy the instance between changes. Re-run `make
 
 ### Driver conditionals and env-var plumbing
 
-The Makefile is the only place that knows about env-var workarounds:
+The Makefile injects `GIT_DIR=/dev/null` so molecule does not misidentify the role as a collection (`collections/` is gitignored). `MP_NETWORK` (default `slirp4netns`) selects the rootless podman network mode. Both are surfaced as env vars in scenario `molecule.yml` files via `${VAR:-default}` shell substitution.
 
-- `GIT_DIR=/dev/null` — makes molecule stop misidentifying the role as a collection (collections/ is gitignored).
-- `MP_DRIVER=<podman|vagrant>` — selects the driver for the `default` scenario at runtime. Prefix is `MP_` because molecule silently drops env vars named `MOLECULE_*` (see `MOLECULE_KEEP_STRING` in `molecule.config`).
-- `ANSIBLE_LIBRARY=.../molecule_plugins/vagrant/modules` — required only for the vagrant driver. molecule 26 no longer auto-injects driver module paths (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)). The Makefile resolves the path from the active Python env.
-
-Inside the playbooks, the single source of truth for driver-conditional behavior is the `mp_driver` host_var, set in `molecule/default/molecule.yml`:
+Inside the playbooks, the single source of truth for driver-conditional behaviour is the `mp_driver` host_var. The shared base config (`molecule/shared/base.yml`, loaded by Makefile + CI via `molecule -c molecule/shared/base.yml ...`) sets `mp_driver: podman` as the default for every scenario; the gha scenario overrides it to `native` in `gha/inventory/hosts.yml`:
 
 ```yaml
+# molecule/shared/base.yml — shared default for podman scenarios
 provisioner:
   inventory:
     host_vars:
       molecule-naive-proxy:
-        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
-        ansible_become: '{{ mp_driver != "podman" }}'
+        mp_driver: podman
+
+# molecule/gha/inventory/hosts.yml — runs ansible-native on the runner
+all:
+  hosts:
+    localhost:
+      mp_driver: native
 ```
 
-- `ansible_become` follows from `mp_driver` — podman container runs as root (no sudo), vagrant VM needs sudo.
-- Tasks that must branch on driver use `when: mp_driver != 'podman'` (see the `/etc/hosts` patch in `shared/tasks/prepare.yml`, needed for SSH-based drivers because podman's own `etc_hosts` mechanism handles the container case and `/etc/hosts` there is a bind-mount that `lineinfile` cannot atomic-replace).
-- `host_vars` (not `group_vars.all`) so that localhost — used by vagrant's `create.yml` and `destroy.yml` — does not inherit become.
-
-Other `MP_*` env vars tune the vagrant platform: `MP_VAGRANT_PROVIDER` (default `libvirt`), `MP_BOX` (default `debian/trixie64`), `MP_VM_MEMORY`, `MP_VM_CPUS`. `MP_NETWORK` sets the podman platform network mode.
-
-### Vagrant driver prerequisites
-
-Host-side one-time setup:
-
-- `python-vagrant` installed in the molecule venv (`pip install python-vagrant`).
-- `vagrant` CLI with `vagrant-libvirt` plugin.
-- libvirt with nftables firewall backend (`firewall_backend = "nftables"` in `/etc/libvirt/network.conf`, then `systemctl restart libvirtd`). Default libvirt network must be active (`virsh net-start default`).
-- User in groups `libvirt` and `kvm`.
-
-Box comes from Vagrant Cloud on first `create`; cached afterwards. `generic/debian13` does not exist — use `debian/trixie64` (the default).
+- `mp_driver` is intentionally NOT defined in `shared/vars/common.yml`. Ansible's `vars_files` precedence (14) is higher than inventory host_vars (9), so a default in `vars/common.yml` would silently mask the gha scenario's `native` value and the lineinfile branch would never fire.
+- Tasks that must branch on driver use `when: mp_driver != 'podman'` (see the `/etc/hosts` patch in `shared/tasks/prepare.yml`, needed for the gha scenario because podman's own `etc_hosts` mechanism handles the container case and `/etc/hosts` there is a bind-mount that `lineinfile` cannot atomic-replace).
 
 ### What `molecule verify` checks
 
 1. Pod, HAProxy, decoy, and backend services are active
-2. Decoy site is served through HAProxy TLS
-3. Pebble-issued certificate replaces the bootstrap self-signed cert
-4. `naive-acme-renew.timer` is enabled
-5. Forced renewal changes the certificate serial and HAProxy serves the new cert
-6. Direct HTTPS proxy mode works: `curl -x`
-7. naive SOCKS5 mode works through HAProxy and receives padding
-8. The benchmark task moves real traffic through the SOCKS5 tunnel with `iperf3`
+2. **Per-user sing-box client configs (`tasks/verify-clients.yml`)** — one config per user at `singbox-<host>-<user>.json`. The file must contain one naive outbound per `naive_proxy_external_ip` entry (`naive-<user>-<suffix>` with the matching `server` IP) plus one `urltest` outbound (`naive-<user>`) listing every per-suffix tag and referencing the configured probe URL + interval. DNS detour and route default both target the urltest tag. Reused by both `shared/verify.yml` and `shared/singbox-verify.yml`. Singbox-stress goes further and asserts urltest events actually fire in the sing-box journal during the iperf3 run (probe URL pointed at the molecule decoy so probes are reachable inside the sandbox)
+3. Decoy site is served through HAProxy TLS
+4. Pebble-issued certificate replaces the bootstrap self-signed cert
+5. `naive-acme-renew.timer` is enabled
+6. Forced renewal changes the certificate serial and HAProxy serves the new cert
+7. Direct HTTPS proxy mode works: `curl -x`
+8. naive SOCKS5 mode works through HAProxy and receives padding
+9. The benchmark task moves real traffic through the SOCKS5 tunnel with `iperf3`
 
 ### SOCKS5 test client
 
@@ -482,7 +474,7 @@ network: "${MP_NETWORK:-slirp4netns}"
 
 Supported values: `host`, `slirp4netns` (rootless default), `bridge`, `pasta` (podman >= 5.0). The molecule-podman create playbook reads `network`, not `network_mode` — using the wrong key silently falls back to the default.
 
-The test domain `naive.test` is mapped to `127.0.0.1` via `etc_hosts` in molecule.yml (podman driver) or via a `lineinfile` task gated on `when: mp_driver != 'podman'` in `shared/tasks/prepare.yml` (vagrant/gha). Two mechanisms because `/etc/hosts` inside the podman container is a bind-mount that `lineinfile` cannot atomic-replace.
+The test domain `naive.test` is mapped to `127.0.0.1` via `etc_hosts` in molecule.yml (podman scenarios) or via a `lineinfile` task gated on `when: mp_driver != 'podman'` in `shared/tasks/prepare.yml` (gha scenario). Two mechanisms because `/etc/hosts` inside the podman container is a bind-mount that `lineinfile` cannot atomic-replace.
 
 ## Debug toolkit (`debug/`)
 

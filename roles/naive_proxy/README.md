@@ -55,7 +55,8 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
     - role: kogeler.mini_pig.naive_proxy
       vars:
         naive_proxy_domain: "cdn.example.org"
-        naive_proxy_external_ip: "203.0.113.10"
+        naive_proxy_external_ip:
+  v4: "203.0.113.10"
         naive_proxy_users:
           alice: "s3cret-passw0rd"
         naive_proxy_acme_email: "admin@example.org"
@@ -102,7 +103,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_domain` | `""` | Public server FQDN |
-| `naive_proxy_external_ip` | `""` | Public IPv4 / IPv6 that `naive_proxy_domain` resolves to. Generated sing-box client configs put this directly in the naive outbound's `server` field so the client never bootstraps DNS for the proxy itself; SNI continues to be `naive_proxy_domain` via `tls.server_name` |
+| `naive_proxy_external_ip` | `{}` | Map of `<suffix>: <ip>`, at least one entry. Each entry is a publicly reachable IPv4 / IPv6 that `naive_proxy_domain` resolves to. The role renders **one sing-box client config per user** (`singbox-<host>-<user>.json`); inside the file every entry becomes a separate naive outbound (`naive-<user>-<suffix>`) and a `urltest` selector (`naive-<user>`) on top probes them periodically and routes traffic through the lowest-latency one. DNS detour and route default both target the urltest tag so failover between IPs is automatic. SNI stays `naive_proxy_domain` via `tls.server_name`. Use multiple entries to give clients automatic failover between e.g. an IPv4 path, an IPv6 path, or primary / fallback CDN edges |
 | `naive_proxy_users` | `{}` | Dict of `name: password`, at least one user |
 
 ### General
@@ -244,7 +245,8 @@ The probe intentionally ignores certificate validation so the initial bootstrap 
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 ```
@@ -253,7 +255,8 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_acme_email: "admin@example.org"
 naive_proxy_users:
   alice: "pass1"
@@ -265,7 +268,8 @@ HAProxy may listen locally on one port while clients see another public port.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_listen_port: 8443
 naive_proxy_external_port: 443
 naive_proxy_users:
@@ -276,7 +280,8 @@ naive_proxy_users:
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_index_html: "{{ playbook_dir }}/files/decoy-index.html"
@@ -292,7 +297,8 @@ that does not leak its own domain through absolute URLs or redirects (see
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_decoy_upstream_url: "https://example.com"
@@ -304,7 +310,8 @@ When set, `naive_proxy_decoy_index_html` is ignored.
 
 ```yaml
 naive_proxy_domain: "cdn.example.org"
-naive_proxy_external_ip: "203.0.113.10"
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
 naive_proxy_users:
   alice: "pass1"
 naive_proxy_haproxy_cpu_policy: "performance"
@@ -322,17 +329,34 @@ naive_proxy_update_runtime_images: true
 
 ## Generated Client Configs
 
-The role prints a `naive+https://` link for each user and writes sing-box JSON configs on the controller.
+The role writes **one sing-box JSON config per user** (`singbox-<host>-<user>.json`) on the controller. Inside the file every entry from `naive_proxy_external_ip` becomes its own naive outbound tagged `naive-<user>-<suffix>`, and a `urltest` selector on top (tagged `naive-<user>`) periodically probes `naive_proxy_singbox_urltest_url` through each child outbound and routes traffic through the lowest-latency one. The DNS detour and the route default both reference the urltest tag, so failover between IPs is automatic — no client-side reconfiguration when one path becomes lossy.
+The role also prints a `naive+https://` URL per user × IP pair so an operator can hand a specific IP path to a specific user out of band; the underlying naive proxy accepts the same `Proxy-Authorization` header regardless of which IP the client reaches it through.
 The generated sing-box config requires sing-box 1.13.0 or newer with Naive outbound support. On Linux, use an official build variant that includes Cronet support.
 The generated TUN profile is IPv4-only: global IPv6 destinations are rejected to avoid IPv6 leaks.
 
-The naive outbound's `server` field is set to `naive_proxy_external_ip`, **not** the FQDN. SNI is preserved as `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the naive outbound.
+Each naive outbound's `server` field is set to the IP from its matching map entry, **not** the FQDN. SNI stays `naive_proxy_domain` via `tls.server_name`. This skips bootstrap DNS for the proxy server itself: the client never has to resolve the proxy host through a not-yet-established tunnel. DNS for everything else inside the tunnel still goes through Cloudflare DoH (`dns-remote-cloudflare`) detoured through the urltest tag.
+
+The urltest probe URL and interval are tunable via `naive_proxy_singbox_urltest_url` (default `https://www.gstatic.com/generate_204`) and `naive_proxy_singbox_urltest_interval` (default `3m`). Override the URL to a self-hosted endpoint when reaching Google directly is undesired.
+
+Example input:
+
+```yaml
+naive_proxy_external_ip:
+  v4: "203.0.113.10"
+  v6: "2001:db8::10"
+naive_proxy_users:
+  alice: "s3cret-passw0rd"
+```
 
 Example output:
 
 ```text
-[alice] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice
-[alice] ./naive-proxy-json-configs/singbox-proxy-1-alice.json
+[alice@v4] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v4
+[alice@v6] naive+https://alice:s3cret-passw0rd@cdn.example.org:443#alice-v6
+[alice]    ./naive-proxy-json-configs/singbox-proxy-1-alice.json
+```
+
+The single rendered file contains both `naive-alice-v4` and `naive-alice-v6` outbounds plus a `naive-alice` urltest selector listing them.
 ```
 
 For direct naive CLI usage:
@@ -409,14 +433,14 @@ The role ships with multiple Molecule scenarios sharing common playbooks from `m
 
 ### Scenarios
 
-| Scenario | Driver(s) | Purpose |
-|----------|-----------|---------|
-| `default` | podman, vagrant-libvirt | Local dev, Debian trixie (container or VM) |
+| Scenario | Driver | Purpose |
+|----------|--------|---------|
+| `default` | podman | Local dev, podman-in-podman, Debian trixie |
 | `debian-bookworm` | podman | Local dev, podman-in-podman, Debian 12 |
 | `gha` | ansible-native | GitHub Actions, role applied directly to runner VM |
-| `singbox-stress` | podman, vagrant-libvirt | Reproduce sing-box / SFA HTTP/2 errors with `iperf3 -P` over a Linux sing-box `naive` outbound; opt-in (no `ENABLE_CI` marker) |
+| `singbox-stress` | podman | Reproduce sing-box / SFA HTTP/2 errors with `iperf3 -P` over a Linux sing-box `naive` outbound; opt-in (no `ENABLE_CI` marker) |
 
-The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (`podman` by default, `vagrant` for vagrant-libvirt). The same platform block carries keys for both drivers; each driver reads only what it understands. A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
+A scenario is included in the CI matrix only if its directory contains an `ENABLE_CI` marker file.
 
 ### What `molecule verify` Covers
 
@@ -433,7 +457,7 @@ The `default` scenario picks its driver at runtime via the `MP_DRIVER` env var (
 
 ### Running Tests
 
-All runs go through the wrapper Makefile at `molecule/Makefile`. It hides the env-var plumbing (`GIT_DIR`, `MP_DRIVER`, `ANSIBLE_LIBRARY`) and exposes a uniform `<scenario>-<driver>-<action>` target schema.
+All runs go through the wrapper Makefile at `molecule/Makefile`. It exposes a uniform `<scenario>-<driver>-<action>` target schema.
 
 ```bash
 cd naive_proxy/molecule
@@ -446,11 +470,6 @@ make default-podman-test
 make default-podman-converge
 make default-podman-verify
 make default-podman-login
-
-# default scenario on vagrant-libvirt
-make default-vagrant-converge
-make default-vagrant-verify
-make default-vagrant-destroy
 
 # Debian 12 scenario
 make bookworm-podman-test
@@ -467,19 +486,8 @@ make singbox-stress-podman-verify
 
 Why the wrapper exists:
 
-- `GIT_DIR=/dev/null` — required for podman/vagrant scenarios because `collections/` is gitignored at the repo root and without this shim molecule misidentifies the role as a collection.
-- `MP_DRIVER` — switches the `default` scenario between podman and vagrant at runtime. The prefix is `MP_` (mini-pig) because molecule silently drops env vars named `MOLECULE_*` before interpolation.
-- `ANSIBLE_LIBRARY` — points at `molecule_plugins/vagrant/modules/`. Molecule 26 no longer auto-injects this for third-party drivers (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)); the Makefile resolves the path from the active Python env.
-
-#### Vagrant driver prerequisites
-
-Host-side, one-time:
-
-- `python-vagrant` and `molecule-plugins[vagrant]` installed in the same venv as `molecule`.
-- `vagrant` with the `vagrant-libvirt` plugin.
-- libvirt with the nftables firewall backend: `firewall_backend = "nftables"` in `/etc/libvirt/network.conf`, then `systemctl restart libvirtd`.
-- User in the `libvirt` and `kvm` groups.
-- Default box used is `debian/trixie64`; override with `MP_BOX=<box-name>` if desired. Other knobs: `MP_VM_MEMORY`, `MP_VM_CPUS`, `MP_VAGRANT_PROVIDER` (defaults to `libvirt`).
+- `GIT_DIR=/dev/null` — `collections/` is gitignored at the repo root and without this shim molecule misidentifies the role as a collection.
+- `MP_NETWORK` (default `slirp4netns`) — selects the rootless podman network mode for the molecule instance. Use `MP_NETWORK=host` to share the runner's network stack.
 
 ### Standalone Benchmark
 
@@ -487,7 +495,7 @@ The benchmark playbook runs the throughput portion without the rest of `verify`:
 
 ```bash
 cd naive_proxy/molecule
-make default-podman-converge   # or default-vagrant-converge
+make default-podman-converge
 
 INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
 ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
@@ -506,9 +514,9 @@ connection upload closed: http2 protocol error
 connection download closed: http2 protocol error
 ```
 
-It mirrors the `default` scenario layout (dual-driver, `MP_DRIVER`-selected
-podman or vagrant) but uses a **scenario-local `converge.yml`** that
-applies the `kogeler.mini_pig.naive_proxy` role followed by
+It mirrors the `default` scenario (podman-in-podman, Debian trixie) but
+uses a **scenario-local `converge.yml`** that applies the
+`kogeler.mini_pig.naive_proxy` role followed by
 `kogeler.mini_pig.ssl_router` — replicating the production topology
 where `ssl_router` (nginx with `ssl_preread`) sits on `:443` in front
 of HAProxy and SNI-routes incoming traffic to the HAProxy frontend on
@@ -536,6 +544,13 @@ for failure-surface visibility.
 SOCKS5 path through proxychains4, and the failure surface is the Naive
 outbound HTTP/2 stream (not Android `VpnService` / TUN). The scenario is
 intentionally **TCP-only**; UDP-over-Naive is not exercised.
+
+**TODO:** rework `singbox-stress` to drive traffic through a sing-box
+`tun` inbound instead of the current `mixed`/SOCKS5 + proxychains path.
+The current harness still validates the Naive outbound H2 stream, but
+HAProxy issue #3354 investigation showed that matching the Android/SFA
+client path more closely matters for reproducing client-generated
+PADDED DATA / END_STREAM frame patterns.
 
 The sing-box client container runs unprivileged: `--cap-drop=ALL`,
 `--security-opt=no-new-privileges`, `--security-opt=apparmor=unconfined`,

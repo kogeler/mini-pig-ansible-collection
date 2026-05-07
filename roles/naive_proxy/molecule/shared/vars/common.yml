@@ -3,17 +3,58 @@ naive_proxy_naive_version: "v148.0.7778.96-2"
 molecule_naive_proxy_domain: "naive.test"
 # IP that naive.test resolves to inside the molecule instance (set via
 # molecule.yml etc_hosts and shared/tasks/prepare.yml lineinfile). The
-# role's new naive_proxy_external_ip is plumbed from this so the
-# generated client configs (and the sing-box stress benchmark) hit the
-# server by IP — no chicken-and-egg with bootstrap DNS.
+# sing-box stress benchmark hits the server by this IP — no
+# chicken-and-egg with bootstrap DNS.
 molecule_naive_proxy_external_ip: "127.0.0.1"
+# Map form for `naive_proxy_external_ip`. Two entries so converge / verify
+# exercise the multi-IP code path: each suffix produces its own sing-box
+# client config with the matching `server` value embedded. Both addresses
+# point back at the molecule loopback; the second (`secondary`) is
+# 127.0.0.2 — same /8, also routable inside the netns — so we can assert
+# `server` field separation without standing up a second listener.
+molecule_naive_proxy_external_ip_map:
+  primary: "{{ molecule_naive_proxy_external_ip }}"
+  secondary: "127.0.0.2"
 molecule_naive_proxy_listen_port: 8443
 molecule_naive_proxy_external_port: 9443
+# Controller-side path where the role writes generated sing-box client
+# configs. Anchored to `molecule/shared/` regardless of which scenario is
+# loading this file: the scenario-local singbox-stress converge would
+# otherwise have its own `playbook_dir` and write configs where the
+# shared verify play (which always runs from `molecule/shared/`) does
+# not look. Using `{{ playbook_dir }}/../shared/...` collapses to
+# `molecule/shared/naive-proxy-json-configs` from both `playbook_dir`
+# values (`molecule/shared/` and `molecule/singbox-stress/`).
+molecule_naive_proxy_client_config_dir: "{{ playbook_dir }}/../shared/naive-proxy-json-configs"
 molecule_naive_proxy_decoy_url: "http://{{ molecule_naive_proxy_domain }}:8081/"
 molecule_naive_proxy_pebble_root_url: "https://{{ molecule_naive_proxy_domain }}:15000/roots/0"
 
-# Single driver signal read from the MP_DRIVER env var. Defaults to
-# "podman" so single-driver scenarios (debian-bookworm, gha) don't need
-# to set anything. The default scenario exports MP_DRIVER=podman|vagrant
-# via the Makefile.
-mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
+# Sing-box `urltest` probe URL + interval used by every molecule
+# scenario. The role's prod default points at Google's generate_204,
+# which the molecule sandbox cannot reach. We point urltest at the
+# molecule's own decoy URL — reachable through the naive outbound's
+# CONNECT path because the naive backend lives in the same pod as the
+# decoy, so probe traffic stays inside the pod's netns.
+#
+# Interval is set well beyond a single verify run (5 m vs ~1 m total
+# test window). Sing-box urltest still probes lazily on the FIRST
+# request through the selector — that initial probe is what verifies
+# urltest works end-to-end. Periodic re-probes are intentionally
+# suppressed during the test so they don't disrupt long-running
+# iperf3 streams that flow through the same selector tag.
+molecule_naive_proxy_singbox_urltest_url: "{{ molecule_naive_proxy_decoy_url }}"
+molecule_naive_proxy_singbox_urltest_interval: "5m"
+
+# Single test user used by every converge play and asserted by every
+# verify play. Defined here so converge / verify / verify-clients all
+# read the same source of truth — divergence here would silently produce
+# configs the verify cannot find.
+molecule_naive_proxy_users:
+  testuser: "testpass"
+
+# `mp_driver` is intentionally NOT defined here. It is sourced from
+# inventory: `.config/molecule/config.yml` provides `podman` as the
+# default for every podman-driven scenario, and `gha/inventory/hosts.yml`
+# overrides it to `native` for the gha scenario. Defining `mp_driver` in
+# this vars_files would mask those inventory values — `vars_files`
+# precedence (14) is higher than inventory host_vars (9).

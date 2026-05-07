@@ -104,12 +104,16 @@ jobs:
 
       - name: Molecule converge
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: molecule converge -s "${{ matrix.scenario }}"
+        # `molecule/shared/base.yml` is the role-scoped base config
+        # (deep-merged under each scenario's molecule.yml). molecule's
+        # --base-config silently filters non-existent paths, so this
+        # works for roles that don't have a shared base too.
+        run: molecule -c molecule/shared/base.yml converge -s "${{ matrix.scenario }}"
 
       - name: Molecule idempotence
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: molecule idempotence -s "${{ matrix.scenario }}"
+        run: molecule -c molecule/shared/base.yml idempotence -s "${{ matrix.scenario }}"
 
       - name: Molecule verify
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: molecule verify -s "${{ matrix.scenario }}"
+        run: molecule -c molecule/shared/base.yml verify -s "${{ matrix.scenario }}"

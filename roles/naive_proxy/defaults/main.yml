@@ -17,16 +17,25 @@ naive_proxy_update_runtime_images: false
 
 naive_proxy_domain: ""
 
-# Public IP that `naive_proxy_domain` resolves to. Required: client
-# configs use this directly in the naive outbound `server` field so the
-# sing-box / cronet client never needs to do DNS for the proxy itself
-# (no chicken-and-egg with bootstrap DNS through a not-yet-established
+# Public IPs that `naive_proxy_domain` resolves to. Required: at least
+# one entry. Map of `<suffix>: <ip>` — one sing-box client config is
+# rendered per user × IP, with the file name suffixed by the map key so
+# multiple network paths (IPv4 / IPv6, primary / fallback, etc.) can be
+# distributed to the same user side by side. Client configs put the IP
+# directly in the naive outbound `server` field so the sing-box / cronet
+# client never has to bootstrap DNS for the proxy itself (no
+# chicken-and-egg with bootstrap DNS through a not-yet-established
 # tunnel). The TLS SNI continues to be `naive_proxy_domain` via
-# `tls.server_name`. Set to a public reachable IPv4 or IPv6 of the
-# server. The role itself does not bind to this address — it is only
-# rendered into the generated client configs.
+# `tls.server_name`. Set each value to a publicly reachable IPv4 or
+# IPv6 of the server. The role itself does not bind to these addresses
+# — they are only rendered into the generated client configs.
+#
+# Example:
+#   naive_proxy_external_ip:
+#     v4: "203.0.113.10"
+#     v6: "2001:db8::10"
 
-naive_proxy_external_ip: ""
+naive_proxy_external_ip: {}
 
 # -- Users (required) ---------------------------------------------------------
 # Dict of name -> password.  At least one user must be defined.
@@ -241,6 +250,23 @@ naive_proxy_decoy_upstream_url: ""
 # -- Client configs -----------------------------------------------------------
 
 naive_proxy_client_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+
+# Sing-box `urltest` selector knobs. Each generated client config
+# bundles every entry of `naive_proxy_external_ip` as a separate naive
+# outbound (`naive-<user>-<suffix>`) and wires a `urltest` outbound
+# (`naive-<user>`) on top that periodically probes the URL below
+# through each child outbound and picks the lowest-latency one. DNS and
+# the route default both target the urltest tag, so failover between
+# IPs is automatic.
+#
+# Default URL is the sing-box / shadowsocks-rust convention — Google's
+# generate_204 endpoint that returns an empty 204 (small payload, very
+# stable, anycast). Override to a self-hosted endpoint if your clients
+# operate in environments where reaching Google directly is undesired.
+naive_proxy_singbox_urltest_url: "https://www.gstatic.com/generate_204"
+# Sing-box duration syntax (`30s`, `3m`, `1h`). Lower = faster failover
+# but more probe traffic per outbound.
+naive_proxy_singbox_urltest_interval: "3m"
 
 # -- Molecule testing mode ----------------------------------------------------
 # Deploys pebble (test ACME CA) as an additional container in the pod.

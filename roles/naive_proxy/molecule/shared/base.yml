@@ -1,0 +1,52 @@
+---
+# Role-scoped molecule base config for the naive_proxy role.
+#
+# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
+# (the Makefile and CI workflow inject the flag for every scenario).
+# Each scenario's `molecule.yml` deep-merges on top of this — anything
+# common across scenarios lives here, anything scenario-specific stays
+# in the scenario file.
+#
+# Important caveats about molecule's deep-merge:
+#   * Dicts are deep-merged; values from the scenario override base.
+#   * **Lists are REPLACED entirely** (see molecule.util.merge_dicts).
+#     That is why `driver` (a dict, can be in base) is shared from
+#     here, but `platforms` (a list) MUST stay in each scenario.
+#   * Legacy `provisioner.{config_options, playbooks, env,
+#     ansible_args}` get migrated to `ansible.{cfg, playbooks, env,
+#     executor.args.ansible_playbook}` after merge — and the migration
+#     REPLACES the destination wholesale. We therefore use the new
+#     `ansible.*` syntax everywhere so deep-merge happens in one place
+#     and the migration short-circuits with no destructive replace.
+
+dependency:
+  name: galaxy
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    # Default host_vars for the molecule-managed instance. Each
+    # scenario overrides what it needs in its own molecule.yml — deep
+    # merge keeps the rest. `mp_driver` is the single source of truth
+    # for driver-conditional behaviour (e.g. `when: mp_driver !=
+    # 'podman'` in shared prepare); MUST live in inventory
+    # (precedence 9), not in any `vars_files` (priority 14), or
+    # vars_files would silently mask scenario-specific values and
+    # break e.g. the gha scenario's `native`.
+    host_vars:
+      molecule-naive-proxy:
+        mp_driver: podman
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

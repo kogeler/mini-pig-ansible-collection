@@ -8,31 +8,20 @@
 # stress reproducer exercises the full chain — sing-box → ssl-router
 # (TCP/SNI) → HAProxy (TLS terminate, naive auth) → naive backend —
 # and not just sing-box → HAProxy direct.
+#
+# The naive_proxy role-vars dict is shared with the default converge
+# via shared/tasks/converge-naive-proxy.yml.
 - name: Converge
   hosts: all
   vars_files:
     - ../shared/vars/common.yml
-  roles:
-    - role: kogeler.mini_pig.naive_proxy
-      vars:
-        naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
-        naive_proxy_external_ip: "{{ molecule_naive_proxy_external_ip }}"
-        naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
-        naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
-        naive_proxy_users:
-          testuser: "testpass"
-        naive_proxy_molecule_mode: true
-        # Crank chromium net-stack verbosity in molecule so the backend
-        # journal carries VERBOSE1 lines (TLS handshakes, HTTP/2 frames,
-        # padding negotiation) that make CI failures self-diagnosable.
-        naive_proxy_backend_naive_args:
-          - "--v=1"
-        # Exercise the opt-in HAProxy diagnostics surface in CI; the
-        # singbox-verify playbook (shared/singbox-verify.yml) asserts
-        # the admin socket is reachable on 127.0.0.1 and answers
-        # HAProxy CLI commands.
-        naive_proxy_haproxy_diagnostics_enabled: true
-    - role: kogeler.mini_pig.ssl_router
+  tasks:
+    - name: Apply naive_proxy
+      ansible.builtin.import_tasks: ../shared/tasks/converge-naive-proxy.yml
+
+    - name: Apply ssl_router in front of HAProxy on :443
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.ssl_router
       vars:
         # Public-facing port the sing-box client hits — same as a real
         # deployment, where ssl-router is the only thing on :443.

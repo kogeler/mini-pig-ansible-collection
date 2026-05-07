@@ -1,0 +1,130 @@
+---
+# Verifies the per-user sing-box client configs produced by
+# `tasks/clients.yml`. The role now renders **one config per user** at
+# `<config_dir>/singbox-<host>-<user>.json`; inside the file every
+# entry of `naive_proxy_external_ip` becomes a separate naive outbound
+# `naive-<user>-<suffix>` and a `urltest` selector tagged `naive-<user>`
+# chooses the fastest one. We assert:
+#
+#   * file exists and is valid JSON
+#   * one naive outbound per ip_suffix, each carrying its own `server`
+#   * the urltest outbound exists, lists every per-suffix tag, and
+#     references the configured probe URL + interval
+#   * DNS detour + route final both target the urltest tag
+#
+# Runs on the controller (`localhost`) because that's where the role
+# delegates the file write. Reusable across scenarios via:
+#
+#   - import_tasks: tasks/verify-clients.yml
+#     vars:
+#       _verify_clients_users: { testuser: testpass }
+#       _verify_clients_ip_map:
+#         primary: 127.0.0.1
+#         secondary: 127.0.0.2
+#       _verify_clients_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+#       _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+#       _verify_clients_external_port: 9443
+#       _verify_clients_domain: naive.test
+#       _verify_clients_urltest_url: https://www.gstatic.com/generate_204
+#       _verify_clients_urltest_interval: 3m
+
+- name: verify-clients | print expected user list
+  ansible.builtin.debug:
+    msg: >-
+      Expecting one config file per user; each config bundles
+      {{ _verify_clients_ip_map | length }} naive outbound(s)
+      ({{ _verify_clients_ip_map | dict2items | map(attribute='key') | join(', ') }})
+      plus a urltest selector.
+
+- name: verify-clients | assert each user config file exists
+  ansible.builtin.stat:
+    path: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.key }}.json
+  register: _verify_clients_stats
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: verify-clients | fail if any config file is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Expected sing-box client config not found for user {{ item.item.key }}.
+  loop: "{{ _verify_clients_stats.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+
+- name: verify-clients | read each user config file
+  ansible.builtin.slurp:
+    src: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.key }}.json
+  register: _verify_clients_slurps
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: verify-clients | assert per-user config shape
+  vars:
+    _user_name: "{{ item.item.key }}"
+    _user_pass: "{{ item.item.value }}"
+    _user_tag: "naive-{{ _user_name }}"
+    _config: "{{ item.content | b64decode | from_json }}"
+    _naive_outbounds: >-
+      {{ _config.outbounds
+         | selectattr('type', 'equalto', 'naive')
+         | list }}
+    _urltest_outbound: >-
+      {{ (_config.outbounds
+          | selectattr('type', 'equalto', 'urltest')
+          | list
+          | first) }}
+    _expected_per_ip_tags: >-
+      {{ _verify_clients_ip_map | dict2items
+         | map(attribute='key')
+         | map('regex_replace', '^', _user_tag ~ '-')
+         | list | sort }}
+    _actual_per_ip_tags: >-
+      {{ _naive_outbounds | map(attribute='tag') | list | sort }}
+    _actual_suffix_to_server: >-
+      {{ dict(_naive_outbounds
+              | map(attribute='tag')
+              | map('regex_replace', '^' ~ _user_tag ~ '-', '')
+              | zip(_naive_outbounds | map(attribute='server'))) }}
+  ansible.builtin.assert:
+    that:
+      # Per-suffix naive outbounds: one per IP entry, each with its own server.
+      - _naive_outbounds | length == _verify_clients_ip_map | length
+      - _actual_per_ip_tags == _expected_per_ip_tags
+      - _actual_suffix_to_server == _verify_clients_ip_map
+      # Naive outbound shape — credentials + port + SNI shared by all.
+      - (_naive_outbounds | map(attribute='username') | unique | list) == [_user_name]
+      - (_naive_outbounds | map(attribute='password') | unique | list) == [_user_pass]
+      - (_naive_outbounds | map(attribute='server_port') | unique | list) == [_verify_clients_external_port | int]
+      - (_naive_outbounds | map(attribute='tls.server_name') | unique | list) == [_verify_clients_domain]
+      # Urltest selector: tagged naive-<user>, lists every per-suffix tag,
+      # references the configured probe URL + interval.
+      - _urltest_outbound.tag == _user_tag
+      - (_urltest_outbound.outbounds | sort) == _expected_per_ip_tags
+      - _urltest_outbound.url == _verify_clients_urltest_url
+      - _urltest_outbound.interval == _verify_clients_urltest_interval
+      # DNS detour + route default reference the urltest tag (not a
+      # specific naive outbound), so failover between IPs is automatic.
+      - _config.dns.servers[0].detour == _user_tag
+      - _config.route.final == _user_tag
+    fail_msg: >-
+      Sing-box config for user {{ _user_name }} does not match expected shape.
+      Suffix→server (got vs expected):
+      {{ _actual_suffix_to_server }} vs {{ _verify_clients_ip_map }}.
+      Naive tags (got vs expected):
+      {{ _actual_per_ip_tags }} vs {{ _expected_per_ip_tags }}.
+      Urltest outbounds: {{ _urltest_outbound | default('<missing>') }}.
+  loop: "{{ _verify_clients_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
