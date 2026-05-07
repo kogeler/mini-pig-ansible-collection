@@ -47,6 +47,13 @@ provisioner:
     prepare: ../shared/prepare.yml
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
+  inventory:
+    # Single-driver podman scenario; mp_driver is constant. Defined in
+    # inventory host_vars rather than shared/vars/common.yml because
+    # vars_files precedence would mask per-scenario inventory values.
+    host_vars:
+      molecule-naive-proxy:
+        mp_driver: podman
   config_options:
     defaults:
       callbacks_enabled: ansible.posix.profile_tasks

@@ -383,17 +383,30 @@ The Makefile is the only place that knows about env-var workarounds:
 - `MP_DRIVER=<podman|vagrant>` — selects the driver for the `default` scenario at runtime. Prefix is `MP_` because molecule silently drops env vars named `MOLECULE_*` (see `MOLECULE_KEEP_STRING` in `molecule.config`).
 - `ANSIBLE_LIBRARY=.../molecule_plugins/vagrant/modules` — required only for the vagrant driver. molecule 26 no longer auto-injects driver module paths (see [molecule-plugins#301](https://github.com/ansible-community/molecule-plugins/issues/301)). The Makefile resolves the path from the active Python env.
 
-Inside the playbooks, the single source of truth for driver-conditional behavior is the `mp_driver` host_var, set in `molecule/default/molecule.yml`:
+Inside the playbooks, the single source of truth for driver-conditional behavior is the `mp_driver` host_var. Each scenario defines its own value in `provisioner.inventory.host_vars` (or, for the gha scenario, in `inventory/hosts.yml`):
 
 ```yaml
+# molecule/default/molecule.yml & molecule/singbox-stress/molecule.yml
 provisioner:
   inventory:
     host_vars:
       molecule-naive-proxy:
         mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
         ansible_become: '{{ mp_driver != "podman" }}'
+
+# molecule/debian-bookworm/molecule.yml — single-driver podman scenario
+host_vars:
+  molecule-naive-proxy:
+    mp_driver: podman
+
+# molecule/gha/inventory/hosts.yml — runs ansible-native on the runner
+all:
+  hosts:
+    localhost:
+      mp_driver: native
 ```
 
+- `mp_driver` is intentionally NOT defined in `shared/vars/common.yml`. Ansible's `vars_files` precedence (14) is higher than inventory host_vars (9), so a default in `vars/common.yml` would silently mask each scenario's inventory value (e.g., the gha scenario's `native` setting would be overridden by a `podman` default and the lineinfile branch would never fire).
 - `ansible_become` follows from `mp_driver` — podman container runs as root (no sudo), vagrant VM needs sudo.
 - Tasks that must branch on driver use `when: mp_driver != 'podman'` (see the `/etc/hosts` patch in `shared/tasks/prepare.yml`, needed for SSH-based drivers because podman's own `etc_hosts` mechanism handles the container case and `/etc/hosts` there is a bind-mount that `lineinfile` cannot atomic-replace).
 - `host_vars` (not `group_vars.all`) so that localhost — used by vagrant's `create.yml` and `destroy.yml` — does not inherit become.

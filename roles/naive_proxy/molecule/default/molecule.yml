@@ -68,11 +68,18 @@ provisioner:
     converge: ../shared/converge.yml
     verify: ../shared/verify.yml
   inventory:
-    # ansible_become follows mp_driver (defined in shared/vars/common.yml).
+    # `mp_driver` is the single source of truth for driver-conditional
+    # behaviour (e.g. `when: mp_driver != 'podman'` in shared prepare).
+    # Set here in `provisioner.inventory.host_vars` rather than in
+    # `shared/vars/common.yml` because `vars_files` precedence would
+    # override per-scenario inventory values.
+    # `ansible_become` follows from `mp_driver`: podman runs as root in
+    # the container, vagrant goes through SSH and needs sudo.
     # host_vars (not group_vars.all) so localhost — used by the vagrant
     # create/destroy playbooks — does not inherit become.
     host_vars:
       molecule-naive-proxy:
+        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
         ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
   config_options:
     defaults:

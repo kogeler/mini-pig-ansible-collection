@@ -52,11 +52,11 @@ molecule_naive_proxy_singbox_urltest_interval: "5m"
 molecule_naive_proxy_users:
   testuser: "testpass"
 
-# Single driver signal read from the MP_DRIVER env var. Defaults to
-# "podman" so single-driver scenarios (debian-bookworm) don't need to
-# set anything. The default and singbox-stress scenarios export
-# MP_DRIVER=podman|vagrant via the Makefile. The gha scenario overrides
-# this in molecule.yml host_vars to "native" — its runner has a real
-# /etc/hosts that lineinfile can manage, so it must NOT be treated as
-# the podman in-container case.
-mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
+# `mp_driver` is intentionally NOT defined here. It must come from the
+# scenario's inventory (molecule.yml `provisioner.inventory.host_vars`
+# or, for the gha scenario, `inventory/hosts.yml`) because Ansible's
+# `vars_files` precedence (14) is higher than inventory host_vars (9):
+# any default value here would silently override a per-scenario
+# inventory setting and break, e.g., the lineinfile branch the gha
+# scenario relies on. Each scenario's molecule.yml defines `mp_driver`
+# itself.

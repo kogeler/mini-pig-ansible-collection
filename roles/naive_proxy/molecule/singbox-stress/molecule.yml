@@ -78,6 +78,9 @@ provisioner:
         singbox_cronet_version: "v147.0.7727.49-1"
     host_vars:
       molecule-naive-proxy:
+        # See default/molecule.yml for the rationale — `mp_driver` must
+        # live in inventory host_vars, not shared/vars/common.yml.
+        mp_driver: '{{ lookup("env", "MP_DRIVER") | default("podman", true) }}'
         ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
   config_options:
     defaults:
