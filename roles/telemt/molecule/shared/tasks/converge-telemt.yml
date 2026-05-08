@@ -1,0 +1,26 @@
+---
+# Apply the telemt role with molecule overrides. The role's printed
+# proxy-link debug output is captured by the role's link debug task
+# registers so verify can assert the role emitted the expected strings.
+- name: Apply telemt role with molecule overrides
+  ansible.builtin.include_role:
+    name: kogeler.mini_pig.telemt
+  vars:
+    telemt_domain: "{{ molecule_telemt_domain }}"
+    telemt_listen_port: "{{ molecule_telemt_listen_port }}"
+    telemt_users: "{{ molecule_telemt_users }}"
+    telemt_link_endpoints: "{{ molecule_telemt_link_endpoints }}"
+    # molecule_mode deploys Pebble (test ACME CA) into the pod and
+    # points Caddy at it. Caddy issues a real ACME cert via the same
+    # TLS-ALPN-01-through-splice path that production runs, so verify
+    # exercises the full ACME chain. Mutually exclusive with
+    # telemt_decoy_tls_internal — leave that false here.
+    telemt_molecule_mode: true
+    # Publish API + metrics on host loopback so verify can probe them.
+    telemt_api_enabled: true
+    telemt_publish_api: true
+    telemt_api_bind: "127.0.0.1"
+    telemt_api_port: "{{ molecule_telemt_api_port }}"
+    telemt_publish_metrics: true
+    telemt_metrics_bind: "127.0.0.1"
+    telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"

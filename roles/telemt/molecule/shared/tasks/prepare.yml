@@ -1,0 +1,54 @@
+---
+# gha (mp_driver=native) only — the podman scenarios inject the same
+# mapping via molecule.yml `etc_hosts`, and /etc/hosts in the container
+# is a bind-mount that lineinfile's atomic-rename can't replace.
+- name: Ensure telemt domain resolves to loopback
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.0.1 {{ molecule_telemt_domain }}"
+    regexp: '^127\.0\.0\.1\s+{{ molecule_telemt_domain | regex_escape }}\s*$'
+    state: present
+  when: mp_driver != 'podman'
+
+- name: Install verify-side dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - openssl
+      - ca-certificates
+      - netcat-openbsd
+      - python3-cryptography
+    update_cache: true
+    state: present
+
+# mtp_ping is the official Erlang escript that performs a real Fake-TLS
+# handshake through the proxy out to a Telegram DC. The upstream image
+# (`seriyps/mtproto-proxy`) ships only the production proxy binary —
+# mtp_ping lives in the test code and has to be built from source via
+# `./rebar3 escriptize`. We bake it into a small one-shot image with an
+# inline Containerfile so the host stays clean of erlang/build-essential
+# and verify can run it via `podman run --rm --pod=telemt-pod`.
+#
+# Build is opt-in (slow first run + needs Telegram DC egress to actually
+# exchange anything). Subsequent runs reuse the cached image.
+
+- name: Build mtp-ping image
+  containers.podman.podman_image:
+    name: localhost/mtp-ping
+    tag: latest
+    state: build
+    build:
+      # `--isolation=chroot` skips creating a nested cgroup scope for
+      # each build step. The default `oci` isolation fails inside
+      # nested rootful podman with `runc-buildah-*.scope: failed`,
+      # because systemd inside the molecule instance can't manage
+      # transient scopes for builder containers.
+      extra_args: --isolation=chroot
+      container_file: |-
+        FROM docker.io/library/erlang:27-alpine
+        RUN apk add --no-cache git build-base
+        RUN git clone --depth=1 https://github.com/seriyps/mtproto_proxy /src \
+            && cd /src \
+            && ./rebar3 escriptize
+        ENTRYPOINT ["/src/_build/default/bin/mtp_ping"]
+  when: molecule_telemt_run_mtp_ping | bool

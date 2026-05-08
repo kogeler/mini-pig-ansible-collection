@@ -53,6 +53,19 @@ telemt_use_middle_proxy: true
 
 telemt_domain: ""
 
+# -- Link endpoints ------------------------------------------------------------
+# Optional map of label -> IP (or hostname) used as `server=` in tg://proxy
+# links. When non-empty, one link per user per endpoint is printed; the SNI
+# embedded in the Fake TLS secret stays bound to telemt_domain regardless.
+# When empty, a single link per user is printed with server=telemt_domain.
+#
+# Example:
+#   telemt_link_endpoints:
+#     primary: "203.0.113.10"
+#     backup:  "203.0.113.11"
+
+telemt_link_endpoints: {}
+
 # -- Fake TLS / anti-censorship ------------------------------------------------
 
 telemt_tls_mask: true
@@ -97,3 +110,18 @@ telemt_decoy_acme_email: ""
 # Path to custom index.html for decoy site.
 # When empty, the role uses its built-in files/index.html.
 telemt_decoy_index_html: ""
+# When true, the decoy uses Caddy's `tls internal` (Caddy-managed local CA,
+# self-signed leaf) instead of Let's Encrypt. Useful for dev/staging hosts
+# without a public IP and for molecule. Production deployments leave this
+# false so the decoy gets a real ACME cert.
+telemt_decoy_tls_internal: false
+
+# -- Molecule testing mode ----------------------------------------------------
+# Deploys Pebble (Let's Encrypt's test ACME CA) as an additional container
+# in the pod, points Caddy's `acme_ca` at it, and mounts Pebble's root cert
+# into the decoy so Caddy can validate the ACME server. The TLS-ALPN-01
+# challenge passes through the same TCP-splice path that real censor
+# probes hit, which makes this scenario validate the full ACME → splice →
+# Caddy ALPN handler chain. Never enable in production.
+
+telemt_molecule_mode: false

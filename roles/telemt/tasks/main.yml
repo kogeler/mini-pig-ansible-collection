@@ -41,6 +41,15 @@
           telemt_listen_port must be between 1 and 65535.
         quiet: true
 
+    - name: telemt | validate molecule ACME mode and internal TLS are exclusive
+      ansible.builtin.assert:
+        that:
+          - not ((telemt_molecule_mode | bool) and (telemt_decoy_tls_internal | bool))
+        fail_msg: >-
+          telemt_molecule_mode and telemt_decoy_tls_internal are mutually
+          exclusive. Molecule mode uses Pebble ACME; internal TLS bypasses ACME.
+        quiet: true
+
     - name: telemt | warn if API is exposed on non-loopback
       ansible.builtin.debug:
         msg: >-
@@ -61,6 +70,7 @@
           - runc
           - uidmap
           - slirp4netns
+          - nftables
         update_cache: yes
         install_recommends: no
 
@@ -130,6 +140,31 @@
         mode: "0600"
       notify: restart telemt-decoy
 
+    # -- Pebble (molecule mode only) ----------------------------------------
+    # Test ACME CA. Lets molecule cover the full ACME → TLS-ALPN-01 splice
+    # → Caddy ALPN handler chain that real Let's Encrypt issuance hits in
+    # production. Never enable outside test environments.
+
+    - name: telemt | render pebble config
+      ansible.builtin.template:
+        src: pebble-config.json.j2
+        dest: "{{ telemt_config_dir }}/pebble-config.json"
+        owner: root
+        group: root
+        mode: "0644"
+      when: telemt_molecule_mode
+      notify: restart telemt-pebble
+
+    - name: telemt | copy pebble systemd unit file
+      ansible.builtin.template:
+        src: pebble.service.j2
+        dest: "/etc/systemd/system/{{ _telemt_pebble_systemd_unit_name }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: telemt_molecule_mode
+      notify: restart telemt-pebble
+
     # -- Telemt config & unit ---------------------------------------------------
 
     - name: telemt | render config file
@@ -149,6 +184,117 @@
         group: root
         mode: "0600"
       notify: restart telemt
+
+    # -- Pebble bring-up + root-cert fetch (molecule mode only) -------------
+    # Sequenced BEFORE flush_handlers because the queued `restart
+    # telemt-decoy` handler mounts /etc/caddy/pebble-root.pem into the
+    # decoy container. If the file is missing at decoy start, podman
+    # turns the bind-mount into an empty directory and Caddy fails to
+    # parse it. We start the pod + Pebble explicitly here, extract the
+    # root cert from the running Pebble container, write it to the
+    # bind-mount source path, and only then let handlers fire — so the
+    # cascade ends with a successful Caddy ACME exchange.
+    - name: telemt | start pod service early (molecule mode)
+      ansible.builtin.systemd:
+        name: "{{ _telemt_pod_systemd_unit_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
+      when: telemt_molecule_mode
+
+    - name: telemt | start pebble service
+      ansible.builtin.systemd:
+        name: "{{ _telemt_pebble_systemd_unit_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      ignore_errors: "{{ ansible_check_mode }}"
+      when: telemt_molecule_mode
+
+    - name: telemt | wait for pebble ACME directory to come up
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ _telemt_pebble_port }}/dir"
+        validate_certs: false
+        return_content: false
+      register: _telemt_pebble_dir
+      until: _telemt_pebble_dir.status == 200
+      retries: 30
+      delay: 2
+      when: telemt_molecule_mode
+
+    # The cert Caddy needs is `pebble.minica.pem` — the CA that signs
+    # Pebble's OWN HTTPS endpoint cert at /test/certs/localhost/cert.pem,
+    # not the ACME issuer root exposed at mgmt /roots/0. Pebble does not
+    # publish minica.pem via any API, so we extract it directly from the
+    # running container via `podman cp`. The image is also a `scratch`
+    # base, so `podman run --entrypoint cat` won't work — only `podman
+    # cp` reaches into the rootfs without exec.
+    - name: telemt | check pebble root cert state
+      ansible.builtin.stat:
+        path: "{{ _telemt_pebble_root_cert_path }}"
+      register: _telemt_pebble_root_stat
+      when: telemt_molecule_mode
+
+    - name: telemt | extract current pebble.minica.pem from pebble container
+      containers.podman.podman_container_copy:
+        container: "{{ _telemt_pebble_name }}"
+        src: /test/certs/pebble.minica.pem
+        dest: "{{ _telemt_pebble_root_cert_path }}.candidate"
+        from_container: true
+      register: _telemt_pebble_candidate_cp
+      retries: 5
+      delay: 2
+      until: _telemt_pebble_candidate_cp is success
+      changed_when: false
+      when: telemt_molecule_mode
+
+    - name: telemt | read current pebble root candidate
+      ansible.builtin.slurp:
+        src: "{{ _telemt_pebble_root_cert_path }}.candidate"
+      register: _telemt_pebble_root_candidate
+      when: telemt_molecule_mode
+
+    - name: telemt | read trusted pebble root cert
+      ansible.builtin.slurp:
+        src: "{{ _telemt_pebble_root_cert_path }}"
+      register: _telemt_pebble_root_current
+      when:
+        - telemt_molecule_mode
+        - _telemt_pebble_root_stat.stat.exists | default(false)
+        - _telemt_pebble_root_stat.stat.isreg | default(false)
+
+    - name: telemt | remove invalid pebble root cert bind source
+      ansible.builtin.file:
+        path: "{{ _telemt_pebble_root_cert_path }}"
+        state: absent
+      when:
+        - telemt_molecule_mode
+        - _telemt_pebble_root_stat.stat.exists | default(false)
+        - not (_telemt_pebble_root_stat.stat.isreg | default(false))
+
+    - name: telemt | install trusted pebble root cert
+      ansible.builtin.copy:
+        content: "{{ _telemt_pebble_root_candidate.content | b64decode }}"
+        dest: "{{ _telemt_pebble_root_cert_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - telemt_molecule_mode
+        - >-
+          (not (_telemt_pebble_root_stat.stat.exists | default(false))) or
+          (not (_telemt_pebble_root_stat.stat.isreg | default(false))) or
+          (_telemt_pebble_root_current.content | default('') != _telemt_pebble_root_candidate.content)
+      notify: restart telemt-decoy
+
+    - name: telemt | enforce pebble root cert mode
+      ansible.builtin.file:
+        path: "{{ _telemt_pebble_root_cert_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: telemt_molecule_mode
 
     # Flush before start so config-triggered restart doesn't double-fire
     - name: telemt | flush handlers
@@ -179,35 +325,40 @@
       ignore_errors: "{{ ansible_check_mode }}"
 
     # -- Proxy links --------------------------------------------------------------
+    # Each link is emitted per user × endpoint. When telemt_link_endpoints is
+    # empty, a single virtual endpoint pointing at telemt_domain is used.
 
     - name: telemt | display proxy link (tls)
       ansible.builtin.debug:
         msg: >-
-          [{{ item.key }}]
-          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret=ee{{ item.value }}{{ telemt_domain.encode('utf-8').hex() }}
-      loop: "{{ telemt_users | dict2items }}"
+          [{{ item.0.key }}@{{ item.1.key }}]
+          tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret=ee{{ item.0.value }}{{ telemt_domain.encode('utf-8').hex() }}
+      register: _telemt_tls_link_debug
+      loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
       loop_control:
-        label: "{{ item.key }}"
+        label: "{{ item.0.key }}@{{ item.1.key }}"
       when: telemt_modes_tls
 
     - name: telemt | display proxy link (secure)
       ansible.builtin.debug:
         msg: >-
-          [{{ item.key }}]
-          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret=dd{{ item.value }}
-      loop: "{{ telemt_users | dict2items }}"
+          [{{ item.0.key }}@{{ item.1.key }}]
+          tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret=dd{{ item.0.value }}
+      register: _telemt_secure_link_debug
+      loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
       loop_control:
-        label: "{{ item.key }}"
+        label: "{{ item.0.key }}@{{ item.1.key }}"
       when: telemt_modes_secure
 
     - name: telemt | display proxy link (classic)
       ansible.builtin.debug:
         msg: >-
-          [{{ item.key }}]
-          tg://proxy?server={{ telemt_domain }}&port={{ telemt_listen_port }}&secret={{ item.value }}
-      loop: "{{ telemt_users | dict2items }}"
+          [{{ item.0.key }}@{{ item.1.key }}]
+          tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret={{ item.0.value }}
+      register: _telemt_classic_link_debug
+      loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
       loop_control:
-        label: "{{ item.key }}"
+        label: "{{ item.0.key }}@{{ item.1.key }}"
       when: telemt_modes_classic
 
   when: telemt_enabled

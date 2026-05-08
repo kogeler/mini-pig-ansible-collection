@@ -1,0 +1,30 @@
+---
+# Default scenario: podman-in-podman, Debian trixie.
+# Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
+# default playbooks) lives in `../shared/base.yml` — injected via
+# `molecule -c molecule/shared/base.yml`. Only scenario-specific bits
+# live here.
+driver:
+  name: podman
+platforms:
+  - name: molecule-telemt
+    image: "docker.io/library/debian:trixie"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    # podman-in-podman: unmask /proc for newuidmap, caps for nested userns
+    security_opts:
+      - "label=disable"
+      - "unmask=/proc/*"
+      - "apparmor=unconfined"
+    capabilities:
+      - SYS_ADMIN
+      - SETUID
+      - SETGID
+      - NET_ADMIN
+    etc_hosts:
+      telemt.test: "127.0.0.1"
+    devices:
+      - /dev/fuse:/dev/fuse
+    command: ""
+    override_command: false

@@ -1,0 +1,23 @@
+FROM {{ item.image }}
+# nftables: trixie's podman uses netavark which shells out to /usr/sbin/nft
+# to install pod NAT/firewall rules; without it `podman pod create` fails
+# the moment a child container starts. Trixie does not pull nftables in
+# transitively as a podman dep, so install it explicitly.
+#
+# crun: ad-hoc `podman run` (used by verify to launch the mtp_ping image
+# in the existing pod's netns) requires a runtime that supports
+# `--cgroups=disabled`. Trixie's stock runc rejects that flag, and the
+# default systemd cgroup manager fails to create a transient scope from
+# inside this container. Installing crun (alpine-style cgroupless
+# runtime) makes the run path work alongside the role's pod which still
+# uses runc + `--cgroups=split`.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        systemd systemd-sysv python3 ca-certificates curl fuse-overlayfs nftables crun && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    systemctl mask getty@tty1.service && \
+    echo "root:100000:65536" > /etc/subuid && \
+    echo "root:100000:65536" > /etc/subgid
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
