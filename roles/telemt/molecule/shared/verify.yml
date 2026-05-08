@@ -98,10 +98,15 @@
       loop_control:
         label: "{{ item.user }}@{{ item.endpoint }}"
 
+    - name: Read persisted TLS proxy-link debug output
+      ansible.builtin.slurp:
+        src: /opt/telemt/molecule-tls-link-debug.json
+      register: _rendered_tls_link_raw
+
     - name: Collect rendered TLS proxy-link debug output
       ansible.builtin.set_fact:
         _rendered_tls_link_messages: >-
-          {{ _telemt_tls_link_debug.results | default([]) | map(attribute='msg') | list }}
+          {{ _rendered_tls_link_raw.content | b64decode | from_json }}
 
     - name: Assert role emitted every expected TLS proxy link
       ansible.builtin.assert:

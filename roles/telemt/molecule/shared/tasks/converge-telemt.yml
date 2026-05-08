@@ -23,3 +23,12 @@
     telemt_publish_metrics: true
     telemt_metrics_bind: "127.0.0.1"
     telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"
+
+- name: Persist emitted TLS proxy-link debug output for verify
+  ansible.builtin.copy:
+    content: |
+      {{ _telemt_tls_link_debug.results | default([]) | map(attribute='msg') | list | to_nice_json }}
+    dest: /opt/telemt/molecule-tls-link-debug.json
+    owner: root
+    group: root
+    mode: "0600"
