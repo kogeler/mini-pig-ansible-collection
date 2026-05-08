@@ -15,13 +15,71 @@
   retries: 20
   delay: 5
 
-- name: Wait for decoy service to become active
-  ansible.builtin.systemd:
-    name: podman-telemt-decoy.service
-  register: _decoy_svc
-  until: _decoy_svc.status.ActiveState == 'active'
-  retries: 20
-  delay: 5
+- name: Decoy service readiness with diagnostic-on-failure
+  block:
+    - name: Wait for decoy service to become active
+      ansible.builtin.systemd:
+        name: podman-telemt-decoy.service
+      register: _decoy_svc
+      until: _decoy_svc.status.ActiveState == 'active'
+      retries: 20
+      delay: 5
+  rescue:
+    # Caddy's stdout goes to the journal under the unit; without these
+    # dumps we have no visibility into why Caddy exits with status 1
+    # (the systemd state alone shows ExecMainStatus=1, no error text).
+    - name: Capture telemt-decoy container logs # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: podman logs --tail 200 telemt-decoy
+      register: _decoy_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Capture telemt-decoy systemd journal # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: journalctl -xeu podman-telemt-decoy.service --no-pager -n 200
+      register: _decoy_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Capture rendered Caddyfile and pebble root cert
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /opt/telemt/Caddyfile
+        - /opt/telemt/pebble-root.pem
+      register: _decoy_files
+      failed_when: false
+
+    - name: Capture pod state # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: podman ps -a --pod
+      register: _decoy_ps
+      changed_when: false
+      failed_when: false
+
+    - name: Print decoy crash diagnostics
+      ansible.builtin.debug:
+        msg: |-
+          === podman logs telemt-decoy ===
+          stdout:
+          {{ _decoy_logs.stdout | default('<empty>') }}
+          stderr:
+          {{ _decoy_logs.stderr | default('<empty>') }}
+          === journalctl -xeu podman-telemt-decoy.service ===
+          {{ _decoy_journal.stdout | default('<empty>') }}
+          === podman ps -a --pod ===
+          {{ _decoy_ps.stdout | default('<empty>') }}
+          === /opt/telemt/Caddyfile ===
+          {{ (_decoy_files.results[0].content | default('') | b64decode) if _decoy_files.results | length > 0 else '<unreadable>' }}
+          === /opt/telemt/pebble-root.pem (first 200 chars) ===
+          {{ ((_decoy_files.results[1].content | default('') | b64decode) | truncate(200)) if _decoy_files.results | length > 1 else '<unreadable>' }}
+
+    - name: Re-raise decoy readiness failure
+      ansible.builtin.fail:
+        msg: >-
+          podman-telemt-decoy.service never reached ActiveState=active.
+          See diagnostics above.
 
 - name: Wait for telemt service to become active
   ansible.builtin.systemd:
