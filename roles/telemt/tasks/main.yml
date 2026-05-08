@@ -2,7 +2,10 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- block:
+- name: telemt | manage telemt deployment
+  when: telemt_enabled
+  tags: ["telemt"]
+  block:
 
     # -- Preflight validation --------------------------------------------------
 
@@ -71,8 +74,8 @@
           - uidmap
           - slirp4netns
           - nftables
-        update_cache: yes
-        install_recommends: no
+        update_cache: true
+        install_recommends: false
 
     # -- Configuration ---------------------------------------------------------
 
@@ -198,8 +201,8 @@
       ansible.builtin.systemd:
         name: "{{ _telemt_pod_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
       when: telemt_molecule_mode
 
@@ -207,8 +210,8 @@
       ansible.builtin.systemd:
         name: "{{ _telemt_pebble_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
       when: telemt_molecule_mode
 
@@ -304,24 +307,24 @@
       ansible.builtin.systemd:
         name: "{{ _telemt_pod_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
 
     - name: telemt | start decoy service
       ansible.builtin.systemd:
         name: "{{ _telemt_decoy_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
 
     - name: telemt | start service
       ansible.builtin.systemd:
         name: "{{ _telemt_systemd_unit_name }}"
         state: started
-        enabled: yes
-        daemon_reload: yes
+        enabled: true
+        daemon_reload: true
       ignore_errors: "{{ ansible_check_mode }}"
 
     # -- Proxy links --------------------------------------------------------------
@@ -360,6 +363,3 @@
       loop_control:
         label: "{{ item.0.key }}@{{ item.1.key }}"
       when: telemt_modes_classic
-
-  when: telemt_enabled
-  tags: ["telemt"]

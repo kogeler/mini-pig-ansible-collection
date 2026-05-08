@@ -112,8 +112,8 @@ telemt_decoy_acme_email: ""
 telemt_decoy_index_html: ""
 # When true, the decoy uses Caddy's `tls internal` (Caddy-managed local CA,
 # self-signed leaf) instead of Let's Encrypt. Useful for dev/staging hosts
-# without a public IP and for molecule. Production deployments leave this
-# false so the decoy gets a real ACME cert.
+# without a public IP. Mutually exclusive with telemt_molecule_mode.
+# Production deployments leave this false so the decoy gets a real ACME cert.
 telemt_decoy_tls_internal: false
 
 # -- Molecule testing mode ----------------------------------------------------
