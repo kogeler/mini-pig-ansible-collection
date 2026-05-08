@@ -82,6 +82,12 @@ At least one mode must be enabled.
 |---|---|---|
 | `telemt_domain` | `""` | Server domain name (**required**). Used in proxy links and as `tls_domain` in Fake TLS mode |
 
+### Link endpoints
+
+| Variable | Default | Description |
+|---|---|---|
+| `telemt_link_endpoints` | `{}` | Map of `label: ip` (or hostname) used as `server=` in printed `tg://proxy` links. When non-empty, one link per user × endpoint is emitted; the SNI in the Fake TLS secret stays bound to `telemt_domain`. When empty, a single link per user is printed with `server=telemt_domain` |
+
 ### Fake TLS / anti-censorship
 
 | Variable | Default | Description |
@@ -125,6 +131,7 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_read_only_rootfs` | `true` | Read-only container root filesystem |
 | `telemt_tmpfs_enabled` | `true` | Mount tmpfs at `/run/telemt` for cache |
 | `telemt_selinux_relabel` | `false` | Add `:Z` SELinux relabel to volume mounts |
+| `telemt_apparmor_profile` | `unconfined` | AppArmor profile passed as `--security-opt=apparmor=<value>` to every container the role manages (proxy, decoy, pebble). Default `unconfined` because Ubuntu 24.04 + podman 4.9.3 ships a generated profile that denies `socket(AF_INET, SOCK_STREAM)` for confined containers — leaving the proxy unable to open TCP sockets. Defense-in-depth still has `--cap-drop=ALL`, `--read-only`, `--security-opt=no-new-privileges`, and pod-level network isolation. Override to a specific profile name on hosts that ship a custom AppArmor policy that allows inet socket creation, or set to empty string `""` to drop the flag entirely (then podman applies whatever default profile it has) |
 
 ### Extra options
 
@@ -144,7 +151,9 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_decoy_image_tag` | `latest` | Caddy image tag |
 | `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
 | `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
-| `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page |
+| `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page. Ignored when `telemt_decoy_upstream_url` is set |
+| `telemt_decoy_upstream_url` | `""` | When set (e.g. `https://example.com`), Caddy reverse-proxies splice-spliced unauthenticated traffic to this URL instead of serving a local static page. Caddy terminates HTTPS on the upstream side and rewrites the `Host` header to the upstream hostname. Absolute URLs and `Location` redirects from the upstream are not rewritten |
+| `telemt_molecule_mode` | `false` | When true, deploys [Pebble](https://github.com/letsencrypt/pebble) (test ACME CA) into the pod and points Caddy at it via `acme_ca`. Caddy issues a real ACME cert through the same TLS-ALPN-01-through-splice path that production uses, so molecule scenarios exercise the full ACME chain. Never enable in production |
 
 ## Configuration examples
 
@@ -296,7 +305,7 @@ systemctl stop podman-telemt-pod.service
 
 ## Proxy links
 
-The role prints ready-to-use `tg://proxy` links for each user and each enabled mode at the end of the play. Links use `telemt_domain` as the server address.
+The role prints ready-to-use `tg://proxy` links for each user and each enabled mode at the end of the play. By default `server=` is set to `telemt_domain`. Set `telemt_link_endpoints` to a map of `label: ip` to emit one link per user per endpoint — the SNI embedded in the Fake TLS secret remains `telemt_domain`, only the connect address changes.
 
 | Mode | Secret format |
 |---|---|
@@ -304,12 +313,32 @@ The role prints ready-to-use `tg://proxy` links for each user and each enabled m
 | Secure | `dd` + secret |
 | Classic | secret only |
 
-Example output (TLS mode):
+Example output (TLS mode, default — no `telemt_link_endpoints`):
 
 ```
-ok: [proxy-1] => (item=main) =>
+ok: [proxy-1] => (item=main@default) =>
   msg: >-
-    [main] tg://proxy?server=example.org&port=443&secret=ee0123456789abcdef0123456789abcdef6578616d706c652e6f7267
+    [main@default] tg://proxy?server=example.org&port=443&secret=ee0123456789abcdef0123456789abcdef6578616d706c652e6f7267
+```
+
+Example output with multiple endpoints:
+
+```yaml
+telemt_domain: "example.org"
+telemt_link_endpoints:
+  primary: "203.0.113.10"
+  backup:  "203.0.113.11"
+telemt_users:
+  main: "0123456789abcdef0123456789abcdef"
+```
+
+```
+ok: [proxy-1] => (item=main@primary) =>
+  msg: >-
+    [main@primary] tg://proxy?server=203.0.113.10&port=443&secret=ee0123456789abcdef0123456789abcdef6578616d706c652e6f7267
+ok: [proxy-1] => (item=main@backup) =>
+  msg: >-
+    [main@backup] tg://proxy?server=203.0.113.11&port=443&secret=ee0123456789abcdef0123456789abcdef6578616d706c652e6f7267
 ```
 
 Send the link to Telegram users — they can open it directly to add the proxy.

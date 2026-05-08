@@ -1,0 +1,13 @@
+---
+# Shared prepare playbook for every scenario. Each scenario's
+# molecule.yml inherits this via base.yml. Driver-specific divergence
+# (podman injects /etc/hosts via molecule.yml, native uses lineinfile)
+# is gated by `mp_driver` inside the task file.
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Import shared prepare tasks
+      ansible.builtin.import_tasks: tasks/prepare.yml

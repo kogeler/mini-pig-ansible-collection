@@ -1,0 +1,22 @@
+---
+# GHA scenario: applies the role directly to the runner VM (no nested
+# molecule container). Uses ansible-native configuration; local development
+# should normally use the default podman-in-podman scenario.
+ansible:
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+        - --inventory=inventory/
+  env:
+    ANSIBLE_FORCE_COLOR: "true"
+  cfg:
+    privilege_escalation:
+      become: "true"
+scenario:
+  test_sequence:
+    - prepare
+    - converge
+    - idempotence
+    - verify

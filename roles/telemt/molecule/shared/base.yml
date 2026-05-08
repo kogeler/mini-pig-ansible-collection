@@ -1,0 +1,36 @@
+---
+# Role-scoped molecule base config for the telemt role.
+#
+# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
+# (the Makefile and CI workflow inject the flag for every scenario).
+# Each scenario's `molecule.yml` deep-merges on top of this — anything
+# common across scenarios lives here, anything scenario-specific stays
+# in the scenario file.
+
+dependency:
+  name: galaxy
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    # Default host_vars for the molecule-managed instance. `mp_driver`
+    # MUST live in inventory (precedence 9), not in any `vars_files`
+    # (priority 14), or vars_files would silently mask scenario-specific
+    # values.
+    host_vars:
+      molecule-telemt:
+        mp_driver: podman
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

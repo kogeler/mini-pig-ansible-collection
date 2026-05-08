@@ -28,6 +28,17 @@ telemt_tmpfs_enabled: true
 # Add :Z SELinux relabel to volume mounts
 telemt_selinux_relabel: false
 
+# AppArmor profile for the role's containers (telemt, decoy, pebble).
+# Default `unconfined` because Ubuntu 24.04 + podman 4.9.3 ships a
+# generated profile (`containers-default-0.57.4-apparmor1`) that denies
+# `socket(AF_INET, SOCK_STREAM)` for any container without
+# `apparmor=unconfined`, so the proxy and decoy can't open TCP sockets
+# at all. Defense-in-depth still has `--cap-drop=ALL`, `--read-only`,
+# `--security-opt=no-new-privileges`, and the pod's network isolation.
+# Override to a specific profile name on hosts where you ship a custom
+# AppArmor policy that doesn't break inet socket creation.
+telemt_apparmor_profile: unconfined
+
 # -- Extra container options ---------------------------------------------------
 
 telemt_extra_env: {}
@@ -52,6 +63,19 @@ telemt_use_middle_proxy: true
 # Server domain name. Used in proxy links and as tls_domain in Fake TLS mode.
 
 telemt_domain: ""
+
+# -- Link endpoints ------------------------------------------------------------
+# Optional map of label -> IP (or hostname) used as `server=` in tg://proxy
+# links. When non-empty, one link per user per endpoint is printed; the SNI
+# embedded in the Fake TLS secret stays bound to telemt_domain regardless.
+# When empty, a single link per user is printed with server=telemt_domain.
+#
+# Example:
+#   telemt_link_endpoints:
+#     primary: "203.0.113.10"
+#     backup:  "203.0.113.11"
+
+telemt_link_endpoints: {}
 
 # -- Fake TLS / anti-censorship ------------------------------------------------
 
@@ -96,4 +120,25 @@ telemt_decoy_domain: ""
 telemt_decoy_acme_email: ""
 # Path to custom index.html for decoy site.
 # When empty, the role uses its built-in files/index.html.
+# Ignored when telemt_decoy_upstream_url is set.
 telemt_decoy_index_html: ""
+
+# When non-empty, Caddy reverse-proxies all unauthenticated traffic
+# (i.e. the splice-spliced "wrong-secret" stream) to the given URL
+# (e.g. `https://example.com`) instead of serving the local static
+# decoy page. Caddy terminates HTTPS on the upstream side and rewrites
+# the Host header so the upstream sees its own hostname. Absolute
+# URLs and Location redirects from the upstream are NOT rewritten —
+# pick a static-style upstream whose content does not leak its real
+# domain. When set, telemt_decoy_index_html is ignored.
+telemt_decoy_upstream_url: ""
+
+# -- Molecule testing mode ----------------------------------------------------
+# Deploys Pebble (Let's Encrypt's test ACME CA) as an additional container
+# in the pod, points Caddy's `acme_ca` at it, and mounts Pebble's root cert
+# into the decoy so Caddy can validate the ACME server. The TLS-ALPN-01
+# challenge passes through the same TCP-splice path that real censor
+# probes hit, which makes this scenario validate the full ACME → splice →
+# Caddy ALPN handler chain. Never enable in production.
+
+telemt_molecule_mode: false

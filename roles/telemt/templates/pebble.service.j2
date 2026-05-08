@@ -1,0 +1,45 @@
+[Unit]
+Description=Podman container-{{ _telemt_pebble_name }}.service (test ACME CA)
+Requires={{ _telemt_pod_systemd_unit_name }}
+After=network-online.target {{ _telemt_pod_systemd_unit_name }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ _telemt_pebble_image }}:{{ _telemt_pebble_image_tag }} \
+        || /usr/bin/podman pull {{ _telemt_pebble_image }}:{{ _telemt_pebble_image_tag }}'
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _telemt_pebble_name }} \
+        --pull=never \
+{% if telemt_apparmor_profile %}
+        --security-opt=apparmor={{ telemt_apparmor_profile }} \
+{% endif %}
+        --env PEBBLE_VA_NOSLEEP=1 \
+        --volume {{ telemt_config_dir }}/pebble-config.json:/test/config/pebble-config.json:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --pod={{ _telemt_pod_name }} \
+        {{ _telemt_pebble_image }}:{{ _telemt_pebble_image_tag }}
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

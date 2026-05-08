@@ -1,0 +1,78 @@
+---
+- name: Wait for pod service to become active
+  ansible.builtin.systemd:
+    name: podman-telemt-pod.service
+  register: _pod_svc
+  until: _pod_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for pebble service to become active
+  ansible.builtin.systemd:
+    name: podman-telemt-pebble.service
+  register: _pebble_svc
+  until: _pebble_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for decoy service to become active
+  ansible.builtin.systemd:
+    name: podman-telemt-decoy.service
+  register: _decoy_svc
+  until: _decoy_svc.status.ActiveState == 'active'
+  retries: 20
+  delay: 5
+
+- name: Wait for telemt service to become active
+  ansible.builtin.systemd:
+    name: podman-telemt.service
+  register: _telemt_svc
+  until: _telemt_svc.status.ActiveState == 'active'
+  retries: 40
+  delay: 5
+
+- name: Wait for telemt listen port to accept connections
+  ansible.builtin.wait_for:
+    host: "127.0.0.1"
+    port: "{{ molecule_telemt_listen_port }}"
+    timeout: 60
+
+# Telemt's API + metrics listeners enforce loopback-only access (the API
+# has a whitelist option but metrics has none); netavark DNAT rewrites
+# the source for `127.0.0.1:<host_port>` traffic to the bridge gateway,
+# so probes sent through the published host port get rejected. We
+# bypass the publish path by execing curl inside the decoy (Caddy)
+# container, which shares the pod's network namespace and so reaches
+# telemt over real loopback.
+
+- name: Wait for telemt /v1/health to return ok
+  containers.podman.podman_container_exec:
+    name: telemt-decoy
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "5"
+      - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health"
+  register: _health
+  changed_when: false
+  until: _health.rc | default(1) == 0
+  retries: 30
+  delay: 2
+
+- name: Wait for telemt /v1/health/ready to flip to true
+  containers.podman.podman_container_exec:
+    name: telemt-decoy
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "5"
+      - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health/ready"
+  register: _ready
+  changed_when: false
+  until:
+    - _ready.rc | default(1) == 0
+    - ((_ready.stdout | from_json).data.ready | default(false)) | bool
+  retries: 60
+  delay: 5

@@ -1,0 +1,8 @@
+---
+- name: Converge
+  hosts: all
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Apply telemt
+      ansible.builtin.import_tasks: tasks/converge-telemt.yml
