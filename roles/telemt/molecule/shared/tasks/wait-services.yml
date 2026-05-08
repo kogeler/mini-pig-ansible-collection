@@ -77,6 +77,85 @@
       changed_when: false
       failed_when: false
 
+    # The error in the previous run was `socket: permission denied` from
+    # Caddy's `socket(AF_INET, SOCK_STREAM)`. That syscall doesn't depend
+    # on the port number — failure at this stage points to an LSM
+    # (AppArmor / SELinux), seccomp, or sysctl restricting socket
+    # creation under our `--cap-drop=ALL --security-opt=no-new-privileges
+    # --read-only` flags. The probes below pin down which.
+
+    - name: Capture kernel security-deny lines (dmesg) # noqa: command-instead-of-module risky-shell-pipe
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail +e
+          dmesg --since "10 minutes ago" 2>&1 | grep -iE "denied|apparmor|seccomp|audit|capability" | tail -200
+          exit 0
+        executable: /bin/bash
+      register: _decoy_dmesg
+      changed_when: false
+      failed_when: false
+
+    - name: Capture AppArmor profile state # noqa: command-instead-of-module risky-shell-pipe
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail +e
+          aa-status 2>&1 | head -80
+          echo "---"
+          ls /etc/apparmor.d/containers* 2>&1 || true
+          echo "---"
+          podman info --format '{{ "{{" }}.Host.Security{{ "}}" }}' 2>&1
+          exit 0
+        executable: /bin/bash
+      register: _decoy_aa
+      changed_when: false
+      failed_when: false
+
+    - name: Capture port-related sysctls # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          for k in net.ipv4.ip_unprivileged_port_start net.ipv4.ip_local_reserved_ports net.ipv4.ip_local_port_range net.core.somaxconn; do
+            echo "$k = $(sysctl -n $k 2>/dev/null || echo '<unset>')"
+          done
+        executable: /bin/bash
+      register: _decoy_sysctls
+      changed_when: false
+      failed_when: false
+
+    # Reproduce the exact security context Caddy runs under, in a
+    # minimal Python container, and try the same socket() call. If this
+    # also fails with EACCES, the restriction is on the security flags,
+    # not Caddy. If it succeeds, something Caddy-specific (config
+    # reading, file write under /var/lib/caddy, cert pool, etc.) is the
+    # actual culprit and the error message is misleading.
+    - name: Reproduce socket() probe with the same security context # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --pod=telemt-pod
+          - --cap-drop=ALL
+          - --cap-add=NET_BIND_SERVICE
+          - --security-opt=no-new-privileges
+          - --read-only
+          - docker.io/library/python:3.12-alpine
+          - python3
+          - -c
+          - |
+            import socket, sys
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.bind(("127.0.0.1", 2019))
+                s.listen(1)
+                print("OK: bind+listen 127.0.0.1:2019 succeeded under decoy security context")
+                s.close()
+            except Exception as e:
+                print(f"FAIL: {type(e).__name__}: {e}", file=sys.stderr)
+                sys.exit(1)
+      register: _decoy_socket_probe
+      changed_when: false
+      failed_when: false
+
     - name: Print decoy crash diagnostics
       ansible.builtin.debug:
         msg: |-
@@ -93,6 +172,16 @@
           {{ _decoy_journal.stdout | default('<empty>') }}
           === podman ps -a --pod ===
           {{ _decoy_ps.stdout | default('<empty>') }}
+          === dmesg (security-related last 10m) ===
+          {{ _decoy_dmesg.stdout | default('<empty>') }}
+          === AppArmor / podman security state ===
+          {{ _decoy_aa.stdout | default('<empty>') }}
+          === port sysctls ===
+          {{ _decoy_sysctls.stdout | default('<empty>') }}
+          === socket() reproducer (decoy security context) ===
+          rc={{ _decoy_socket_probe.rc | default('?') }}
+          stdout: {{ _decoy_socket_probe.stdout | default('<empty>') }}
+          stderr: {{ _decoy_socket_probe.stderr | default('<empty>') }}
           === /opt/telemt/Caddyfile ===
           {{ (_decoy_files.results[0].content | default('') | b64decode) if _decoy_files.results | length > 0 else '<unreadable>' }}
           === /opt/telemt/pebble-root.pem ===
