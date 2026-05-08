@@ -81,6 +81,22 @@ Internal ports:
 - `telemt_link_endpoints` is a map of `label: ip-or-hostname`. The role emits
   one `tg://proxy?...` debug link per user per endpoint. The Fake-TLS SNI tail
   always remains `telemt_domain`, even when `server=` is an endpoint IP.
+- `telemt_decoy_upstream_url` switches the decoy from a local static page to a
+  reverse-proxy mode. Caddy terminates upstream TLS itself and rewrites the
+  request `Host` to the upstream hostname (`{upstream_hostport}`). Response
+  bodies and `Location` headers are not rewritten — picking a static-style
+  upstream avoids URL leaks. Mutually exclusive with `telemt_decoy_index_html`
+  (which is ignored when upstream is set).
+- `telemt_apparmor_profile` defaults to `unconfined` and is applied to every
+  role-managed container (telemt, decoy, pebble) via `--security-opt=apparmor=`.
+  Ubuntu 24.04 + podman 4.9.3 ships a generated default profile
+  (`containers-default-0.57.4-apparmor1`) whose network rule denies
+  `socket(AF_INET, SOCK_STREAM)` (audited as `apparmor="DENIED"
+  operation="create" class="net" info="failed af match"`), leaving the proxy
+  unable to open TCP sockets at all. Defense in depth still has
+  `--cap-drop=ALL`, `--read-only`, `--security-opt=no-new-privileges`, and
+  pod-level network isolation. Override to a specific profile name on hosts
+  that ship a custom AppArmor policy permissive to inet socket creation.
 
 ## Handler cascade
 
@@ -204,6 +220,8 @@ Important:
 - `telemt_link_endpoints` - optional map of labels to advertised server IPs
 - `telemt_molecule_mode` - deploy Pebble and point Caddy ACME at it
 - `telemt_publish_api`, `telemt_publish_metrics` - publish host loopback ports
+- `telemt_apparmor_profile` - AppArmor profile name passed to every container,
+  default `unconfined` (see "Important role behavior")
 
 Internal variables use the `_telemt_*` prefix.
 
@@ -234,3 +252,4 @@ without the outer `podman exec molecule-telemt`.
 | Raw `printf | nc` remains a shell task | No installed native module sends arbitrary bytes over a TCP socket |
 | `mtp_ping` runs in a one-shot container | Keeps Erlang/build tools off the host and joins the pod network namespace |
 | `nftables` is installed with Podman | netavark needs `nft` for pod NAT/firewall rules on Debian/Ubuntu variants |
+| `telemt_apparmor_profile` defaults to `unconfined` | Ubuntu 24.04 + podman 4.9.3 default profile (`containers-default-0.57.4-apparmor1`) denies `socket(AF_INET, SOCK_STREAM)` for confined containers; cap-drop, no-new-privileges, read-only rootfs, and netns isolation remain |

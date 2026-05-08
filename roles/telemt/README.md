@@ -151,7 +151,8 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_decoy_image_tag` | `latest` | Caddy image tag |
 | `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
 | `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
-| `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page |
+| `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page. Ignored when `telemt_decoy_upstream_url` is set |
+| `telemt_decoy_upstream_url` | `""` | When set (e.g. `https://example.com`), Caddy reverse-proxies splice-spliced unauthenticated traffic to this URL instead of serving a local static page. Caddy terminates HTTPS on the upstream side and rewrites the `Host` header to the upstream hostname. Absolute URLs and `Location` redirects from the upstream are not rewritten |
 | `telemt_molecule_mode` | `false` | When true, deploys [Pebble](https://github.com/letsencrypt/pebble) (test ACME CA) into the pod and points Caddy at it via `acme_ca`. Caddy issues a real ACME cert through the same TLS-ALPN-01-through-splice path that production uses, so molecule scenarios exercise the full ACME chain. Never enable in production |
 
 ## Configuration examples

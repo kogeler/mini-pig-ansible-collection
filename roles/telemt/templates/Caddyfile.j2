@@ -17,6 +17,20 @@
             disable_http_challenge
         }
     }
+{% if telemt_decoy_upstream_url | default('', true) | length > 0 %}
+    # Reverse-proxy mode: forward unauthenticated traffic to a remote decoy.
+    # Caddy handles TLS to the upstream and rewrites the Host header so the
+    # upstream sees its own hostname. Body/redirect URL rewriting is not done
+    # here — pick an upstream whose content does not leak its real domain or
+    # add a response-rewriting layer (see README "Limitations").
+    reverse_proxy {{ telemt_decoy_upstream_url }} {
+        header_up Host {upstream_hostport}
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Proto
+        header_up -X-Forwarded-Host
+    }
+{% else %}
     root * /srv
     file_server
+{% endif %}
 }
