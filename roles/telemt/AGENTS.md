@@ -63,6 +63,8 @@ Internal ports:
 
 - The decoy always uses Caddy's ACME issuer path. Production uses the default
   public CA behavior; molecule mode overrides the global ACME CA to Pebble.
+- Caddy runs with a read-only rootfs, so both `/data` and `/config` are
+  writable bind mounts under `telemt_config_dir`.
 - In molecule mode, Caddy's `acme_ca` is `https://localhost:14000/dir` because
   Pebble's bundled ACME endpoint certificate is valid for `localhost`.
   `acme_ca_root /etc/caddy/pebble-root.pem` points Caddy at the root that signs
@@ -144,8 +146,12 @@ make gha-native-verify
 ```
 
 The `default` scenario runs inside a molecule-managed Debian container with
-nested Podman. The `gha` scenario applies the role directly to the GitHub
-Actions runner VM with `ansible_connection: local`.
+nested Podman. Its Dockerfile installs `crun` for the opt-in `mtp_ping`
+one-shot but pins Podman's default runtime to `runc` in `containers.conf`; the
+role's normal systemd-managed containers use `--cgroups=split`, while
+`mtp_ping` explicitly uses `--runtime=crun --cgroups=disabled`. The `gha`
+scenario applies the role directly to the GitHub Actions runner VM with
+`ansible_connection: local`.
 
 ## Driver conditionals
 

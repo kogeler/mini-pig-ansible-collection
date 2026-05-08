@@ -99,6 +99,14 @@
         group: root
         mode: "0755"
 
+    - name: telemt | create decoy config directory
+      ansible.builtin.file:
+        path: "{{ _telemt_decoy_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: telemt | create decoy html directory
       ansible.builtin.file:
         path: "{{ _telemt_decoy_html_dir }}"
