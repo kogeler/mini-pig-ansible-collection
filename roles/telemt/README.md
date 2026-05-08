@@ -131,6 +131,7 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_read_only_rootfs` | `true` | Read-only container root filesystem |
 | `telemt_tmpfs_enabled` | `true` | Mount tmpfs at `/run/telemt` for cache |
 | `telemt_selinux_relabel` | `false` | Add `:Z` SELinux relabel to volume mounts |
+| `telemt_apparmor_profile` | `unconfined` | AppArmor profile passed as `--security-opt=apparmor=<value>` to every container the role manages (proxy, decoy, pebble). Default `unconfined` because Ubuntu 24.04 + podman 4.9.3 ships a generated profile that denies `socket(AF_INET, SOCK_STREAM)` for confined containers — leaving the proxy unable to open TCP sockets. Defense-in-depth still has `--cap-drop=ALL`, `--read-only`, `--security-opt=no-new-privileges`, and pod-level network isolation. Override to a specific profile name on hosts that ship a custom AppArmor policy that allows inet socket creation, or set to empty string `""` to drop the flag entirely (then podman applies whatever default profile it has) |
 
 ### Extra options
 

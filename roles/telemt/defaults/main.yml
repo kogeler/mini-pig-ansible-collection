@@ -28,6 +28,17 @@ telemt_tmpfs_enabled: true
 # Add :Z SELinux relabel to volume mounts
 telemt_selinux_relabel: false
 
+# AppArmor profile for the role's containers (telemt, decoy, pebble).
+# Default `unconfined` because Ubuntu 24.04 + podman 4.9.3 ships a
+# generated profile (`containers-default-0.57.4-apparmor1`) that denies
+# `socket(AF_INET, SOCK_STREAM)` for any container without
+# `apparmor=unconfined`, so the proxy and decoy can't open TCP sockets
+# at all. Defense-in-depth still has `--cap-drop=ALL`, `--read-only`,
+# `--security-opt=no-new-privileges`, and the pod's network isolation.
+# Override to a specific profile name on hosts where you ship a custom
+# AppArmor policy that doesn't break inet socket creation.
+telemt_apparmor_profile: unconfined
+
 # -- Extra container options ---------------------------------------------------
 
 telemt_extra_env: {}

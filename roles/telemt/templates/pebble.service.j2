@@ -26,7 +26,9 @@ ExecStart=/usr/bin/podman container run \
         --replace \
         --name {{ _telemt_pebble_name }} \
         --pull=never \
-        --security-opt=apparmor=unconfined \
+{% if telemt_apparmor_profile %}
+        --security-opt=apparmor={{ telemt_apparmor_profile }} \
+{% endif %}
         --env PEBBLE_VA_NOSLEEP=1 \
         --volume {{ telemt_config_dir }}/pebble-config.json:/test/config/pebble-config.json:ro{% if telemt_selinux_relabel %},Z{% endif %} \
         --pod={{ _telemt_pod_name }} \
