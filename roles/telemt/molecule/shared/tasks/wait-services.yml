@@ -42,6 +42,25 @@
       changed_when: false
       failed_when: false
 
+    # Container stdout/stderr (Caddy's actual error) is routed to journald
+    # under the CONTAINER_NAME field, NOT under the service unit. The
+    # `-xeu <unit>` filter above misses it. These two queries catch the
+    # container output by name and by syslog identifier (`conmon` is
+    # podman's container monitor that proxies the container streams).
+    - name: Capture telemt-decoy container stdout via CONTAINER_NAME # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: journalctl CONTAINER_NAME=telemt-decoy --no-pager --since "10 minutes ago"
+      register: _decoy_container_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Capture conmon-tagged journal lines # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: journalctl -t conmon --no-pager --since "10 minutes ago" -n 200
+      register: _decoy_conmon_journal
+      changed_when: false
+      failed_when: false
+
     - name: Capture rendered Caddyfile and pebble root cert
       ansible.builtin.slurp:
         src: "{{ item }}"
@@ -66,14 +85,18 @@
           {{ _decoy_logs.stdout | default('<empty>') }}
           stderr:
           {{ _decoy_logs.stderr | default('<empty>') }}
+          === journalctl CONTAINER_NAME=telemt-decoy ===
+          {{ _decoy_container_journal.stdout | default('<empty>') }}
+          === journalctl -t conmon ===
+          {{ _decoy_conmon_journal.stdout | default('<empty>') }}
           === journalctl -xeu podman-telemt-decoy.service ===
           {{ _decoy_journal.stdout | default('<empty>') }}
           === podman ps -a --pod ===
           {{ _decoy_ps.stdout | default('<empty>') }}
           === /opt/telemt/Caddyfile ===
           {{ (_decoy_files.results[0].content | default('') | b64decode) if _decoy_files.results | length > 0 else '<unreadable>' }}
-          === /opt/telemt/pebble-root.pem (first 200 chars) ===
-          {{ ((_decoy_files.results[1].content | default('') | b64decode) | truncate(200)) if _decoy_files.results | length > 1 else '<unreadable>' }}
+          === /opt/telemt/pebble-root.pem ===
+          {{ (_decoy_files.results[1].content | default('') | b64decode) if _decoy_files.results | length > 1 else '<unreadable>' }}
 
     - name: Re-raise decoy readiness failure
       ansible.builtin.fail:
