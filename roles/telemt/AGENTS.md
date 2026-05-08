@@ -61,9 +61,8 @@ Internal ports:
 
 ## Important role behavior
 
-- `telemt_molecule_mode` and `telemt_decoy_tls_internal` are mutually
-  exclusive. Molecule mode must exercise Pebble ACME; `tls internal` bypasses
-  ACME and is only for local/staging deployments without public issuance.
+- The decoy always uses Caddy's ACME issuer path. Production uses the default
+  public CA behavior; molecule mode overrides the global ACME CA to Pebble.
 - In molecule mode, Caddy's `acme_ca` is `https://localhost:14000/dir` because
   Pebble's bundled ACME endpoint certificate is valid for `localhost`.
   `acme_ca_root /etc/caddy/pebble-root.pem` points Caddy at the root that signs
@@ -197,7 +196,6 @@ Important:
 - `telemt_modes_tls` - default `true`; Fake-TLS mode
 - `telemt_tls_mask` - default `true`; invalid traffic splices to decoy
 - `telemt_link_endpoints` - optional map of labels to advertised server IPs
-- `telemt_decoy_tls_internal` - local Caddy CA mode; not with molecule mode
 - `telemt_molecule_mode` - deploy Pebble and point Caddy ACME at it
 - `telemt_publish_api`, `telemt_publish_metrics` - publish host loopback ports
 
@@ -223,7 +221,7 @@ without the outer `podman exec molecule-telemt`.
 
 | Decision | Why |
 |----------|-----|
-| Pebble ACME in molecule, not Caddy `tls internal` | Tests the production ACME/TLS-ALPN-01-through-splice path |
+| Pebble ACME in molecule | Tests the production ACME/TLS-ALPN-01-through-splice path |
 | `acme_ca` uses `https://localhost:14000/dir` | Matches Pebble's bundled endpoint certificate hostname |
 | Pebble minica is copied from container rootfs | It is not available through Pebble's management roots API |
 | `podman_container_exec` probes API/metrics from decoy | telemt loopback checks reject host-published DNAT source addresses |

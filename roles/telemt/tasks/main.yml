@@ -44,15 +44,6 @@
           telemt_listen_port must be between 1 and 65535.
         quiet: true
 
-    - name: telemt | validate molecule ACME mode and internal TLS are exclusive
-      ansible.builtin.assert:
-        that:
-          - not ((telemt_molecule_mode | bool) and (telemt_decoy_tls_internal | bool))
-        fail_msg: >-
-          telemt_molecule_mode and telemt_decoy_tls_internal are mutually
-          exclusive. Molecule mode uses Pebble ACME; internal TLS bypasses ACME.
-        quiet: true
-
     - name: telemt | warn if API is exposed on non-loopback
       ansible.builtin.debug:
         msg: >-

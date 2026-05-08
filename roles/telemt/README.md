@@ -151,7 +151,6 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
 | `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
 | `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page |
-| `telemt_decoy_tls_internal` | `false` | When true, decoy uses Caddy's `tls internal` (Caddy-managed self-signed CA) instead of Let's Encrypt. Use for dev/staging hosts without a public IP. Mutually exclusive with `telemt_molecule_mode`; production deployments leave this false |
 | `telemt_molecule_mode` | `false` | When true, deploys [Pebble](https://github.com/letsencrypt/pebble) (test ACME CA) into the pod and points Caddy at it via `acme_ca`. Caddy issues a real ACME cert through the same TLS-ALPN-01-through-splice path that production uses, so molecule scenarios exercise the full ACME chain. Never enable in production |
 
 ## Configuration examples

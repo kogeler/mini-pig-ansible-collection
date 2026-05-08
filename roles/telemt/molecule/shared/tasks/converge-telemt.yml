@@ -13,8 +13,7 @@
     # molecule_mode deploys Pebble (test ACME CA) into the pod and
     # points Caddy at it. Caddy issues a real ACME cert via the same
     # TLS-ALPN-01-through-splice path that production runs, so verify
-    # exercises the full ACME chain. Mutually exclusive with
-    # telemt_decoy_tls_internal — leave that false here.
+    # exercises the full ACME chain.
     telemt_molecule_mode: true
     # Publish API + metrics on host loopback so verify can probe them.
     telemt_api_enabled: true

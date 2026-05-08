@@ -110,11 +110,6 @@ telemt_decoy_acme_email: ""
 # Path to custom index.html for decoy site.
 # When empty, the role uses its built-in files/index.html.
 telemt_decoy_index_html: ""
-# When true, the decoy uses Caddy's `tls internal` (Caddy-managed local CA,
-# self-signed leaf) instead of Let's Encrypt. Useful for dev/staging hosts
-# without a public IP. Mutually exclusive with telemt_molecule_mode.
-# Production deployments leave this false so the decoy gets a real ACME cert.
-telemt_decoy_tls_internal: false
 
 # -- Molecule testing mode ----------------------------------------------------
 # Deploys Pebble (Let's Encrypt's test ACME CA) as an additional container
