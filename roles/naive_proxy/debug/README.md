@@ -11,19 +11,31 @@ Two of them — `upload-via-tty.sh` and `download-via-tty.sh` — run on the
 
 ## What problem they help diagnose
 
-Under sustained TCP backpressure on a single H2 connection (the kind that
-real-internet conditions produce when a client uploads at line speed and
-struggles to drain the response side), HAProxy's H2 demuxer fires
-`received invalid H2 frame header : dft=DATA/00 dfl=0 glitches=1` →
-`PROTOCOL_ERROR/01` GOAWAY → every multiplexed stream on that
-connection dies together. The signature is reproducible across HAProxy
-2.8 / 3.0 / 3.2 / 3.3 (checked) and is **not** a single-version
-regression. Buffer-pressure mitigations (lower
-`tune.h2.fe.max-concurrent-streams`, larger
-`tune.h2.fe.initial-window-size`, larger `tune.h2.max-frame-size`) cut
-the failure rate substantially but do not eliminate it. Molecule
-loopback tests do not reproduce the bug because loopback TCP has
-effectively infinite buffers and zero RTT.
+Originally built to investigate intermittent `received invalid H2
+frame header : dft=DATA/00 dfl=0 glitches=1` → `PROTOCOL_ERROR/01`
+GOAWAY storms on a single H2 connection under speedtest-style load,
+where every multiplexed stream on that connection died together. The
+signature was reproducible across HAProxy 2.8 / 3.0 / 3.2 / 3.3
+(checked) and traced down (see `temp/haproxy-3354-evidence/`) to a
+PADDED-DATA padding-drain bug in `h2_frt_transfer_data()`: padding
+bytes were never `b_del`'d from `h2c->dbuf`, so the next demux
+iteration parsed a "header" out of the previous frame's leftover
+padding. Reported as [haproxy/haproxy#3354](https://github.com/haproxy/haproxy/issues/3354)
+and fixed upstream by `faf3e9a` ("BUG/MEDIUM: mux-h2: Properly
+consume padding for DATA frames"), backported to the 3.3 maintenance
+branch as `043db34` and slated for backport down to 2.8. The H2
+tunings we exposed at the time (larger
+`tune.h2.fe.initial-window-size`, `tune.h2.max-frame-size`,
+`tune.h2.fe.rxbuf`) cut the visible failure rate but never eliminated
+the underlying mis-alignment — they only reduced the rate at which
+the misread happened to land on bytes that parsed as an obviously
+invalid header. Molecule loopback tests never reproduced the bug
+because loopback TCP has effectively infinite buffers and zero RTT.
+
+These scripts remain useful for any future H2 demuxer regression that
+manifests as an unexpected `bad_hdr` count, and as a reference for
+collecting a `verbosity complete` H2 trace from a running HAProxy pod
+without disturbing live clients.
 
 The trigger event is captured in the H2 trace ring sink and reported by
 `analyze.sh` as `bad_hdr` count.

@@ -56,14 +56,41 @@ naive_proxy_backend_base_image_tag: "22.04"
 
 # -- Images -------------------------------------------------------------------
 
-naive_proxy_haproxy_image: "docker.io/library/haproxy"
-# Pin the current HAProxy major instead of floating on the lts alias.
-# Defaults to 3.3 because of the H2 demux backpressure tuning we expose
-# below (`tune.h2.fe.initial-window-size`, `tune.h2.max-frame-size`)
-# and because 3.3 contains the `ring` infrastructure used by the
-# diagnostics toggle. Override to `3.2-alpine` (the previous LTS) if you
-# need long-term stability over the latest demuxer behaviour.
-naive_proxy_haproxy_image_tag: "3.3-alpine"
+# Currently pinned to a custom HAProxy image because the latest
+# tagged release on the 3.3 maintenance branch (v3.3.9, tagged
+# 2026-05-06) does NOT yet ship the fix for the H2 PADDED-DATA
+# padding-drain bug we hit in production. The fix was merged to the
+# `haproxy-3.3` branch on 2026-05-07 (one day after v3.3.9 was cut),
+# so it will only appear in v3.3.10 and later.
+#
+#   - issue:        https://github.com/haproxy/haproxy/issues/3354
+#   - upstream fix: https://github.com/haproxy/haproxy/commit/faf3e9ac3a5df7258b0abbc06b0e0378617a18e5
+#                   ("BUG/MEDIUM: mux-h2: Properly consume padding for DATA frames")
+#   - 3.3 backport: https://git.haproxy.org/?p=haproxy-3.3.git;a=commit;h=043db34df5b08f32055e1ebf1dd568473b268dbe
+#   - 3.3 tags:     https://git.haproxy.org/?p=haproxy-3.3.git;a=tags
+#   - local notes:  temp/haproxy-3354-evidence/AGENT-REPORT-verbosity-complete-rerun.md
+#
+# Once a HAProxy 3.3 minor release containing `043db34` is tagged and
+# the official Docker Hub `library/haproxy:3.3-alpine` image is
+# rebuilt on top of it, revert this back to the upstream image:
+#
+#   naive_proxy_haproxy_image: "docker.io/library/haproxy"
+#   naive_proxy_haproxy_image_tag: "3.3-alpine"
+#
+# Verify the rebuilt official image actually carries the fix before
+# reverting — pull it and look for the `043db34` short hash in
+# `haproxy -vv` output's `Known bugs` / commit list, or grep the
+# bundled `CHANGELOG` for "Properly consume padding for DATA frames".
+#
+# Why 3.3 specifically: that branch carries the `ring` infrastructure
+# used by the optional diagnostics toggle below, and is the first
+# stable maintenance branch to receive the #3354 fix backport. The
+# fix is slated for backport down to 2.8, but until then
+# `3.2-alpine` / older majors still carry the bug.
+# naive_proxy_haproxy_image: "docker.io/library/haproxy"
+# naive_proxy_haproxy_image_tag: "3.3-alpine"
+naive_proxy_haproxy_image: "ghcr.io/kogeler/haproxy"
+naive_proxy_haproxy_image_tag: "latest"
 naive_proxy_decoy_image: "docker.io/library/caddy"
 naive_proxy_decoy_image_tag: "latest"
 naive_proxy_acme_image: "docker.io/neilpang/acme.sh"
@@ -144,31 +171,38 @@ naive_proxy_haproxy_ssl_cache_size: 40000
 # ≈ enough for ~130 Mbps × 100 ms RTT). Raise on high-BDP links —
 # rough sizing: `BDP_bytes ≈ bandwidth_mbps × rtt_ms × 125`. RAM cost
 # is per-stream × concurrent H2 streams.
-#
-# Empirical note: bumping rxbuf above default *worsened* the H2 demuxer
-# backpressure failures we observed in real-internet load tests
-# (haproxy/haproxy#3354). Leave at the default unless you have
-# benchmarks proving otherwise.
-naive_proxy_haproxy_h2_frontend_rxbuf: ""
+
+naive_proxy_haproxy_h2_frontend_rxbuf: "6m"
 
 # Per-stream H2 initial flow-control window (bytes). Sets the
 # `tune.h2.fe.initial-window-size <size>` directive in the HAProxy
-# `global` section. Default `1048576` (1 MiB) reduces WINDOW_UPDATE
-# round-trips and the chance of buffer-pressure-induced demuxer
-# misalignment we observed in real-internet load (haproxy/haproxy#3354).
+# `global` section. Default `1048576` (1 MiB) cuts WINDOW_UPDATE
+# round-trips on long-lived bidirectional streams — a pure throughput
+# tuning on high-BDP links, sized to match `h2_frontend_rxbuf` above.
 # RFC default is 65535 (64 KiB) — set this to 0 to keep RFC default.
 # Requires HAProxy 3.0+.
+#
+# Historical note: this knob was originally introduced as a mitigation
+# for haproxy/haproxy#3354 (PADDED-DATA misalignment) — a larger window
+# reduced how often the failure surfaced. The actual bug is fixed
+# upstream by `faf3e9a` (3.3 maintenance backport `043db34`); on a
+# build that includes the fix this value is purely a throughput knob.
 naive_proxy_haproxy_h2_initial_window_size: 1048576
 
 # H2 maximum frame size HAProxy advertises to clients. Sets the
-# `tune.h2.max-frame-size <size>` directive. Default `1048576` (1 MiB)
-# reduces per-byte frame-header parsing overhead on the demuxer for
-# CONNECT-tunnel and other long-DATA-payload H2 traffic. Set to 0 to
-# keep HAProxy default (16 KiB). Values up to 16777215 (RFC max) are
-# accepted but cause head-of-line blocking on multiplexed connections;
-# 1 MiB is the sweet spot we validated.
+# `tune.h2.max-frame-size <size>` directive. `0` keeps HAProxy default
+# (16 KiB). Values up to 16777215 (RFC max) are accepted but cause
+# head-of-line blocking on multiplexed connections.
+#
+# Historical note: previously defaulted to `1048576` (1 MiB) as a
+# secondary mitigation for haproxy/haproxy#3354 — fewer frames per
+# byte of payload reduced the rate at which PADDED+END_STREAM markers
+# triggered the demuxer misalignment. The bug is fixed upstream by
+# `faf3e9a` (3.3 maintenance backport `043db34`), so the mitigation
+# justification is gone. Re-raise only with a benchmark proving a real
+# parsing-overhead win on your workload.
 # Requires HAProxy 3.0+.
-naive_proxy_haproxy_h2_max_frame_size: 1048576
+naive_proxy_haproxy_h2_max_frame_size: 0
 
 # Optional Linux-only low-water mark for client/server sockets. Set this to a
 # small value such as 16384 only after benchmarks confirm it helps your host.
