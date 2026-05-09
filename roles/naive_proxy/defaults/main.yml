@@ -87,8 +87,8 @@ naive_proxy_backend_base_image_tag: "22.04"
 # stable maintenance branch to receive the #3354 fix backport. The
 # fix is slated for backport down to 2.8, but until then
 # `3.2-alpine` / older majors still carry the bug.
-#naive_proxy_haproxy_image: "docker.io/library/haproxy"
-#naive_proxy_haproxy_image_tag: "3.3-alpine"
+# naive_proxy_haproxy_image: "docker.io/library/haproxy"
+# naive_proxy_haproxy_image_tag: "3.3-alpine"
 naive_proxy_haproxy_image: "ghcr.io/kogeler/haproxy"
 naive_proxy_haproxy_image_tag: "latest"
 naive_proxy_decoy_image: "docker.io/library/caddy"
