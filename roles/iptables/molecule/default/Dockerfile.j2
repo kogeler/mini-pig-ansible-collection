@@ -1,0 +1,14 @@
+FROM {{ item.image }}
+# iptables: target of the role; iproute2 brings `ip` (veth, netns);
+# netcat-openbsd is the small TCP probe used by verify; iptables-persistent
+# the role would normally install via apt, baking it here cuts converge time.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        systemd systemd-sysv python3 ca-certificates \
+        iptables iptables-persistent iproute2 netcat-openbsd procps \
+        iputils-ping && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    systemctl mask getty@tty1.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

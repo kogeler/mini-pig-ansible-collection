@@ -1,0 +1,9 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: true
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Import shared prepare tasks
+      ansible.builtin.import_tasks: tasks/prepare.yml

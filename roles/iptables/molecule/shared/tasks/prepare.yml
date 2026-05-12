@@ -1,0 +1,161 @@
+---
+# Build a pair of veth interfaces ((ext0, peer_a) and (ext1, peer_b))
+# whose peer ends live in dedicated network namespaces. The main netns
+# sees `ext0`/`ext1` as separate "external" interfaces, so the INPUT
+# chain on `-i extN` is actually traversed by traffic originated from
+# the peer netns. A plain `dummy` interface won't do — packets to a
+# local address get short-circuited through `lo` and never enter the
+# external-interface INPUT path.
+#
+# Module-coverage gap: Ansible (core + community.general) does NOT
+# ship modules for kernel-level `ip link add type veth`, `ip link
+# set <X> up`, `ip addr add`, `ip route add`, or for executing inside
+# a network namespace. `community.general.interfaces_file` writes
+# `/etc/network/interfaces` only, `community.general.system.nmcli`
+# requires NetworkManager (not installed in the test image), and
+# `ansible.netcommon.*` targets vendor network appliances, not Linux
+# iproute2. So every iproute2 task below stays as `ansible.builtin.
+# command` — but each is made idempotent and reports a truthful diff.
+#
+# `ip netns exec` is also avoided: it tries to remount /sys inside
+# this container and fails with EPERM. We enter the netns with
+# `nsenter -n /var/run/netns/<name>` (which only setns()'s the net
+# namespace) and reach the peer veth from there.
+
+- name: Create external network namespaces
+  community.general.ip_netns:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "{{ molecule_iptables_netns_a }}"
+    - "{{ molecule_iptables_netns_b }}"
+
+# ------------------------------------------------------------------- #
+# Host netns: create veth pairs, bring host ends UP, assign IPs.      #
+# ------------------------------------------------------------------- #
+
+# `creates: /sys/class/net/<inf>` makes this idempotent — the kernel
+# auto-creates the sysfs node when the link comes into existence, so
+# the task short-circuits on re-runs instead of erroring with
+# "File exists".
+- name: Create veth pairs (host end + peer end in external netns)
+  ansible.builtin.command:
+    cmd: >-
+      ip link add {{ item.inf }} type veth
+      peer name {{ item.peer }} netns {{ item.netns }}
+    creates: "/sys/class/net/{{ item.inf }}"
+  loop:
+    - inf: "{{ molecule_iptables_inf_a }}"
+      peer: peer_a
+      netns: "{{ molecule_iptables_netns_a }}"
+    - inf: "{{ molecule_iptables_inf_b }}"
+      peer: peer_b
+      netns: "{{ molecule_iptables_netns_b }}"
+  loop_control:
+    label: "{{ item.inf }}"
+
+# Read current state with `ip -j link show` (JSON) so we can fire the
+# `set up` command only when needed and report changed truthfully.
+- name: Read host-netns veth link state
+  ansible.builtin.command:
+    cmd: "ip -j link show {{ item }}"
+  register: _host_link_state
+  changed_when: false
+  loop:
+    - "{{ molecule_iptables_inf_a }}"
+    - "{{ molecule_iptables_inf_b }}"
+
+- name: Bring up host-netns veth ends (only when not already UP)
+  ansible.builtin.command:
+    cmd: "ip link set {{ item.item }} up"
+  when: "'UP' not in (item.stdout | from_json | first).flags"
+  loop: "{{ _host_link_state.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# `ip addr add` returns "RTNETLINK answers: File exists" (rc=2) when
+# the address is already configured. Treat that exact case as ok-but-
+# unchanged; any other failure still fails. rc=0 ⇒ address was newly
+# added ⇒ task reports changed and the diff is real.
+- name: Configure IP on host-netns veth ends
+  ansible.builtin.command:
+    cmd: "ip addr add {{ item.ip }}/24 dev {{ item.inf }}"
+  register: _host_addr_add
+  failed_when:
+    - _host_addr_add.rc != 0
+    - "'File exists' not in (_host_addr_add.stderr | default(''))"
+  changed_when: _host_addr_add.rc == 0
+  loop:
+    - inf: "{{ molecule_iptables_inf_a }}"
+      ip: "{{ molecule_iptables_host_ip_a }}"
+    - inf: "{{ molecule_iptables_inf_b }}"
+      ip: "{{ molecule_iptables_host_ip_b }}"
+  loop_control:
+    label: "{{ item.inf }}"
+
+# ------------------------------------------------------------------- #
+# External netnses: bring lo + peer end UP, assign IP, install route. #
+# ------------------------------------------------------------------- #
+
+- name: Read loopback and peer link state inside external netns
+  ansible.builtin.command:
+    cmd: "nsenter -n/var/run/netns/{{ item.netns }} ip -j link show {{ item.iface }}"
+  register: _peer_link_state
+  changed_when: false
+  loop:
+    - { netns: "{{ molecule_iptables_netns_a }}", iface: lo }
+    - { netns: "{{ molecule_iptables_netns_a }}", iface: peer_a }
+    - { netns: "{{ molecule_iptables_netns_b }}", iface: lo }
+    - { netns: "{{ molecule_iptables_netns_b }}", iface: peer_b }
+  loop_control:
+    label: "{{ item.netns }}/{{ item.iface }}"
+
+- name: Bring up lo and peer veth ends in external netns (only when not UP)
+  ansible.builtin.command:
+    cmd: >-
+      nsenter -n/var/run/netns/{{ item.item.netns }}
+      ip link set {{ item.item.iface }} up
+  when: "'UP' not in (item.stdout | from_json | first).flags"
+  loop: "{{ _peer_link_state.results }}"
+  loop_control:
+    label: "{{ item.item.netns }}/{{ item.item.iface }}"
+
+- name: Configure IP on peer veth ends in external netns
+  ansible.builtin.command:
+    cmd: >-
+      nsenter -n/var/run/netns/{{ item.netns }}
+      ip addr add {{ item.peer_ip }}/24 dev {{ item.peer_iface }}
+  register: _peer_addr_add
+  failed_when:
+    - _peer_addr_add.rc != 0
+    - "'File exists' not in (_peer_addr_add.stderr | default(''))"
+  changed_when: _peer_addr_add.rc == 0
+  loop:
+    - netns: "{{ molecule_iptables_netns_a }}"
+      peer_iface: peer_a
+      peer_ip: "{{ molecule_iptables_peer_ip_a }}"
+    - netns: "{{ molecule_iptables_netns_b }}"
+      peer_iface: peer_b
+      peer_ip: "{{ molecule_iptables_peer_ip_b }}"
+  loop_control:
+    label: "{{ item.netns }}"
+
+# `ip route add` returns "File exists" (rc=2) when the route is already
+# present. Same idempotency-by-stderr pattern as `ip addr add` above.
+- name: Configure default route in external netns
+  ansible.builtin.command:
+    cmd: >-
+      nsenter -n/var/run/netns/{{ item.netns }}
+      ip route add default via {{ item.host_ip }}
+  register: _peer_route_add
+  failed_when:
+    - _peer_route_add.rc != 0
+    - "'File exists' not in (_peer_route_add.stderr | default(''))"
+  changed_when: _peer_route_add.rc == 0
+  loop:
+    - netns: "{{ molecule_iptables_netns_a }}"
+      host_ip: "{{ molecule_iptables_host_ip_a }}"
+    - netns: "{{ molecule_iptables_netns_b }}"
+      host_ip: "{{ molecule_iptables_host_ip_b }}"
+  loop_control:
+    label: "{{ item.netns }}"
