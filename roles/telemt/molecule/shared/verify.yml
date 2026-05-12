@@ -170,32 +170,16 @@
     # Fake-TLS secret are TCP-spliced to the decoy. A vanilla GET via
     # `uri:` (with validate_certs: false) splices through and completes
     # the TLS handshake against Caddy.
-
-    - name: GET decoy stub through TCP splice
-      ansible.builtin.uri:
-        url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
-        validate_certs: false
-        use_proxy: false
-        return_content: true
-      register: _decoy_response
-      until: _decoy_response.status == 200
-      retries: 6
-      delay: 5
-
-    - name: Assert decoy response carries built-in stub markers
-      ansible.builtin.assert:
-        that:
-          - _decoy_response.status == 200
-          - _decoy_response.content | length > 0
-        fail_msg: >-
-          Decoy splice did not return content. Got status={{ _decoy_response.status }}
-          body={{ _decoy_response.content | default('<empty>') | truncate(300) }}
-
-    # Caddy's ACME issuance against Pebble is async — it fires after
-    # Caddy starts and only completes once the TLS-ALPN-01 challenge
-    # passes through the splice. Poll the cert via get_certificate until
-    # the issuer flips from Caddy's bootstrap self-signed leaf to a
-    # Pebble-issued one.
+    #
+    # ORDER MATTERS. Caddy's ACME issuance against Pebble is async — it
+    # fires after Caddy starts and only completes once the TLS-ALPN-01
+    # challenge passes through the splice. During the window between
+    # "bootstrap self-signed cert torn down" and "Pebble-issued cert
+    # installed", TLS handshakes against Caddy fail with
+    # TLSV1_ALERT_INTERNAL_ERROR rather than just returning the
+    # bootstrap cert with `validate_certs: false`. So we MUST poll for
+    # the Pebble-issued cert before issuing the splice GET, otherwise
+    # the GET can land mid-transition and fail spuriously.
 
     - name: Wait for Pebble-issued cert on splice
       community.crypto.get_certificate:
@@ -206,7 +190,9 @@
       # community.crypto.get_certificate returns issuer keyed by short
       # OID names (e.g. `CN`); x509_certificate_info uses long names
       # (`commonName`). Don't conflate the two.
-      until: "'Pebble' in (_splice_cert.issuer.CN | default(''))"
+      until:
+        - _splice_cert.cert is defined
+        - "'Pebble' in (_splice_cert.issuer.CN | default(''))"
       retries: 30
       delay: 5
 
@@ -224,6 +210,30 @@
           Cert through splice failed validation.
           SANs={{ _splice_cert_info.subject_alt_name | default('<none>') }}
           issuer={{ _splice_cert_info.issuer | default('<none>') }}
+
+    - name: GET decoy stub through TCP splice
+      ansible.builtin.uri:
+        url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: _decoy_response
+      # At this point ACME is already settled (preceding cert check
+      # passed), so the GET should succeed on the first try. The small
+      # retry budget guards against transient network blips, not the
+      # ACME transition.
+      until: _decoy_response.status == 200
+      retries: 3
+      delay: 2
+
+    - name: Assert decoy response carries built-in stub markers
+      ansible.builtin.assert:
+        that:
+          - _decoy_response.status == 200
+          - _decoy_response.content | length > 0
+        fail_msg: >-
+          Decoy splice did not return content. Got status={{ _decoy_response.status }}
+          body={{ _decoy_response.content | default('<empty>') | truncate(300) }}
 
     # -- Bad-payload probe drives the connection counter ---------------------
     # Send a junk TLS-ish ClientHello at the listener and assert the
