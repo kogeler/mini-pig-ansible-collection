@@ -194,10 +194,10 @@
             {{ [_default_iface] }}
           {%- endif -%}
       loop:
-        - { label: string,       value: "ext0" }
+        - { label: string, value: "ext0" }
         - { label: empty_string, value: "" }
-        - { label: empty_list,   value: [] }
-        - { label: list,         value: ["ext0", "ext1"] }
+        - { label: empty_list, value: [] }
+        - { label: list, value: ["ext0", "ext1"] }
 
     - name: Assert normalization produces the expected lists
       ansible.builtin.assert:

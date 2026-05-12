@@ -14,7 +14,7 @@ iptables_ports:
 #    protocol: tcp
 #    src_v4: 0.0.0.0/0
 #    src_v6: ::/0
-#    skip_v6: false 
+#    skip_v6: false
 iptables_forwarded_ports: []
 #  # DNAT + FORWARD allow
 #  - forwarded_inf: eth0

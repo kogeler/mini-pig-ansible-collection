@@ -9,23 +9,22 @@
 #
 # Module-coverage gap: Ansible (core + community.general) does NOT
 # ship modules for kernel-level `ip link add type veth`, `ip link
-# set <X> up`, `ip addr add`, `ip route add`, or for executing inside
-# a network namespace. `community.general.interfaces_file` writes
-# `/etc/network/interfaces` only, `community.general.system.nmcli`
-# requires NetworkManager (not installed in the test image), and
-# `ansible.netcommon.*` targets vendor network appliances, not Linux
-# iproute2. So every iproute2 task below stays as `ansible.builtin.
-# command` — but each is made idempotent and reports a truthful diff.
+# set <X> up`, `ip addr add`, or `ip route add`.
+# `community.general.ip_netns` does cover `ip netns add/del`, but
+# pulling community.general in just for that one task is not worth
+# the dep weight on CI lint runners that don't ship it by default —
+# every iproute2 task below uses `ansible.builtin.command` with an
+# explicit idempotency guard.
 #
-# `ip netns exec` is also avoided: it tries to remount /sys inside
+# `ip netns exec` is avoided: it tries to remount /sys inside
 # this container and fails with EPERM. We enter the netns with
 # `nsenter -n /var/run/netns/<name>` (which only setns()'s the net
 # namespace) and reach the peer veth from there.
 
 - name: Create external network namespaces
-  community.general.ip_netns:
-    name: "{{ item }}"
-    state: present
+  ansible.builtin.command:
+    cmd: "ip netns add {{ item }}"
+    creates: "/var/run/netns/{{ item }}"
   loop:
     - "{{ molecule_iptables_netns_a }}"
     - "{{ molecule_iptables_netns_b }}"
@@ -69,6 +68,7 @@
   ansible.builtin.command:
     cmd: "ip link set {{ item.item }} up"
   when: "'UP' not in (item.stdout | from_json | first).flags"
+  changed_when: true
   loop: "{{ _host_link_state.results }}"
   loop_control:
     label: "{{ item.item }}"
@@ -116,6 +116,7 @@
       nsenter -n/var/run/netns/{{ item.item.netns }}
       ip link set {{ item.item.iface }} up
   when: "'UP' not in (item.stdout | from_json | first).flags"
+  changed_when: true
   loop: "{{ _peer_link_state.results }}"
   loop_control:
     label: "{{ item.item.netns }}/{{ item.item.iface }}"
