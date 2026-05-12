@@ -1,0 +1,423 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+  tasks:
+    # -- Read converge-time artefacts ----------------------------------------
+
+    - name: Read default interface recorded during converge
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-default-iface.txt
+      register: _default_iface_raw
+
+    - name: Set default-interface fact
+      ansible.builtin.set_fact:
+        _default_iface: "{{ (_default_iface_raw.content | b64decode).strip() }}"
+
+    - name: Read rendered v4 ruleset snapshots
+      ansible.builtin.slurp:
+        src: "/tmp/molecule-iptables-snap-{{ item }}.v4"
+      register: _snap_raws
+      loop:
+        - string
+        - empty-string
+        - empty-list
+        - list
+
+    - name: Decode snapshots into a dict
+      ansible.builtin.set_fact:
+        _snapshots: >-
+          {{ dict(
+              _snap_raws.results
+              | map(attribute='item')
+              | zip(
+                  _snap_raws.results
+                  | map(attribute='content')
+                  | map('b64decode')
+                )
+            ) }}
+
+    # Only Stage 4 snapshots v6 — the shape stages already prove the
+    # template loop logic and rendering for v6 mirrors v4. Stage 4 is
+    # the final apply and the one verify probes live, so we lock down
+    # that its v6 file gets the same per-interface DROP + ACCEPT rules.
+    - name: Read rendered v6 ruleset snapshot (list-form / final state)
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-snap-list.v6
+      register: _snap_v6_raw
+
+    - name: Decode v6 snapshot
+      ansible.builtin.set_fact:
+        _snapshot_v6: "{{ _snap_v6_raw.content | b64decode }}"
+
+    # -- Stage 1: string form (single explicit interface) --------------------
+
+    - name: Assert string form rendered rules for ext0 only on INPUT chain
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+              in _snapshots['string']"
+          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['string']
+        fail_msg: |
+          string-form snapshot did not match expectations.
+          Snapshot:
+          {{ _snapshots['string'] }}
+
+    - name: Assert string form rendered allowed-port rule on ext0
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['string']"
+
+    # -- Stage 2: empty string -> fallback to default interface --------------
+
+    - name: Assert empty-string form fell back to host's default iface
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
+              in _snapshots['empty-string']"
+          - ('-A INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-string']
+          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-string']
+        fail_msg: |
+          empty-string snapshot did not fall back to default interface
+          ({{ _default_iface }}). Snapshot:
+          {{ _snapshots['empty-string'] }}
+
+    # -- Stage 3: empty list -> fallback to default interface ----------------
+
+    - name: Assert empty-list form fell back to host's default iface
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
+              in _snapshots['empty-list']"
+          - ('-A INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-list']
+          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-list']
+        fail_msg: |
+          empty-list snapshot did not fall back to default interface
+          ({{ _default_iface }}). Snapshot:
+          {{ _snapshots['empty-list'] }}
+
+    # -- Stage 4: list of two interfaces + feature coverage (final state) ---
+
+    - name: Assert list form rendered rules for both ext0 and ext1
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+              in _snapshots['list']"
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
+              in _snapshots['list']"
+          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['list']"
+          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_b
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['list']"
+
+    # iptables_ports[].src_v4: per-interface ACCEPT scoped to a source
+    # subnet. Verify rendering on both interfaces.
+    - name: Assert src_v4-restricted port rendered on both interfaces
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_src_restricted_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['list']"
+          - "'-A INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_b
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_src_restricted_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['list']"
+
+    # iptables_ext_inf_masquerade: POSTROUTING -o <inf> -j MASQUERADE on
+    # every external interface. Lives in the nat table.
+    - name: Assert MASQUERADE rule rendered on both ext interfaces
+      ansible.builtin.assert:
+        that:
+          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE'
+              in _snapshots['list']"
+          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_b ~ ' -j MASQUERADE'
+              in _snapshots['list']"
+
+    # iptables_forwarded_ports DNAT mode renders three rules: PREROUTING
+    # DNAT, FORWARD allow for the rewritten dst, and POSTROUTING MASQ for
+    # the dst. Verify all three so a future template change can't silently
+    # drop one and still pass.
+    - name: Assert DNAT entry rendered (PREROUTING + FORWARD + POSTROUTING)
+      ansible.builtin.assert:
+        that:
+          - "'-A PREROUTING -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_dnat_external_port
+              ~ ' -j DNAT --to-destination ' ~ molecule_iptables_peer_ip_b
+              ~ ':' ~ molecule_iptables_allowed_port
+              in _snapshots['list']"
+          - "'-A FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i '
+              ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport '
+              ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshots['list']"
+          - "'-A POSTROUTING -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -p tcp -m tcp --dport '
+              ~ molecule_iptables_allowed_port ~ ' -j MASQUERADE'
+              in _snapshots['list']"
+
+    # iptables_external_ping_enable: rate-limited ICMP allow on each
+    # external interface, plus a catch-all DROP for the rest.
+    - name: Assert ICMP allow rules rendered on both ext interfaces
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p icmp --icmp-type echo-request'
+              in _snapshots['list']"
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -p icmp --icmp-type echo-request'
+              in _snapshots['list']"
+
+    # -- Normalization filter sanity check (mirrors role's vars/main.yml) ---
+    # Re-run the exact normalization expression from vars/main.yml against
+    # all four input shapes to keep verify aware of the contract even when
+    # the role's snapshots already cover it indirectly.
+
+    - name: Normalize input shapes the same way the role does
+      ansible.builtin.set_fact:
+        _norm_results: >-
+          {{ _norm_results | default({}) | combine({item.label: _normalized}) }}
+      vars:
+        _normalized: >-
+          {%- set _inf = item.value -%}
+          {%- if _inf is string -%}
+            {%- if _inf -%}{{ [_inf] }}{%- else -%}{{ [_default_iface] }}{%- endif -%}
+          {%- elif _inf -%}
+            {{ _inf | list }}
+          {%- else -%}
+            {{ [_default_iface] }}
+          {%- endif -%}
+      loop:
+        - { label: string, value: "ext0" }
+        - { label: empty_string, value: "" }
+        - { label: empty_list, value: [] }
+        - { label: list, value: ["ext0", "ext1"] }
+
+    - name: Assert normalization produces the expected lists
+      ansible.builtin.assert:
+        that:
+          - _norm_results.string == ["ext0"]
+          - _norm_results.empty_string == [_default_iface]
+          - _norm_results.empty_list == [_default_iface]
+          - _norm_results.list == ["ext0", "ext1"]
+        fail_msg: "normalization mismatch: {{ _norm_results }}"
+
+    # -- Real firewall traffic test ------------------------------------------
+    # The final converge stage loaded rules for [ext0, ext1] with a single
+    # allowed TCP port. Drive traffic from each peer netns to the host-side
+    # veth IP and assert the firewall accepts the allowed port and drops
+    # the blocked port — proving the rules are not just rendered, but
+    # actually filter traffic on both interfaces.
+
+    # Launch listeners with async/poll=0 — fire-and-forget on the target
+    # without a shell/nohup dance. The container is destroyed at the end
+    # of the scenario, which cleans up the processes; no kill step needed.
+    #
+    # No native module exists to spin up an ad-hoc TCP listener for
+    # firewall probing — `ansible.builtin.systemd` would manage a unit
+    # but creating a transient systemd unit for `nc` is heavier than the
+    # one-line `command`. `changed_when: false` because this is a probe
+    # fixture, not a desired-state assertion.
+    - name: Start nc listener on allowed port (async)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Start nc listener on blocked port (async)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_blocked_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for allowed-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_allowed_port }}"
+        timeout: 10
+
+    - name: Wait for blocked-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_blocked_port }}"
+        timeout: 10
+
+    # `nc -z -w 3` does a connect-only probe (no payload). Return code
+    # is 0 on connect (rule ACCEPT), non-zero on timeout (rule DROP).
+    #
+    # Module-coverage gap: `ansible.builtin.wait_for` could replace `nc`
+    # for the host netns, but it has no knob to enter a network
+    # namespace and no "must NOT connect" mode — `state: stopped` waits
+    # for a port-state transition, not a connectivity snapshot. So the
+    # probes stay as `command` with `nsenter`. `changed_when: false`
+    # because they only observe state.
+    - name: Probe allowed port through extns_a -> ext0 (must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_allowed_port }}
+      register: _probe_a_allowed
+      changed_when: false
+      failed_when: _probe_a_allowed.rc != 0
+
+    - name: Probe blocked port through extns_a -> ext0 (must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_blocked_port }}
+      register: _probe_a_blocked
+      changed_when: false
+      failed_when: _probe_a_blocked.rc == 0
+
+    - name: Probe allowed port through extns_b -> ext1 (must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_allowed_port }}
+      register: _probe_b_allowed
+      changed_when: false
+      failed_when: _probe_b_allowed.rc != 0
+
+    - name: Probe blocked port through extns_b -> ext1 (must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_blocked_port }}
+      register: _probe_b_blocked
+      changed_when: false
+      failed_when: _probe_b_blocked.rc == 0
+
+    # -- IPv6 render assertion (final state) ---------------------------------
+    # Lightweight: rules.v6 should still emit per-interface DROP + the
+    # universally-allowed TCP port for both interfaces. Real IPv6 traffic
+    # testing would need v6 addresses on the veth pairs and v6 forwarding
+    # config — out of scope for this scenario.
+
+    - name: Assert v6 ruleset rendered for both ext0 and ext1
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+              in _snapshot_v6"
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
+              in _snapshot_v6"
+          - "'-A INPUT -s ::/0 -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshot_v6"
+          - "'-A INPUT -s ::/0 -i ' ~ molecule_iptables_inf_b
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _snapshot_v6"
+
+    # -- iptables_ipv4_forward_enable: sysctl actually applied --------------
+
+    - name: Read net.ipv4.ip_forward sysctl
+      ansible.builtin.slurp:
+        src: /proc/sys/net/ipv4/ip_forward
+      register: _ip_forward_raw
+
+    - name: Assert iptables_ipv4_forward_enable propagated to kernel
+      ansible.builtin.assert:
+        that:
+          - (_ip_forward_raw.content | b64decode).strip() == '1'
+        fail_msg: |
+          net.ipv4.ip_forward is not 1 — iptables_ipv4_forward_enable did
+          not reach the kernel. Current value:
+          '{{ (_ip_forward_raw.content | b64decode).strip() }}'
+
+    # -- iptables_ports[].src_v4: per-source ACCEPT, live test --------------
+    # The src_restricted_port has an ACCEPT rule scoped to extns_a's subnet
+    # on BOTH interfaces. The general DROP catches everything else. From
+    # extns_a (src in 192.0.2.0/24) the rule matches via ext0 → ACCEPT.
+    # From extns_b (src 198.51.100.2 — NOT in 192.0.2.0/24) the ext1 copy
+    # of the rule does not match → traffic hits the final DROP.
+
+    - name: Start nc listener on src_v4-restricted port (async, host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_src_restricted_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for src_v4-restricted port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_src_restricted_port }}"
+        timeout: 10
+
+    - name: Probe src_v4-restricted port from extns_a (in subnet → must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_src_restricted_port }}
+      register: _probe_src_allowed
+      changed_when: false
+      failed_when: _probe_src_allowed.rc != 0
+
+    - name: Probe src_v4-restricted port from extns_b (out of subnet → must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_src_restricted_port }}
+      register: _probe_src_blocked
+      changed_when: false
+      failed_when: _probe_src_blocked.rc == 0
+
+    # -- iptables_forwarded_ports DNAT: end-to-end traffic test -------------
+    # PREROUTING rewrites ext0:<dnat_external_port> to <peer_ip_b>:
+    # <allowed_port>, FORWARD allows the rewritten dst on ext0, and either
+    # the DNAT-target MASQUERADE or the general ext_inf MASQUERADE rewrites
+    # src so the reply can come back. Probe from extns_a must reach a
+    # listener we start inside extns_b.
+
+    - name: Start nc listener inside extns_b for DNAT target (async)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}
+      async: 300
+      poll: 0
+      changed_when: false
+
+    # `wait_for` can't enter a netns, so use `ss` inside extns_b to confirm
+    # the listener is bound. Retry until LISTEN is reported.
+    - name: Wait for extns_b listener to bind
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          ss -ltn sport = :{{ molecule_iptables_allowed_port }}
+      register: _extns_b_listener_check
+      changed_when: false
+      until: "'LISTEN' in _extns_b_listener_check.stdout"
+      retries: 10
+      delay: 1
+
+    - name: Probe DNAT external port from extns_a (must reach extns_b listener)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_dnat_external_port }}
+      register: _probe_dnat
+      changed_when: false
+      failed_when: _probe_dnat.rc != 0
+
+    # -- iptables_external_ping_enable: ICMP echo must be allowed ----------
+    # `ping` uses raw ICMP sockets, which need CAP_NET_RAW in the
+    # container (added in molecule.yml only because this probe needs it).
+
+    - name: Ping container from extns_a (echo-request must be ACCEPTed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          ping -c 1 -W 3 {{ molecule_iptables_host_ip_a }}
+      register: _ping
+      changed_when: false
+      failed_when: _ping.rc != 0

@@ -1,0 +1,34 @@
+---
+# Molecule scenario defaults shared by every scenario play. Defined once
+# here so converge / verify / prepare read the same source of truth.
+
+# Two veth pairs simulate "external" interfaces inside the molecule
+# container. Each peer end lives in its own network namespace so traffic
+# entering the main netns through `extN` actually traverses the INPUT
+# chain on `-i extN` — without this, locally-originated traffic to a
+# dummy interface's IP is delivered via `lo` and the firewall is
+# never exercised.
+molecule_iptables_inf_a: "ext0"
+molecule_iptables_inf_b: "ext1"
+
+molecule_iptables_netns_a: "ipt_extns_a"
+molecule_iptables_netns_b: "ipt_extns_b"
+
+# TEST-NET-1 (RFC 5737) and TEST-NET-2 — never appear on real networks.
+molecule_iptables_subnet_a: "192.0.2.0/24"
+molecule_iptables_host_ip_a: "192.0.2.1"
+molecule_iptables_peer_ip_a: "192.0.2.2"
+
+molecule_iptables_subnet_b: "198.51.100.0/24"
+molecule_iptables_host_ip_b: "198.51.100.1"
+molecule_iptables_peer_ip_b: "198.51.100.2"
+
+molecule_iptables_allowed_port: 12345
+molecule_iptables_blocked_port: 23456
+# Source-restricted port: only molecule_iptables_subnet_a (extns_a) is
+# allowed by `iptables_ports[].src_v4`. Probes from extns_b time out.
+molecule_iptables_src_restricted_port: 12346
+# External-facing DNAT port: PREROUTING rewrites <host_ip_a>:<this> to
+# <peer_ip_b>:<allowed_port>, end-to-end exercising iptables_forwarded_ports
+# (DNAT + FORWARD), ip_forward, and the DNAT-target MASQUERADE rule.
+molecule_iptables_dnat_external_port: 12347

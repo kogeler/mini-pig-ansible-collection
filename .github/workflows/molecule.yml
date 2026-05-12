@@ -31,19 +31,41 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
-          # Find changed roles that have molecule tests
-          CHANGED_ROLES=$(echo "$CHANGED_FILES" | grep '^roles/' | cut -d'/' -f2 | sort -u | while read -r role; do
-            if [ -d "roles/${role}/molecule" ]; then
-              echo "$role"
-            fi
-          done)
+          # Collection-wide changes that can affect every role's test outcome
+          # (dependency resolution, CI workflow itself, lint config, shared
+          # plugins / runtime redirects). When any of these change we run
+          # every ENABLE_CI scenario across all roles, not just the ones
+          # whose role files changed.
+          GLOBAL_PATTERN='^(galaxy\.yml|\.github/workflows/molecule\.yml|\.ansible-lint|plugins/|meta/runtime\.yml|requirements\.yml)'
+          if echo "$CHANGED_FILES" | grep -qE "$GLOBAL_PATTERN"; then
+            GLOBAL_CHANGE="true"
+            echo "Global change detected — will run every ENABLE_CI scenario:"
+            echo "$CHANGED_FILES" | grep -E "$GLOBAL_PATTERN" | sed 's/^/  /'
+          else
+            GLOBAL_CHANGE="false"
+          fi
 
-          echo "Roles with molecule tests:"
-          echo "$CHANGED_ROLES"
+          # Pick candidate roles depending on the change scope above.
+          if [ "$GLOBAL_CHANGE" = "true" ]; then
+            CANDIDATE_ROLES=$(ls -d roles/*/ 2>/dev/null | cut -d'/' -f2 | sort -u | while read -r role; do
+              if [ -d "roles/${role}/molecule" ]; then
+                echo "$role"
+              fi
+            done)
+            echo "Candidate roles (all roles with molecule/):"
+          else
+            CANDIDATE_ROLES=$(echo "$CHANGED_FILES" | grep '^roles/' | cut -d'/' -f2 | sort -u | while read -r role; do
+              if [ -d "roles/${role}/molecule" ]; then
+                echo "$role"
+              fi
+            done)
+            echo "Candidate roles (changed in PR with molecule/):"
+          fi
+          echo "$CANDIDATE_ROLES" | sed 's/^/  /'
 
-          # Build matrix: for each changed role, find all scenarios with ENABLE_CI
+          # Build matrix: for each candidate role, find all scenarios with ENABLE_CI
           MATRIX="[]"
-          for role in $CHANGED_ROLES; do
+          for role in $CANDIDATE_ROLES; do
             for scenario_dir in roles/${role}/molecule/*/; do
               scenario=$(basename "$scenario_dir")
               if [ -f "${scenario_dir}ENABLE_CI" ]; then
@@ -102,18 +124,12 @@ jobs:
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
         run: ansible-lint
 
-      - name: Molecule converge
+      # Run the scenario through `molecule test`, which executes the
+      # `test_sequence` declared in the scenario's `molecule.yml`. The
+      # workflow stays agnostic about whether a scenario opts in or out of
+      # idempotence / lint / side_effect — that decision belongs to the
+      # scenario itself. `--base-config` silently ignores missing paths,
+      # so this works whether or not the role has a shared base file.
+      - name: Molecule test
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        # `molecule/shared/base.yml` is the role-scoped base config
-        # (deep-merged under each scenario's molecule.yml). molecule's
-        # --base-config silently filters non-existent paths, so this
-        # works for roles that don't have a shared base too.
-        run: molecule -c molecule/shared/base.yml converge -s "${{ matrix.scenario }}"
-
-      - name: Molecule idempotence
-        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: molecule -c molecule/shared/base.yml idempotence -s "${{ matrix.scenario }}"
-
-      - name: Molecule verify
-        working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: molecule -c molecule/shared/base.yml verify -s "${{ matrix.scenario }}"
+        run: molecule -c molecule/shared/base.yml test -s "${{ matrix.scenario }}"

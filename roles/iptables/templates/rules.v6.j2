@@ -10,29 +10,35 @@ SPDX-License-Identifier: Apache-2.0
 -A INPUT -i lo -j ACCEPT
 -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 -A INPUT -m state --state INVALID -j DROP
+{% for inf in _iptables_inf_ext_list %}
 {% for port in iptables_ports %}
 {% if not ((port.skip_v6 | default(false)) | bool)  %}
--A INPUT -s {{ port.src_v6 | default('::/0') }} -i {{ iptables_inf_ext }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
+-A INPUT -s {{ port.src_v6 | default('::/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
 {% endif %}
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
--A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
--A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
--A INPUT -i {{ iptables_inf_ext }} -p ipv6-icmp -j DROP
+-A INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+-A INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+-A INPUT -i {{ inf }} -p ipv6-icmp -j DROP
 {% endif %}
--A INPUT -i {{ iptables_inf_ext }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
--A INPUT -i {{ iptables_inf_ext }} -m state --state NEW -j DROP
+-A INPUT -i {{ inf }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
+-A INPUT -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
 -A OUTPUT -o lo -j ACCEPT
 -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 -A OUTPUT -m state --state INVALID -j DROP
 -A OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
 -A OUTPUT -p udp -m udp --dport 547 -j DROP
 {% if iptables_disable_local_output | bool %}
+{% for inf in _iptables_inf_ext_list %}
 {% for range in iptables_disable_local_excluded_ipv6_ranges %}
--A OUTPUT -o {{ iptables_inf_ext }} -d {{ range }} -m state --state NEW -j ACCEPT
+-A OUTPUT -o {{ inf }} -d {{ range }} -m state --state NEW -j ACCEPT
 {% endfor %}
--A OUTPUT -o {{ iptables_inf_ext }} -d fe80::/10 -m state --state NEW -j REJECT
--A OUTPUT -o {{ iptables_inf_ext }} -d fc00::/7 -m state --state NEW -j REJECT
+-A OUTPUT -o {{ inf }} -d fe80::/10 -m state --state NEW -j REJECT
+-A OUTPUT -o {{ inf }} -d fc00::/7 -m state --state NEW -j REJECT
+{% endfor %}
 {% endif %}
--A FORWARD -i {{ iptables_inf_ext }} -m state --state NEW -j DROP
+{% for inf in _iptables_inf_ext_list %}
+-A FORWARD -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
 COMMIT

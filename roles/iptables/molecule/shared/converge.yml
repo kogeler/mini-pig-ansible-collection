@@ -1,0 +1,115 @@
+---
+# Apply the iptables role four times with different `iptables_inf_ext`
+# shapes, snapshotting the rendered `/etc/iptables/rules.v4` (the role's
+# template output, not `iptables-save`'s canonicalised kernel dump) after
+# each apply. Verify reads those snapshots and asserts the rule set was
+# rendered for the right interfaces in each case (backward-compat +
+# normalization). The final apply uses the list form so verify can also
+# drive real traffic through the veth peer netns against the loaded
+# ruleset.
+- name: Converge
+  hosts: all
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Record host's default IPv4 interface for verify
+      ansible.builtin.copy:
+        content: "{{ ansible_facts['default_ipv4']['interface'] }}\n"
+        dest: /tmp/molecule-iptables-default-iface.txt
+        mode: "0644"
+
+    # -- Stage 1: string form (backward compatibility) ---------------------
+    - name: Apply iptables role — string form (backward-compat)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext: "{{ molecule_iptables_inf_a }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+
+    - name: Snapshot rendered v4 ruleset — string form
+      ansible.builtin.copy:
+        src: /etc/iptables/rules.v4
+        dest: /tmp/molecule-iptables-snap-string.v4
+        remote_src: true
+        mode: "0644"
+
+    # -- Stage 2: empty string (must fall back to default iface) -----------
+    - name: Apply iptables role — empty string (must fall back)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext: ""
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+
+    - name: Snapshot rendered v4 ruleset — empty string
+      ansible.builtin.copy:
+        src: /etc/iptables/rules.v4
+        dest: /tmp/molecule-iptables-snap-empty-string.v4
+        remote_src: true
+        mode: "0644"
+
+    # -- Stage 3: empty list (must fall back to default iface) -------------
+    - name: Apply iptables role — empty list (must fall back)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext: []
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+
+    - name: Snapshot rendered v4 ruleset — empty list
+      ansible.builtin.copy:
+        src: /etc/iptables/rules.v4
+        dest: /tmp/molecule-iptables-snap-empty-list.v4
+        remote_src: true
+        mode: "0644"
+
+    # -- Stage 4: list form + full feature coverage (final live state) ---
+    # One rich apply that exercises every variable verify is able to
+    # probe live: per-port `src_v4` restriction, `iptables_forwarded_ports`
+    # in DNAT mode, `iptables_ipv4_forward_enable` (sysctl),
+    # `iptables_ext_inf_masquerade`, and `iptables_external_ping_enable`.
+    # The DNAT entry rewrites ext0:<dnat_port> → <peer_ip_b>:<allowed_port>
+    # so a probe from extns_a transits through container forwarding to a
+    # listener that verify will start inside extns_b.
+    - name: Apply iptables role — list of two interfaces + features (final state)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+        iptables_external_ping_enable: true
+
+    - name: Snapshot rendered v4 ruleset — list form
+      ansible.builtin.copy:
+        src: /etc/iptables/rules.v4
+        dest: /tmp/molecule-iptables-snap-list.v4
+        remote_src: true
+        mode: "0644"
+
+    - name: Snapshot rendered v6 ruleset — list form
+      ansible.builtin.copy:
+        src: /etc/iptables/rules.v6
+        dest: /tmp/molecule-iptables-snap-list.v6
+        remote_src: true
+        mode: "0644"
