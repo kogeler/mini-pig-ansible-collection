@@ -18,8 +18,28 @@
       - xz-utils
       - procps
       - proxychains4
+      # The molecule trixie base image does not pre-install dbus; it
+      # gets pulled in later as an `apt-get install podman` recommend,
+      # but we need it earlier so the next task can start dbus.socket
+      # before podman touches anything.
+      - dbus
     update_cache: true
     state: present
+
+- name: Ensure dbus.socket is running inside the molecule instance
+  # Podman uses the systemd cgroup driver by default in rootful mode, which
+  # makes crun (the OCI runtime) talk to systemd through D-Bus. On the
+  # docker.io/library/debian:trixie base image the dbus package is
+  # installed but dbus.socket is `static` (no [Install] section), so it
+  # is not auto-started during the container's systemd bring-up the way
+  # it would be on a normal boot — crun then fails with
+  # `cannot open sd-bus: No such file or directory` when the first pod
+  # tries to start. Starting dbus.socket here makes the subsequent pod
+  # creation deterministic across scenarios.
+  ansible.builtin.systemd:
+    name: dbus.socket
+    state: started
+  when: mp_driver == 'podman'
 
 - name: Download naive client
   ansible.builtin.get_url:

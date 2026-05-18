@@ -10,7 +10,7 @@ FROM {{ item.image }}
 # the static binary into the molecule instance image at
 # /usr/local/bin/sing-box.
 ARG SINGBOX_VERSION={{ singbox_build_version }}
-ARG SINGBOX_TAGS={{ singbox_build_tags }}
+ARG SINGBOX_TAGS={{ singbox_build_tags | join(',') }}
 ARG GO_VERSION={{ singbox_build_go_version }}
 ARG CRONET_VERSION={{ singbox_cronet_version }}
 
@@ -35,10 +35,18 @@ RUN set -eux; \
     # downloaded from the cronet-go GitHub release and placed in
     # /usr/local/lib so cronet-go's loader_unix.findLibrary() picks it
     # up automatically.
+    #
+    # `-checklinkname=0` is required because the `badlinkname` build
+    # tag (mirrored from sing-box DEFAULT_BUILD_TAGS) makes sing-box's
+    # internal `common/badtls` package use `go:linkname` to reach
+    # crypto/tls.(*Conn).handlePostHandshakeMessage. Go 1.22+ rejects
+    # those links unless the linker is told to skip the check. SFA's
+    # libbox build sets the same flag in cmd/internal/build_libbox.
     PATH=/usr/local/go/bin:$PATH \
     CGO_ENABLED=0 \
     GOFLAGS=-mod=mod \
-        go install -trimpath -ldflags='-s -w' \
+        go install -trimpath \
+        -ldflags='-s -w -checklinkname=0' \
         -tags="${SINGBOX_TAGS}" \
         "github.com/sagernet/sing-box/cmd/sing-box@${SINGBOX_VERSION}"; \
     install -m 0755 /root/go/bin/sing-box /usr/local/bin/sing-box; \

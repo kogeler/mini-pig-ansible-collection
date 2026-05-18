@@ -1,32 +1,51 @@
 ---
-# Sing-box stress benchmark.
+# Sing-box TUN-mode stress benchmark.
 #
 # Reproduces the H2 protocol failures reported by real sing-box / SFA
-# users. Architecture is intentionally aligned with the official-naive
-# benchmark (tasks/benchmark.yml) — both flow through the same iperf3
-# server inside naive-pod and the same proxychains4 + SOCKS5 client
-# loop. The transport-level pieces are shared:
+# users through the same code path Android sing-box hits: a real `tun`
+# inbound with `auto_route` + `strict_route` + `stack: mixed`. The
+# transport-level pieces below are intentionally aligned with the
+# official-naive benchmark (tasks/benchmark.yml + iperf-server.yml) so
+# throughput numbers stay comparable: same iperf3 image, same iperf3
+# server unit inside naive-pod, same `iperf_parallel` / `iperf_duration`.
 #
-#   tasks/socks-decoy-smoke.yml    SOCKS5 smoke test
-#   tasks/iperf-server.yml         iperf3 server unit inside naive-pod
-#   tasks/iperf-bench.yml          proxychains + iperf3 + CPU + assert
+# Differences from the prod sing-box client config
+# (`templates/singbox-client.json.j2`), all unavoidable in a closed
+# sandbox:
+#   * `dns` block omitted. The prod template relies on
+#     `dns-remote-cloudflare` (DoH detoured through the naive tunnel)
+#     and a `hijack-dns` route rule, both of which need real internet
+#     egress to a public resolver. The molecule sandbox has no internet
+#     and the iperf3 destination is an IP literal (the pod's bridge IP),
+#     so no DNS resolution happens through sing-box at all.
+#   * `tls.certificate_path` added — cronet (the network stack the naive
+#     outbound shells out to) validates against Chromium's hardcoded
+#     root store and ignores the system CA bundle, so the Pebble test
+#     CA is threaded into cronet as `TrustedRootCertificates`. Prod uses
+#     a publicly-trusted chain.
+#   * `log.level=debug` (prod uses `info`) so H2 stream errors surface
+#     in the journal where the failure-marker scan can find them.
 #
-# This file owns only the sing-box-specific bits: binary acquisition,
-# config rendering, client systemd unit, and the journal failure-marker
-# scan that is the actual bug surface. `mixed` inbound is used instead
-# of TUN because iperf3 is already exercised through proxychains4 +
-# SOCKS5; the failure surface is the Naive outbound H2 stream, not
-# Android VpnService / TUN. TCP-only by design.
+# Container layout differences from prod / from the SOCKS5 scenarios:
+#   * The sing-box client container runs in its OWN podman netns (not
+#     `--network=host`) so `--cap-add=NET_ADMIN` plus the `/dev/net/tun`
+#     bind authorise tun device creation only inside that namespace.
+#     The molecule host's netns is untouched.
+#   * The naive outbound's `server` is the default-bridge gateway IP
+#     (overridden in converge / re-discovered here), not 127.0.0.x —
+#     loopback would point at the sing-box container's own loopback.
+#   * The iperf3 client (and a tiny -t 1 -P 1 warm-up probe before it)
+#     runs as a one-shot container with
+#     `--network=container:<singbox>` so it shares the sing-box
+#     container's netns: its traffic enters the tun device first and
+#     reaches the iperf3 server (in the naive-pod netns) only through
+#     the naive proxy chain. No proxychains4 in this scenario; the tun
+#     device IS the transport hijack.
 
-# -- Sing-box binary -----------------------------------------------------
+# -- Sing-box binary sanity -----------------------------------------------
 # Pre-built into the molecule instance image by Dockerfile.j2 — see
 # molecule/singbox-stress/Dockerfile.j2 for the SFA-pinned version,
-# Go toolchain, and build tags. `with_naive_outbound` requires CGO
-# (cronet-go bindings), so the binary links glibc dynamically; the
-# client container runs a base image with a matching glibc — see
-# vars/singbox-benchmark.yml `singbox_client_image_tag`. We probe
-# `sing-box version` here so a missing / wrong image fails the test
-# with a clear marker.
+# Go toolchain, and build tags.
 
 - name: Probe sing-box version banner
   ansible.builtin.command:
@@ -39,16 +58,7 @@
   ansible.builtin.debug:
     var: _singbox_version_probe.stdout_lines
 
-# -- Pebble test CA for sing-box --------------------------------------
-# The naive outbound uses cronet, which validates against Chromium's
-# hardcoded root store and ignores the system CA bundle this molecule
-# scenario writes the Pebble CA into. `tls.insecure` is rejected at
-# config-decode time on naive outbound, but sing-box does accept
-# `tls.certificate_path` and threads its contents into cronet as
-# `TrustedRootCertificates` (see protocol/naive/outbound.go in
-# sing-box v1.14.0-alpha.20). We download the Pebble root once and
-# mount it into the client container at a fixed path.
-
+# -- Pebble test CA for sing-box ----------------------------------------
 - name: Download pebble root CA for sing-box client
   ansible.builtin.get_url:
     url: "{{ molecule_naive_proxy_pebble_root_url }}"
@@ -56,31 +66,7 @@
     validate_certs: false
     mode: "0644"
 
-# -- Sing-box client config ---------------------------------------------
-# Shape mirrors templates/singbox-client.json.j2 (the config the role
-# generates for real users) as closely as the test harness allows:
-#   * `tun` inbound replaced with `mixed` — iperf3 already exercises
-#     SOCKS5 via proxychains4, the failure surface is the Naive outbound
-#     H2 stream, not Android VpnService / TUN.
-#   * `dns` block dropped — the prod template has only one DNS server
-#     (`dns-remote-cloudflare` DoH detoured through naive) and the
-#     molecule sandbox has no internet to reach Cloudflare. The
-#     `hijack-dns` route rule is dropped with it (it depends on a `dns`
-#     block). Mixed inbound is TCP-only so no DNS queries flow through
-#     the proxy anyway.
-#   * `auto_detect_interface` dropped — only meaningful for tun/auto_route.
-#   * `tls.certificate_path` added — cronet otherwise rejects the Pebble
-#     test CA. Real prod uses a public CA chain that cronet trusts.
-#   * `log.level=debug` (prod uses `info`) so H2 stream errors surface.
-
-# Build one naive outbound per entry in `molecule_naive_proxy_external_ip_map`,
-# then wire a `urltest` selector tagged `naive-test` on top. This mirrors
-# the role's prod template shape (one `naive-<user>-<suffix>` outbound
-# per IP + a `urltest` tag the rest of the config references), so the
-# singbox-stress reproducer exercises the same code path real users hit
-# when the role generates a multi-IP config. The 30 s urltest interval
-# ensures at least one probe fires during the verify cycle.
-
+# -- Sing-box client config (TUN, prod-shaped) --------------------------
 - name: Build per-IP sing-box naive outbounds for urltest selector
   ansible.builtin.set_fact:
     _singbox_naive_outbounds: >-
@@ -101,38 +87,42 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Render sing-box client config
+- name: Render sing-box client config (TUN mode)
   ansible.builtin.copy:
     dest: "{{ singbox_client_config_path }}"
     mode: "0644"
     content: "{{ _singbox_client_config | to_nice_json }}"
   vars:
-    # Per-IP naive outbound tags collected from the IP map.
     _singbox_per_ip_tags: >-
       {{ molecule_naive_proxy_external_ip_map | dict2items
          | map(attribute='key')
          | map('regex_replace', '^', 'naive-test-')
          | list }}
-    # urltest selector tagged `naive-test` listing every per-IP child.
     _singbox_urltest_outbound:
       type: urltest
       tag: naive-test
       outbounds: "{{ _singbox_per_ip_tags }}"
-      url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+      # Probe URL points at the molecule decoy via the pod IP: traffic
+      # from sing-box's urltest goes out the child naive outbound,
+      # the proxy CONNECTs to pod_ip:8081, backend reaches decoy in the
+      # same pod netns. Mirrors prod where the probe URL also goes
+      # through the naive outbound.
+      url: "http://{{ _singbox_stress_pod_ip }}:{{ _naive_proxy_decoy_port | default(8081) }}/"
       interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
     _singbox_client_config:
       log:
         level: debug
       inbounds:
-        - type: mixed
-          tag: mixed-in
-          listen: 127.0.0.1
-          listen_port: "{{ singbox_client_mixed_port | int }}"
-      # Per-IP naive outbounds + urltest selector + direct fallback.
-      # iperf3 traffic flows through the `naive-test` urltest tag, so
-      # selection between the two naive children is actively exercised.
+        - type: tun
+          tag: tun-in
+          interface_name: "{{ singbox_client_tun_interface }}"
+          address: ["172.19.0.1/30"]
+          auto_route: true
+          strict_route: true
+          stack: mixed
       outbounds: "{{ _singbox_naive_outbounds + [_singbox_urltest_outbound, {'type': 'direct', 'tag': 'direct'}] }}"
       route:
+        auto_detect_interface: true
         rules:
           - action: sniff
           - action: reject
@@ -142,9 +132,7 @@
           # Reject QUIC / HTTP-3 (UDP/443) so apps fall back to HTTP/2
           # over TCP through naive. Mirrors the prod template — without
           # it the next rule (route udp → direct) would bypass naive
-          # entirely for QUIC. In this molecule scenario `mixed` inbound
-          # is TCP-only so no real UDP/443 traffic flows, but we keep
-          # the rule for parity with the prod config shape.
+          # entirely for QUIC.
           - action: reject
             network: ["udp"]
             port: [443]
@@ -153,15 +141,14 @@
             network: ["udp"]
         final: naive-test
 
-# -- Sing-box client systemd unit ---------------------------------------
-
+# -- Sing-box client systemd unit (own netns, /dev/net/tun) -------------
 - name: Install sing-box client systemd unit
   ansible.builtin.copy:
     dest: "/etc/systemd/system/{{ singbox_client_unit }}"
     mode: "0644"
     content: |
       [Unit]
-      Description=NaiveProxy molecule sing-box stress client (containerised)
+      Description=NaiveProxy molecule sing-box TUN stress client
       RequiresMountsFor=%t/containers
 
       [Service]
@@ -183,12 +170,13 @@
               --sdnotify=conmon \
               --replace \
               --name {{ singbox_client_container_name }} \
-              --network host \
               --pull=missing \
               --read-only=false \
               --security-opt=no-new-privileges \
               --security-opt=apparmor=unconfined \
               --cap-drop=ALL \
+              --cap-add=NET_ADMIN \
+              --device=/dev/net/tun \
               --volume {{ singbox_host_binary_path }}:/usr/local/bin/sing-box:ro \
               --volume /usr/local/lib/libcronet.so:/usr/local/lib/libcronet.so:ro \
               --volume {{ singbox_client_config_path }}:/etc/sing-box/config.json:ro \
@@ -209,36 +197,194 @@
     state: restarted
     daemon_reload: true
 
-- name: Wait for sing-box mixed inbound to start listening
-  ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: "{{ singbox_client_mixed_port }}"
-    timeout: 30
+- name: Wait for sing-box client container to report active
+  ansible.builtin.systemd:
+    name: "{{ singbox_client_unit }}"
+  register: _singbox_client_state
+  retries: 20
+  delay: 2
+  until: _singbox_client_state.status.ActiveState == 'active'
 
-# -- SOCKS5 smoke test (shared) -----------------------------------------
+- name: Wait for sing-box to finish initialising its tun inbound
+  # The systemd unit reports active as soon as conmon signals ready
+  # (`--sdnotify=conmon`), which is BEFORE sing-box itself is up — so
+  # the previous task is not a sufficient readiness signal. The
+  # natural signal is sing-box's own log line "inbound/tun[<tag>]:
+  # started at <interface>" emitted right after the tun device + auto
+  # routes are configured. We can't `podman exec` into the container
+  # to query `ip link` directly because the unit uses
+  # `--cgroups=split`, which leaves the sub-cgroup layout in a state
+  # podman+crun choke on for `exec` (`crun: write cgroup.procs: No
+  # such file or directory`). Journal-grep works without entering the
+  # container netns.
+  ansible.builtin.command:
+    cmd: >
+      journalctl -u {{ singbox_client_unit }} --no-pager -n 200
+  register: _singbox_tun_journal
+  retries: 15
+  delay: 2
+  until: ('started at ' ~ singbox_client_tun_interface) in _singbox_tun_journal.stdout
+  changed_when: false
 
-- name: Smoke-test the sing-box mixed inbound
-  ansible.builtin.include_tasks: socks-decoy-smoke.yml
-  vars:
-    _socks_smoke_proxy_host: "127.0.0.1"
-    _socks_smoke_proxy_port: "{{ singbox_client_mixed_port }}"
-    _socks_smoke_label: "sing-box mixed inbound"
-
-# -- iperf3 server + iperf3 client + CPU + assertions (all shared) ------
+# -- iperf3 server + warm-up smoke + iperf3 stress run through TUN ------
+# Replacement for the SOCKS5 scenarios' socks-decoy-smoke: instead of
+# curl-the-decoy through a SOCKS5 inbound, we drive the SAME iperf3
+# image (already pulled by iperf-server.yml below, no extra image) for a
+# tiny -t 1 -P 1 connectivity probe through the tun → naive → backend
+# chain. This serves both purposes the SOCKS smoke did:
+#   1. Wait until sing-box has finished initializing its naive outbound
+#      and cronet bindings — the probe retries until the first run
+#      succeeds, so the actual stress run that follows starts against
+#      a warmed-up tunnel.
+#   2. Trigger sing-box's lazy first-time urltest probe across child
+#      naive outbounds, exercising urltest selection before the burst.
+# We deliberately don't HTTP-smoke the decoy here: bookworm-slim (the
+# sing-box client image) has no curl, and the decoy-content assertion
+# is the role's deployment contract — already covered by shared/verify
+# in the default / debian-bookworm scenarios.
 
 - name: Start iperf3 server inside naive pod
   ansible.builtin.import_tasks: iperf-server.yml
 
-- name: Run iperf3 stress through sing-box mixed inbound
-  ansible.builtin.include_tasks: iperf-bench.yml
+- name: Warm-up iperf3 probe through sing-box TUN
+  # `--cgroups=disabled` is necessary on this nested rootful podman
+  # setup: starting an ad-hoc container outside of systemd's session
+  # tree, crun fails with `creating systemd unit libpod-...scope: got
+  # failed` (or with cgroupfs manager, `cgroup.procs: No such file or
+  # directory`). With cgroups disabled the inner-podman skips the
+  # transient-scope dance and the container shares the calling
+  # process's cgroup, which is enough here because the warm-up and the
+  # iperf3 stress runs do not need cgroup accounting (resource use is
+  # measured on the haproxy / backend / iperf-server systemd slices
+  # via systemd CPU counters instead).
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm
+      --cgroups=disabled
+      --network=container:{{ singbox_client_container_name }}
+      --pull=missing
+      {{ iperf_image }}
+      -c {{ _singbox_stress_pod_ip }} -p {{ iperf_port }}
+      --connect-timeout 5000
+      -t 1 -P 1 -J
+  changed_when: false
+  register: _singbox_tun_warmup
+  retries: 10
+  delay: 3
+  until: _singbox_tun_warmup.rc == 0
+
+- name: Read systemd CPU counters before iperf3 stress run
+  ansible.builtin.systemd:
+    name: "{{ item.unit }}"
+  loop: "{{ iperf_cpu_units }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: _singbox_cpu_before
+
+- name: Record iperf3 stress run start timestamp
+  ansible.builtin.command:
+    cmd: date +%s%N
+  register: _singbox_started_ns
+  changed_when: false
+
+- name: Run iperf3 through sing-box TUN client netns
+  # iperf3 image's entrypoint is `iperf3`; we pass client-mode args
+  # directly. Target is the naive-pod's bridge IP — reachable from this
+  # netns only via the tun route programmed by sing-box's auto_route.
+  # `--cgroups=disabled`: see the warm-up probe above for context.
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm
+      --cgroups=disabled
+      --network=container:{{ singbox_client_container_name }}
+      --pull=missing
+      {{ iperf_image }}
+      -c {{ _singbox_stress_pod_ip }} -p {{ iperf_port }}
+      -t {{ iperf_duration }}
+      -P {{ iperf_parallel }}
+      -J
+  register: _singbox_iperf_raw
+  changed_when: false
+  failed_when: false
+
+- name: Record iperf3 stress run end timestamp
+  ansible.builtin.command:
+    cmd: date +%s%N
+  register: _singbox_finished_ns
+  changed_when: false
+
+- name: Read systemd CPU counters after iperf3 stress run
+  ansible.builtin.systemd:
+    name: "{{ item.unit }}"
+  loop: "{{ iperf_cpu_units }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: _singbox_cpu_after
+
+- name: Reset CPU report list for this iperf3 stress run
+  ansible.builtin.set_fact:
+    _singbox_cpu_avg_report: []
+
+- name: Build average CPU report for iperf3 stress interval
+  ansible.builtin.set_fact:
+    _singbox_cpu_avg_report: "{{ _singbox_cpu_avg_report + [_cpu_line] }}"
   vars:
-    _iperf_bench_socks_host: "127.0.0.1"
-    _iperf_bench_socks_port: "{{ singbox_client_mixed_port }}"
-    _iperf_bench_proxychains_conf: "{{ singbox_client_proxychains_conf }}"
-    _iperf_bench_parallel: "{{ iperf_parallel }}"
-    _iperf_bench_duration: "{{ iperf_duration }}"
-    _iperf_bench_min_bps: "{{ singbox_iperf_min_bps }}"
-    _iperf_bench_label: "sing-box mixed inbound"
+    _cpu_before_ns: "{{ _singbox_cpu_before.results[_cpu_idx].status.CPUUsageNSec | default('0') | int }}"
+    _cpu_after_ns: "{{ item.status.CPUUsageNSec | default('0') | int }}"
+    _cpu_delta_ns: "{{ (_cpu_after_ns | int) - (_cpu_before_ns | int) }}"
+    _cpu_pct: "{{ ((_cpu_delta_ns | float) / ((_singbox_finished_ns.stdout | int) - (_singbox_started_ns.stdout | int)) * 100.0) | round(2) }}"
+    _cpu_line: >-
+      {{ iperf_cpu_units[_cpu_idx].label }} avg_cpu={{ _cpu_pct }}%
+      cpu_time={{ (_cpu_delta_ns / 1000000000.0) | round(3) }}s
+  loop: "{{ _singbox_cpu_after.results }}"
+  loop_control:
+    index_var: _cpu_idx
+  when: ((_singbox_finished_ns.stdout | int) - (_singbox_started_ns.stdout | int)) > 0
+
+- name: Assert iperf3 produced JSON output through TUN
+  ansible.builtin.assert:
+    that:
+      - _singbox_iperf_raw.rc == 0
+      - (_singbox_iperf_raw.stdout | trim) | length > 0
+    fail_msg: >-
+      iperf3 through TUN did not return JSON.
+      rc={{ _singbox_iperf_raw.rc }}
+      stdout={{ _singbox_iperf_raw.stdout | default('') | truncate(400) }}
+      stderr={{ _singbox_iperf_raw.stderr | default('') | truncate(400) }}
+
+- name: Parse iperf3 result
+  ansible.builtin.set_fact:
+    _singbox_iperf_json: "{{ _singbox_iperf_raw.stdout | from_json }}"
+    _singbox_iperf_bps: >-
+      {{ (_singbox_iperf_raw.stdout | from_json).end.sum_received.bits_per_second
+         | default((_singbox_iperf_raw.stdout | from_json).end.sum_sent.bits_per_second, true)
+         | float }}
+
+- name: Assert iperf3 reported no top-level error
+  ansible.builtin.assert:
+    that:
+      - _singbox_iperf_json.error is not defined
+    fail_msg: >-
+      iperf3 reported a top-level error: {{ _singbox_iperf_json.error | default('?') }}
+
+- name: Print iperf3 throughput through sing-box TUN
+  ansible.builtin.debug:
+    msg: >-
+      iperf3 -P {{ iperf_parallel }} through sing-box TUN-mode naive outbound:
+      {{ (_singbox_iperf_bps / 1000000) | round(2) }} Mbps
+
+- name: Print average CPU load over iperf3 stress interval
+  ansible.builtin.debug:
+    var: _singbox_cpu_avg_report
+
+- name: Assert iperf3 met minimum throughput through sing-box TUN
+  ansible.builtin.assert:
+    that:
+      - _singbox_iperf_bps | float > singbox_iperf_min_bps | float
+    fail_msg: >-
+      iperf3 through sing-box TUN throughput too low:
+      {{ (_singbox_iperf_bps / 1000000) | round(2) }} Mbps
+      (floor: {{ (singbox_iperf_min_bps | float / 1000000) | round(2) }} Mbps)
 
 # -- Sing-box-specific journal scan (the actual bug surface) ------------
 
@@ -291,20 +437,20 @@
       for the full context (sing-box, HAProxy, naive backend).
 
 # urltest is exercised end-to-end by the fact that ALL traffic flows
-# through `naive-test` (the urltest tag): the SOCKS5 smoke test
-# (socks-decoy-smoke.yml) triggers sing-box's lazy initial probe of
-# every child outbound on first connection, then iperf3 -P 16 drives
-# 30 s of CONNECT streams through whichever child urltest selected.
-# A successful smoke-test + a clean iperf3 JSON means the urltest
-# wrapper passed both correctness (right child picked) and live load
-# (no disruption when probing). We deliberately do NOT scan the journal
-# for urltest log lines — sing-box's urltest log format is unstable
-# across versions and probe interval is intentionally long enough that
-# only the lazy initial probe fires during the test.
+# through `naive-test` (the urltest tag): the curl smoke test triggers
+# sing-box's lazy initial probe of every child outbound on first
+# connection, then iperf3 -P N drives sustained CONNECT streams through
+# whichever child urltest selected. A successful smoke-test + a clean
+# iperf3 JSON means the urltest wrapper passed both correctness (right
+# child picked) and live load (no disruption when probing). We
+# deliberately do NOT scan the journal for urltest log lines —
+# sing-box's urltest log format is unstable across versions and the
+# probe interval is intentionally long enough that only the lazy
+# initial probe fires during the test.
 
 # -- Cleanup -----------------------------------------------------------
 
-- name: Stop iperf3 benchmark container
+- name: Stop iperf3 benchmark server
   ansible.builtin.systemd:
     name: "{{ iperf_unit }}"
     state: stopped

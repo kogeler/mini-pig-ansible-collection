@@ -48,7 +48,7 @@ naive_proxy_users: {}
 # Official standalone naive binary from klzgrad/naiveproxy releases.
 # Releases: https://github.com/klzgrad/naiveproxy/releases
 
-naive_proxy_naive_version: "v148.0.7778.96-2"
+naive_proxy_naive_version: "v148.0.7778.96-5"
 naive_proxy_padding: true
 # Base image for the naive backend container build.
 naive_proxy_backend_base_image: "docker.io/library/ubuntu"
@@ -56,12 +56,26 @@ naive_proxy_backend_base_image_tag: "22.04"
 
 # -- Images -------------------------------------------------------------------
 
-# Currently pinned to a custom HAProxy image because the latest
-# tagged release on the 3.3 maintenance branch (v3.3.9, tagged
-# 2026-05-06) does NOT yet ship the fix for the H2 PADDED-DATA
-# padding-drain bug we hit in production. The fix was merged to the
-# `haproxy-3.3` branch on 2026-05-07 (one day after v3.3.9 was cut),
-# so it will only appear in v3.3.10 and later.
+# Pinned to the explicit minor `3.3.10-alpine` (NOT the rolling
+# `3.3-alpine`) because `v3.3.10` is the first 3.3.x release that
+# carries the upstream fix for the H2 PADDED-DATA padding-drain bug
+# we hit in production (haproxy#3354). The official Docker Hub
+# library/haproxy image leaves OCI image labels empty
+# (`org.opencontainers.image.version` etc. are not set), so the only
+# way to pin to a known-good build is the explicit minor tag — the
+# image's `HAPROXY_VERSION=3.3.10` ENV and `haproxy -v` banner
+# ("HAProxy version 3.3.10-0a72d7f9f 2026/05/11") confirm the build.
+#
+# DO NOT drop this pin below `3.3.10`. Branches that still carry the
+# bug: 3.3.9 and earlier on the 3.3 line, plus the entire 3.2 / 3.0 /
+# 2.8 maintenance lines (the fix has not been backported there yet).
+# 3.3 also happens to be the first stable branch that ships the
+# `ring` infrastructure the optional diagnostics toggle below uses.
+#
+# Bumping the pin UPWARDS to a newer 3.3.x (3.3.11 once it ships, …)
+# is the expected maintenance path. Before bumping, pull the new
+# tag and verify `haproxy -v` reports a build dated after the
+# `043db34` backport (2026-05-07) — every 3.3.10+ build qualifies.
 #
 #   - issue:        https://github.com/haproxy/haproxy/issues/3354
 #   - upstream fix: https://github.com/haproxy/haproxy/commit/faf3e9ac3a5df7258b0abbc06b0e0378617a18e5
@@ -69,28 +83,8 @@ naive_proxy_backend_base_image_tag: "22.04"
 #   - 3.3 backport: https://git.haproxy.org/?p=haproxy-3.3.git;a=commit;h=043db34df5b08f32055e1ebf1dd568473b268dbe
 #   - 3.3 tags:     https://git.haproxy.org/?p=haproxy-3.3.git;a=tags
 #   - local notes:  temp/haproxy-3354-evidence/AGENT-REPORT-verbosity-complete-rerun.md
-#
-# Once a HAProxy 3.3 minor release containing `043db34` is tagged and
-# the official Docker Hub `library/haproxy:3.3-alpine` image is
-# rebuilt on top of it, revert this back to the upstream image:
-#
-#   naive_proxy_haproxy_image: "docker.io/library/haproxy"
-#   naive_proxy_haproxy_image_tag: "3.3-alpine"
-#
-# Verify the rebuilt official image actually carries the fix before
-# reverting — pull it and look for the `043db34` short hash in
-# `haproxy -vv` output's `Known bugs` / commit list, or grep the
-# bundled `CHANGELOG` for "Properly consume padding for DATA frames".
-#
-# Why 3.3 specifically: that branch carries the `ring` infrastructure
-# used by the optional diagnostics toggle below, and is the first
-# stable maintenance branch to receive the #3354 fix backport. The
-# fix is slated for backport down to 2.8, but until then
-# `3.2-alpine` / older majors still carry the bug.
-# naive_proxy_haproxy_image: "docker.io/library/haproxy"
-# naive_proxy_haproxy_image_tag: "3.3-alpine"
-naive_proxy_haproxy_image: "ghcr.io/kogeler/haproxy"
-naive_proxy_haproxy_image_tag: "latest"
+naive_proxy_haproxy_image: "docker.io/library/haproxy"
+naive_proxy_haproxy_image_tag: "3.3.10-alpine"
 naive_proxy_decoy_image: "docker.io/library/caddy"
 naive_proxy_decoy_image_tag: "latest"
 naive_proxy_acme_image: "docker.io/neilpang/acme.sh"
