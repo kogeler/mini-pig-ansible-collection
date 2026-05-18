@@ -68,7 +68,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 
 | Container | Image | Purpose |
 |---|---|---|
-| `naive-haproxy` | `haproxy:3.2-alpine` | Public TLS endpoint, auth routing, ACME ALPN routing |
+| `naive-haproxy` | `haproxy:3.3.10-alpine` | Public TLS endpoint, auth routing, ACME ALPN routing |
 | `naive-backend` | `localhost/naive-backend:VERSION` | Standalone naive backend built locally by the role |
 | `naive-decoy` | `caddy:latest` | Static decoy site |
 | `naive-acme` | `neilpang/acme.sh:latest` | Oneshot renewal container launched by systemd |
@@ -128,7 +128,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 
 | Variable | Default | Description |
 |---|---|---|
-| `naive_proxy_naive_version` | `"v148.0.7778.96-2"` | Standalone naive release tag |
+| `naive_proxy_naive_version` | `"v148.0.7778.96-5"` | Standalone naive release tag |
 | `naive_proxy_padding` | `true` | Enable `--padding` on the backend |
 | `naive_proxy_backend_base_image` | `"docker.io/library/ubuntu"` | Base image for the backend container build |
 | `naive_proxy_backend_base_image_tag` | `"22.04"` | Base image tag |
@@ -142,7 +142,7 @@ The public client side is HTTP/2 over TLS on HAProxy. The internal HAProxy -> na
 | Variable | Default | Description |
 |---|---|---|
 | `naive_proxy_haproxy_image` | `"docker.io/library/haproxy"` | HAProxy image |
-| `naive_proxy_haproxy_image_tag` | `"3.3-alpine"` | Pinned HAProxy major. Default 3.3 because that branch carries the `ring` infrastructure used by the optional diagnostics toggle, and is the first stable branch to receive the [haproxy/haproxy#3354](https://github.com/haproxy/haproxy/issues/3354) PADDED-DATA fix backport (`043db34`, upstream `faf3e9a`). Override to `"3.2-alpine"` (the previous LTS) for longer-term-supported behaviour, but be aware 3.2 still carries #3354 until the fix is backported there too. |
+| `naive_proxy_haproxy_image_tag` | `"3.3.10-alpine"` | Pinned to the explicit HAProxy minor — `v3.3.10` is the first 3.3.x release shipping the [haproxy/haproxy#3354](https://github.com/haproxy/haproxy/issues/3354) PADDED-DATA fix backport (`043db34`, upstream `faf3e9a`). Do not drop below `3.3.10`: 3.3.9 and earlier 3.3.x, plus the entire 3.2 / 3.0 / 2.8 lines, still carry the bug. Bumping upwards to a newer 3.3.x is the expected maintenance path — verify `haproxy -v` on the new image reports a build dated after 2026-05-07. |
 | `naive_proxy_decoy_image` | `"docker.io/library/caddy"` | Decoy image |
 | `naive_proxy_decoy_image_tag` | `"latest"` | Decoy image tag |
 | `naive_proxy_acme_image` | `"docker.io/neilpang/acme.sh"` | ACME image |

@@ -1,5 +1,5 @@
 ---
-naive_proxy_naive_version: "v148.0.7778.96-2"
+naive_proxy_naive_version: "v148.0.7778.96-5"
 molecule_naive_proxy_domain: "naive.test"
 # IP that naive.test resolves to inside the molecule instance (set via
 # molecule.yml etc_hosts and shared/tasks/prepare.yml lineinfile). The

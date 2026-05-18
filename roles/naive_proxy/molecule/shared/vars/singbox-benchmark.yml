@@ -1,7 +1,8 @@
 ---
-# Sing-box stress benchmark vars.
+# Sing-box TUN-mode stress benchmark vars.
 #
-# Reproduces the failure mode reported by real sing-box / SFA clients:
+# This scenario reproduces the failure mode reported by real sing-box /
+# SFA clients:
 #
 #   outbound/naive: stream failed: http2 protocol error
 #   connection upload closed: http2 protocol error
@@ -9,11 +10,12 @@
 #
 # The official naive client benchmark in tasks/benchmark.yml is the
 # control case. This benchmark exercises the same HAProxy + naive backend
-# stack with a Linux sing-box client using a "naive" outbound. The
-# "mixed" inbound (HTTP/SOCKS) is enough because iperf3 already runs via
-# proxychains4 over SOCKS5; we deliberately avoid TUN and UDP because the
-# observed failure is in Naive outbound HTTP/2 streams, not in
-# Android VpnService / TUN.
+# stack with a Linux sing-box client whose inbound is a real `tun`
+# device — the same code path Android sing-box / SFA users hit. iperf3
+# inside a sidecar container shares the sing-box container's network
+# namespace, so iperf3 traffic to the pod IP enters the tun device,
+# flows through sing-box → naive outbound → ssl-router → HAProxy →
+# backend → iperf3 server.
 
 # ---- sing-box client container -----------------------------------------
 singbox_client_unit: "podman-singbox-naive-molecule-client.service"
@@ -24,9 +26,12 @@ singbox_client_container_name: "singbox-naive-molecule-client"
 # per cronet-go README, so bookworm-slim (glibc 2.36) is enough.
 singbox_client_image: "docker.io/library/debian"
 singbox_client_image_tag: "bookworm-slim"
-singbox_client_mixed_port: 1081
 singbox_client_config_path: "/tmp/sing-box-naive-client.json"
-singbox_client_proxychains_conf: "/tmp/proxychains-singbox-naive.conf"
+# tun device name picked deterministically so `wait_for` on
+# /sys/class/net/<name> inside the molecule instance has a stable
+# target. Sing-box defaults to `tun0` but pinning the name removes
+# uncertainty if multiple tun devices end up coexisting.
+singbox_client_tun_interface: "molecule-tun"
 # Public-facing port the sing-box client targets — `ssl_router_https_port`
 # in molecule/singbox-stress/converge.yml (default 443). ssl-router
 # SNI-routes naive.test traffic to molecule_naive_proxy_listen_port

@@ -29,6 +29,12 @@ platforms:
       naive.test: "127.0.0.1"
     devices:
       - /dev/fuse:/dev/fuse
+      # The sing-box client container (started inside this instance) opens
+      # /dev/net/tun to create its own tun interface — see
+      # `shared/tasks/singbox-benchmark.yml`. Without the device bind,
+      # the inner container has no way to obtain a tun fd even with
+      # NET_ADMIN scoped to its own netns.
+      - /dev/net/tun:/dev/net/tun
     command: ""
     override_command: false
 provisioner:
@@ -36,27 +42,67 @@ provisioner:
     # Build-time pins for Dockerfile.j2. `group_vars.all` is the only
     # scenario-level vars location molecule loads into BOTH the create
     # play (which renders Dockerfile.j2 against `localhost`) and the
-    # converge / verify plays. Pin sing-box version + Go toolchain to
-    # whatever SagerNet/sing-box-for-android currently ships
-    # (version.properties → VERSION_NAME, GO_VERSION). Bumping SFA →
-    # bump these values and run `molecule destroy` + `molecule converge`
-    # to rebuild the molecule instance image.
+    # converge / verify plays. After bumping any of these, run
+    # `molecule destroy` + `molecule converge` to rebuild the image
+    # (also `podman rmi localhost/molecule_local/docker.io/library/debian:trixie`
+    # if the cache hides the rebuild).
+    #
+    # Where to look next time the pins go stale (DO NOT remove these URLs):
+    #   * SFA dev `version.properties` (sing-box VERSION_NAME + GO_VERSION):
+    #     https://github.com/SagerNet/sing-box-for-android/blob/dev/version.properties
+    #   * sing-box `release/DEFAULT_BUILD_TAGS` for the pinned tag
+    #     (the libbox.aar SFA ships is built from these; mirror them
+    #     for code-path parity on the H2 stream the bug lives in):
+    #     https://github.com/SagerNet/sing-box/blob/v1.14.0-alpha.24/release/DEFAULT_BUILD_TAGS
+    #   * sing-box `go.mod` cronet pin
+    #     (`github.com/sagernet/cronet-go v0.0.0-<DATE>-<SHORTSHA>`):
+    #     https://github.com/SagerNet/sing-box/blob/v1.14.0-alpha.24/go.mod
+    #   * cronet-go releases (find the tag whose published date matches
+    #     the go.mod commit date; ABI must match the bindings sing-box
+    #     compiled against, otherwise libcronet.so calls segfault):
+    #     https://github.com/sagernet/cronet-go/releases
     group_vars:
       all:
-        singbox_build_version: "v1.14.0-alpha.20"
-        singbox_build_tags: "with_clash_api,with_quic,with_utls,with_naive_outbound,with_purego"
+        # SFA dev/version.properties → VERSION_NAME.
+        singbox_build_version: "v1.14.0-alpha.24"
+        # Mirrors sing-box release/DEFAULT_BUILD_TAGS at the pinned tag
+        # (SFA's libbox.aar is built with the same set, so the H2 stream
+        # code paths match the reproducer target). Our addition is
+        # `with_purego`: makes cronet-go dlopen libcronet.so at runtime
+        # via purego so the Go binary builds CGO_ENABLED=0 (static). SFA
+        # links cronet via gomobile/cgo instead, which only matters at
+        # binary-packaging time — both end up calling the same libcronet.so
+        # at runtime. `badlinkname`/`tfogo_checklinkname0` are upstream
+        # workarounds for Go 1.24+ linker name-mangling changes.
+        singbox_build_tags:
+          - with_gvisor
+          - with_quic
+          - with_dhcp
+          - with_wireguard
+          - with_utls
+          - with_acme
+          - with_clash_api
+          - with_tailscale
+          - with_ccm
+          - with_ocm
+          - with_cloudflared
+          - with_naive_outbound
+          - badlinkname
+          - tfogo_checklinkname0
+          - with_purego
+        # SFA dev/version.properties → GO_VERSION (strip the `go` prefix).
         singbox_build_go_version: "1.25.9"
         # cronet-go GitHub release that ships the matching libcronet.so.
         # MUST be the same chromium revision as the cronet-go commit
         # sing-box pulls in via go.mod, otherwise the C ABI between the
         # sing-box-bundled cronet-go bindings and libcronet.so can drift.
-        # For sing-box v1.14.0-alpha.20: go.mod pins
-        # github.com/sagernet/cronet-go @ commit cd09eb3e271b
-        # (2026-04-13 09:29 UTC, chromium 147.0.7727.49); cronet-go release
-        # v147.0.7727.49-1 (2026-04-13 12:07 UTC) is built from the same
+        # For sing-box v1.14.0-alpha.24: go.mod pins
+        # github.com/sagernet/cronet-go @ commit 2faf34666c2c
+        # (2026-05-13 07:19 UTC, chromium 148.0.7778.96); cronet-go release
+        # v148.0.7778.96-1 (2026-05-13 07:45 UTC) is built from the same
         # chromium revision and so its libcronet.so matches the bindings
         # SFA ships in libbox.aar. Bump together with `singbox_build_version`.
-        singbox_cronet_version: "v147.0.7727.49-1"
+        singbox_cronet_version: "v148.0.7778.96-1"
 ansible:
   playbooks:
     # Override base config defaults:
