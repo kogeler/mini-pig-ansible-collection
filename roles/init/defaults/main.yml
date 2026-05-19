@@ -14,20 +14,9 @@ init_flow_control_mount: true
 init_flow_control_s3: true
 init_flow_control_logs: true
 
-init_packages:
-  - "htop"
-  - "iotop"
-  - "net-tools"
-  - "nano"
-  - "tmux"
-  - "mosh"
-  - "rsync"
-  - "curl"
-  - "btrfs-compsize"
-  - "wget"
-  - "netcat-openbsd"
-
 init_packages_extra: []
+
+init_packages_remove_extra: []
 
 # to create password hash
 # apt install whois

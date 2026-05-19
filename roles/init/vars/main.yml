@@ -14,7 +14,23 @@ _init_packages:
   - "btrfs-progs"
   - "sysfsutils"
   - "systemd-timesyncd"
-  
+  - "htop"
+  - "iotop"
+  - "net-tools"
+  - "nano"
+  - "tmux"
+  - "mosh"
+  - "rsync"
+  - "curl"
+  - "btrfs-compsize"
+  - "wget"
+  - "netcat-openbsd"
+
+_init_packages_remove:
+  - "linux-xanmod"
+  - "linux-xanmod-x64v1"
+  - "chrony"
+
 _init_timesyncd_conf_path: "/etc/systemd/timesyncd.conf"
 _init_timesyncd_unit_path: "/lib/systemd/system/systemd-timesyncd.service"
 
