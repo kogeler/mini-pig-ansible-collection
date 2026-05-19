@@ -8,15 +8,15 @@
 #   * a string  -> wrapped into a one-element list
 #   * a list    -> used as-is
 #   * empty / unset (empty string, empty list, undefined)
-#                -> falls back to `[ansible_default_ipv4.interface]`
+#                -> falls back to `[ansible_facts['default_ipv4']['interface']]`
 # Evaluated lazily, so include_role overrides of `iptables_inf_ext`
 # (including the empty fall-back shapes) take effect for every render.
 _iptables_inf_ext_list: >-
   {%- set _inf = iptables_inf_ext | default('') -%}
   {%- if _inf is string -%}
-    {%- if _inf -%}{{ [_inf] }}{%- else -%}{{ [ansible_default_ipv4.interface] }}{%- endif -%}
+    {%- if _inf -%}{{ [_inf] }}{%- else -%}{{ [ansible_facts['default_ipv4']['interface']] }}{%- endif -%}
   {%- elif _inf -%}
     {{ _inf | list }}
   {%- else -%}
-    {{ [ansible_default_ipv4.interface] }}
+    {{ [ansible_facts['default_ipv4']['interface']] }}
   {%- endif -%}

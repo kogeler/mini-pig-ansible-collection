@@ -28,7 +28,7 @@
     opts: "{{ volume_opts }}"
     state: "mounted"
   vars:
-    volume_uuid: "{{ ansible_device_links.uuids[init_block_dev][0] }}"
+    volume_uuid: "{{ ansible_facts['device_links']['uuids'][init_block_dev][0] }}"
     volume_opts: "defaults{% if init_block_dev_ssd | bool %},ssd{% endif %},relatime,nodiratime,compress-force=zstd"
 
 - name: init | mount | resize FS

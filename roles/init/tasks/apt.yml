@@ -67,7 +67,7 @@
     owner: root
     group: root
     mode: 0644
-  when: ansible_distribution == 'Debian'
+  when: ansible_facts['distribution'] == 'Debian'
 
 - name: init | apt | remove old google-cloud-sdk repository
   ansible.builtin.file:
@@ -77,7 +77,7 @@
 
 - name: init | apt | add google-cloud-sdk repository
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/trusted.gpg.d/google-cloud-sdk.gpg] http://packages.cloud.google.com/apt cloud-sdk-{{ ansible_distribution_release }} main"
+    repo: "deb [signed-by=/etc/apt/trusted.gpg.d/google-cloud-sdk.gpg] http://packages.cloud.google.com/apt cloud-sdk-{{ ansible_facts['distribution_release'] }} main"
     filename: "google-cloud-sdk"
   when: init_apt_google_cloud_sdk_enable | bool
 
@@ -144,7 +144,7 @@
       {{
         (
           _init_apt_reboot_required_file_register.stat.exists or
-          (ansible_kernel != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
+          (ansible_facts['kernel'] != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
         ) and (
           (_init_apt_upgrade_register.changed | default(false)) or
           (_init_apt_install_packages_register.changed | default(false))
@@ -156,7 +156,7 @@
   ansible.builtin.debug:
     msg:
       - "reboot-required file exists: {{ _init_apt_reboot_required_file_register.stat.exists }}"
-      - "running kernel: {{ ansible_kernel }}"
+      - "running kernel: {{ ansible_facts['kernel'] }}"
       - "latest installed kernel: {{ _init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last }}"
       - "packages upgraded: {{ _init_apt_upgrade_register.changed | default(false) }}"
       - "packages installed: {{ _init_apt_install_packages_register.changed | default(false) }}"

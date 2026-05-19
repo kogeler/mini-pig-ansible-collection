@@ -5,7 +5,7 @@
 
 # May be a single interface name (string) or a list of interface names.
 # When unset, an empty string or an empty list, the default IPv4 interface is used.
-iptables_inf_ext: "{{ ansible_default_ipv4.interface }}"
+iptables_inf_ext: "{{ ansible_facts['default_ipv4']['interface'] }}"
 
 iptables_ports:
   - port: 22
