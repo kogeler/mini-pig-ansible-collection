@@ -2,6 +2,14 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+- name: init | sysctl | remove obsolete role-managed sysctl drop-ins
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/{{ item }}"
+    state: absent
+  loop:
+    - "90-init-role.conf"
+  when: item != init_sysctl_conf_filename
+
 - name: init | sysctl | render persistent sysctl file
   ansible.builtin.template:
     src: sysctl.conf.j2

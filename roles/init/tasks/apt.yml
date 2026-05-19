@@ -142,13 +142,8 @@
   ansible.builtin.set_fact:
     _init_apt_will_reboot: >-
       {{
-        (
-          _init_apt_reboot_required_file_register.stat.exists or
-          (ansible_facts['kernel'] != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
-        ) and (
-          (_init_apt_upgrade_register.changed | default(false)) or
-          (_init_apt_install_packages_register.changed | default(false))
-        )
+        _init_apt_reboot_required_file_register.stat.exists or
+        (ansible_facts['kernel'] != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
       }}
   when: init_apt_reboot_if_required | bool
 

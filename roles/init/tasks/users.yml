@@ -10,7 +10,7 @@
     line: '%sudo    ALL=(ALL)    NOPASSWD:ALL'
     validate: 'visudo -cf %s'
 
-- name: init | users | add {{ item.name }} user
+- name: init | users | add user
   ansible.builtin.user:
     name: "{{ item.name }}"
     shell: "{{ item.shell | default('/bin/bash') }}"
@@ -18,8 +18,10 @@
     append: yes
     password: "{{ item.password}}"
   loop: "{{ init_users + init_users_extra }}"
+  loop_control:
+    label: "{{ item.name }}"
 
-- name: init | users | copy authorization keys for {{ item.name }} user
+- name: init | users | copy authorization keys for user
   ansible.posix.authorized_key:
     user: "{{ item.name }}"
     key: "{{ item.ssh_keys }}"
@@ -27,6 +29,8 @@
   when: item.ssh_keys is defined
   ignore_errors: "{{ ansible_check_mode }}"
   loop: "{{ init_users + init_users_extra }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: init | users | set root password
   ansible.builtin.user:
