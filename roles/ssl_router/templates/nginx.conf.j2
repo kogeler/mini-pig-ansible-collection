@@ -39,7 +39,7 @@ stream {
 
 {% for key, value in ssl_router_upstream_map.items() | sort %}
     upstream {{ key }} {
-        server {{ value.host | default(ansible_default_ipv4.address) }}:{{ value.port }};
+        server {{ value.host | default(ansible_facts['default_ipv4']['address']) }}:{{ value.port }};
     }
 {% endfor %}
 

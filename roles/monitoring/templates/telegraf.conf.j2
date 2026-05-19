@@ -4139,7 +4139,7 @@ SPDX-License-Identifier: Apache-2.0
 #   ## Setting interfaces will tell it to gather these explicit interfaces,
 #   ## regardless of status.
 #   ##
-  interfaces = ["{{ ansible_default_ipv4.interface }}"]
+  interfaces = ["{{ ansible_facts['default_ipv4']['interface'] }}"]
 #   ##
 #   ## On linux systems telegraf also collects protocol stats.
 #   ## Setting ignore_protocol_stats to true will skip reporting of protocol metrics.
