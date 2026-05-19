@@ -9,6 +9,14 @@
   register: _init_user_info
   tags: ['init']
 
+- name: init | grub
+  ansible.builtin.include_tasks:
+    file: grub.yml
+    apply:
+      tags: ['init', 'init-grub', 'init-apt']
+  when: init_flow_control_grub | bool
+  tags: ['init', 'init-grub', 'init-apt']
+
 - name: init | apt
   ansible.builtin.include_tasks:
     file: apt.yml
