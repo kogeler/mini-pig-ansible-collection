@@ -15,12 +15,14 @@
     backup: false
   when: _init_apt_auto_upgrades_conf_register.stat.exists
 
+- name: init | apt | add google-cloud-sdk packages to removal list
+  ansible.builtin.set_fact:
+    _init_packages_remove: "{{ _init_packages_remove + ['google-cloud-sdk', 'google-cloud-cli'] }}"
+  when: not (init_apt_google_cloud_sdk_enable | bool)
+
 - name: init | apt | remove unnecessary packages
   ansible.builtin.apt:
-    name:
-      - "linux-xanmod"
-      - "linux-xanmod-x64v1"
-      - "chrony"
+    name: "{{ _init_packages_remove + init_packages_remove_extra }}"
     update_cache: no
     state: "absent"
     purge: yes
@@ -103,20 +105,9 @@
     _init_packages: "{{ _init_packages + ['google-cloud-sdk'] }}"
   when: init_apt_google_cloud_sdk_enable | bool
 
-- name: init | apt | remove google-cloud-sdk package
-  ansible.builtin.apt:
-    name:
-      - google-cloud-sdk
-      - google-cloud-cli
-    state: absent
-    purge: yes
-    update_cache: no
-    autoremove: yes
-  when: not (init_apt_google_cloud_sdk_enable | bool)
-
 - name: init | apt | install packages
   ansible.builtin.apt:
-    name: "{{ _init_packages + init_packages + init_packages_extra }}"
+    name: "{{ _init_packages + init_packages_extra }}"
     update_cache: true
     install_recommends: false
     force_apt_get: true
