@@ -1,0 +1,190 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    - name: Read legacy iptables-save snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-scoped-migration-pre-iptables-save.txt
+      register: _pre_save_raw
+
+    - name: Read scoped iptables-save snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-scoped-migration-post-iptables-save.txt
+      register: _post_save_raw
+
+    - name: Read post-migration base POSTROUTING dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-scoped-migration-post-POSTROUTING.txt
+      register: _post_chain_raw
+
+    - name: Read post-migration state dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-scoped-migration-state.env
+      register: _state_raw
+
+    - name: Decode snapshots
+      ansible.builtin.set_fact:
+        _pre_save: "{{ _pre_save_raw.content | b64decode }}"
+        _post_save: "{{ _post_save_raw.content | b64decode }}"
+        _post_chain: "{{ _post_chain_raw.content | b64decode }}"
+        _state_env: "{{ _state_raw.content | b64decode }}"
+
+    - name: Assert old persisted rules were really loaded before migration
+      ansible.builtin.assert:
+        that:
+          - "':MPIG-INPUT ' not in _pre_save"
+          - "'-A INPUT -i lo -j ACCEPT' in _pre_save"
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port in _pre_save"
+          - "'-A FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i ' ~ molecule_iptables_inf_a in _pre_save"
+          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE' in _pre_save"
+        fail_msg: |
+          Pre-migration ruleset did not look like the old direct-chain
+          iptables-persistent layout:
+          {{ _pre_save }}
+
+    - name: Assert migration installed scoped runtime rules
+      ansible.builtin.assert:
+        that:
+          - "':MPIG-INPUT ' in _post_save"
+          - "':MPIG-FORWARD ' in _post_save"
+          - "':MPIG-OUTPUT ' in _post_save"
+          - "':MPIG-PREROUTING ' in _post_save"
+          - "':MPIG-POSTROUTING ' in _post_save"
+          - "'-A INPUT -m comment --comment \"mini-pig firewall: INPUT\" -j MPIG-INPUT' in _post_save"
+          - "'-A FORWARD -m comment --comment \"mini-pig firewall: FORWARD\" -j MPIG-FORWARD' in _post_save"
+          - "'-A POSTROUTING -m comment --comment \"mini-pig firewall: POSTROUTING\" -j MPIG-POSTROUTING' in _post_save"
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port in _post_save"
+          - "'-A MPIG-POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE' in _post_save"
+        fail_msg: |
+          Post-migration ruleset did not contain the scoped MPIG layout:
+          {{ _post_save }}
+
+    - name: Assert legacy direct-chain rules were removed
+      ansible.builtin.assert:
+        that:
+          - "'-A INPUT -i lo -j ACCEPT' not in _post_save"
+          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port not in _post_save"
+          - "'-A FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i ' ~ molecule_iptables_inf_a not in _post_save"
+          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE' not in _post_save"
+        fail_msg: |
+          Old direct-chain rules survived next to the new MPIG chains:
+          {{ _post_save }}
+
+    - name: Assert foreign runtime chains survived migration cleanup
+      ansible.builtin.assert:
+        that:
+          - "':KUBE-FORWARD ' in _post_save"
+          - "'-A FORWARD -j KUBE-FORWARD' in _post_save"
+          - "'molecule-foreign-filter' in _post_save"
+          - "':KUBE-POSTROUTING ' in _post_save"
+          - "'-A POSTROUTING -j KUBE-POSTROUTING' in _post_save"
+          - "'molecule-foreign-nat' in _post_save"
+        fail_msg: |
+          Foreign KUBE-like runtime rules were not preserved:
+          {{ _post_save }}
+
+    - name: Assert old files, units, and packages were removed
+      ansible.builtin.assert:
+        that:
+          - "'rules_v4_exists=False' in _state_env"
+          - "'rules_v6_exists=False' in _state_env"
+          - "'legacy_service_exists=False' in _state_env"
+          - "'legacy_timer_exists=False' in _state_env"
+          - "'legacy_script_exists=False' in _state_env"
+          - "'mini_pig_service_exists=True' in _state_env"
+          - "'mini_pig_script_exists=True' in _state_env"
+          - "'mini_pig_firewall_enabled=enabled' in _state_env"
+          - "'netfilter_persistent_enabled=enabled' not in _state_env"
+          - "'legacy_timer_enabled=enabled' not in _state_env"
+          - "'iptables_persistent_status=ii' not in _state_env"
+          - "'netfilter_persistent_status=ii' not in _state_env"
+        fail_msg: |
+          Post-migration file/service/package state is wrong:
+          {{ _state_env }}
+
+    # Legacy cleanup in randomized_snat.yml must have stripped the
+    # `-j SNAT --to-source` lines the converge pre-installed. Empty pool
+    # → no new SNAT in base POSTROUTING either.
+    - name: Assert base nat POSTROUTING has no leftover --to-source lines
+      ansible.builtin.assert:
+        that:
+          - "'--to-source' not in _post_chain"
+        fail_msg: |
+          Base nat POSTROUTING still contains `--to-source` lines after
+          migration — randomized_snat.yml's legacy cleanup missed them.
+          Chain dump:
+          {{ _post_chain }}
+
+    # The new mechanism is NOT installed because the scenario applies the
+    # role with an empty `iptables_randomized_ext_ips` (default).
+    - name: Stat new randomized SNAT service unit (must be absent)
+      ansible.builtin.stat:
+        path: /etc/systemd/system/mpig-randomized-snat.service
+      register: _new_snat_unit_stat
+
+    - name: Stat new randomized SNAT timer unit (must be absent)
+      ansible.builtin.stat:
+        path: /etc/systemd/system/mpig-randomized-snat.timer
+      register: _new_snat_timer_stat
+
+    - name: Stat new randomized SNAT conf (must be absent)
+      ansible.builtin.stat:
+        path: /etc/nftables.d/mpig-randomized-snat.conf
+      register: _new_snat_conf_stat
+
+    - name: Assert new randomized SNAT module is not installed for empty pool
+      ansible.builtin.assert:
+        that:
+          - not _new_snat_unit_stat.stat.exists
+          - not _new_snat_timer_stat.stat.exists
+          - not _new_snat_conf_stat.stat.exists
+        fail_msg: |
+          Empty iptables_randomized_ext_ips should leave the
+          mpig-randomized-snat.* files absent, but they exist on disk.
+
+    - name: Start nc listener on allowed port after migration
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Start nc listener on blocked port after migration
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_blocked_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for allowed-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_allowed_port }}"
+        timeout: 10
+
+    - name: Wait for blocked-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_blocked_port }}"
+        timeout: 10
+
+    - name: Probe allowed port after migration
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_allowed_port }}
+      register: _probe_allowed
+      changed_when: false
+      failed_when: _probe_allowed.rc != 0
+
+    - name: Probe blocked port after migration
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_blocked_port }}
+      register: _probe_blocked
+      changed_when: false
+      failed_when: _probe_blocked.rc == 0

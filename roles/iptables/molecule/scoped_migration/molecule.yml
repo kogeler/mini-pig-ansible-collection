@@ -1,0 +1,37 @@
+---
+# scoped_migration scenario: start from the old iptables-persistent layout
+# (package + /etc/iptables/rules.v4/rules.v6 + legacy custom timer), apply it,
+# then run the current role and assert the scoped MPIG layout survives cleanup.
+# Image: Debian 12 (bookworm) so the lower nft baseline (1.0.6) is also
+# the migration target.
+driver:
+  name: podman
+platforms:
+  - name: molecule-iptables
+    image: "docker.io/library/debian:bookworm"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    security_opts:
+      - "unmask=/proc/*"
+    capabilities:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - NET_RAW
+    command: ""
+    override_command: false
+
+ansible:
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  test_sequence:
+    - dependency
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

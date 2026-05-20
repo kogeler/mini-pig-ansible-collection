@@ -1,0 +1,230 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+#
+# Unified firewall apply. Reads the backend marker and re-applies the
+# matching state idempotently; no-op when state is already correct.
+# Called by mini-pig-firewall.service at apply time, on boot, and on the
+# mini-pig-firewall.timer.
+#
+# Owns only role-scoped state: MPIG-* chains + jump anchors (iptables
+# backend) or `mpig_*` tables (nftables backend). Foreign rules/chains
+# in the same tables are never touched.
+
+set -uo pipefail
+
+marker=$(cat /var/lib/mini-pig-firewall-backend 2>/dev/null || true)
+
+# Randomized SNAT (`mpig_randomized_snat` table) is owned by its own
+# decoupled unit + timer (mpig-randomized-snat.service / .timer) and is
+# never touched from here. See AGENTS.md "SNAT model".
+
+case "$marker" in
+    nftables)
+        # /etc/nftables.conf carries the in-file `add table; delete table;
+        # table {…}` idiom, so a bare `nft -f` is one atomic kernel
+        # transaction — delete-then-create within a single commit. No
+        # shell-level pre-delete needed (and Debian's stock
+        # `ExecReload=/usr/sbin/nft -f /etc/nftables.conf` benefits from
+        # the same atomicity). See AGENTS.md pitfall P4.
+        /usr/sbin/nft -f /etc/nftables.conf
+        exit 0
+        ;;
+    iptables-scoped)
+        # Fall through to the iptables body below.
+        ;;
+    *)
+        # Marker absent or unknown — nothing to re-assert.
+        exit 0
+        ;;
+esac
+
+# -- iptables backend body ---------------------------------------------------
+
+set -e
+
+IPT="/usr/sbin/iptables"
+IP6T="/usr/sbin/ip6tables"
+
+ensure_chain() {
+    local cmd="$1"
+    local table="$2"
+    local chain="$3"
+
+    "$cmd" -w -t "$table" -N "$chain" 2>/dev/null || true
+    "$cmd" -w -t "$table" -F "$chain"
+}
+
+ensure_anchor() {
+    local cmd="$1"
+    local table="$2"
+    local parent="$3"
+    local target="$4"
+    local comment="$5"
+
+    "$cmd" -w -t "$table" -C "$parent" \
+        -m comment --comment "$comment" \
+        -j "$target" 2>/dev/null || \
+    "$cmd" -w -t "$table" -A "$parent" \
+        -m comment --comment "$comment" \
+        -j "$target"
+}
+
+delete_anchor_if_present() {
+    local cmd="$1"
+    local table="$2"
+    local parent="$3"
+    local target="$4"
+    local comment="$5"
+
+    while "$cmd" -w -t "$table" -D "$parent" \
+        -m comment --comment "$comment" \
+        -j "$target" 2>/dev/null; do
+        :
+    done
+}
+
+ensure_chain "$IPT" filter MPIG-INPUT
+ensure_chain "$IPT" filter MPIG-FORWARD
+ensure_chain "$IPT" filter MPIG-OUTPUT
+ensure_chain "$IPT" nat MPIG-PREROUTING
+ensure_chain "$IPT" nat MPIG-POSTROUTING
+
+ensure_chain "$IP6T" filter MPIG-INPUT
+ensure_chain "$IP6T" filter MPIG-FORWARD
+ensure_chain "$IP6T" filter MPIG-OUTPUT
+
+ensure_anchor "$IPT" filter INPUT MPIG-INPUT "mini-pig firewall: INPUT"
+ensure_anchor "$IPT" filter FORWARD MPIG-FORWARD "mini-pig firewall: FORWARD"
+ensure_anchor "$IPT" filter OUTPUT MPIG-OUTPUT "mini-pig firewall: OUTPUT"
+ensure_anchor "$IPT" nat PREROUTING MPIG-PREROUTING "mini-pig firewall: PREROUTING"
+ensure_anchor "$IPT" nat POSTROUTING MPIG-POSTROUTING "mini-pig firewall: POSTROUTING"
+
+ensure_anchor "$IP6T" filter INPUT MPIG-INPUT "mini-pig firewall: INPUT"
+ensure_anchor "$IP6T" filter FORWARD MPIG-FORWARD "mini-pig firewall: FORWARD"
+ensure_anchor "$IP6T" filter OUTPUT MPIG-OUTPUT "mini-pig firewall: OUTPUT"
+
+# DOCKER-USER integration is conditional on docker.service being present.
+{% if _iptables_docker_systemd_file_stat.stat.exists | bool %}
+ensure_chain "$IPT" filter MPIG-DOCKER-USER
+"$IPT" -w -t filter -N DOCKER-USER 2>/dev/null || true
+ensure_anchor "$IPT" filter DOCKER-USER MPIG-DOCKER-USER "mini-pig firewall: DOCKER-USER"
+{% else %}
+if "$IPT" -w -t filter -L DOCKER-USER >/dev/null 2>&1; then
+    delete_anchor_if_present "$IPT" filter DOCKER-USER MPIG-DOCKER-USER "mini-pig firewall: DOCKER-USER"
+fi
+# Drop orphaned MPIG-DOCKER-USER from a prior apply where Docker was
+# installed and is now gone. `-F` first because `-X` refuses non-empty.
+if "$IPT" -w -t filter -L MPIG-DOCKER-USER >/dev/null 2>&1; then
+    "$IPT" -w -t filter -F MPIG-DOCKER-USER 2>/dev/null || true
+    "$IPT" -w -t filter -X MPIG-DOCKER-USER 2>/dev/null || true
+fi
+{% endif %}
+
+"$IPT" -w -t filter -A MPIG-INPUT -i lo -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -m state --state INVALID -j DROP
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_ports %}
+"$IPT" -w -t filter -A MPIG-INPUT -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
+{% endfor %}
+{% if iptables_external_ping_enable | bool %}
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp -j DROP
+{% endif %}
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p udp -m udp --sport 67:68 --dport 67:68 -m state --state NEW -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
+
+"$IPT" -w -t filter -A MPIG-FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IPT" -w -t filter -A MPIG-FORWARD -m state --state INVALID -j DROP
+{% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
+"$IPT" -w -t filter -A MPIG-FORWARD -d {{ port.dst_address }}/32 -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -m state --state NEW -j ACCEPT
+{% else %}
+"$IPT" -w -t filter -A MPIG-FORWARD -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -m state --state NEW -j ACCEPT
+{% endif %}
+{% endfor %}
+{% for inf in _iptables_inf_ext_list %}
+"$IPT" -w -t filter -A MPIG-FORWARD -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
+
+"$IPT" -w -t filter -A MPIG-OUTPUT -o lo -j ACCEPT
+"$IPT" -w -t filter -A MPIG-OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IPT" -w -t filter -A MPIG-OUTPUT -m state --state INVALID -j DROP
+{% if iptables_disable_local_output | bool %}
+{% for inf in _iptables_inf_ext_list %}
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -p udp -m udp --sport 67:68 --dport 67:68 -m state --state NEW -j ACCEPT
+{% for range in iptables_disable_local_excluded_ipv4_ranges %}
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d {{ range }} -m state --state NEW -j ACCEPT
+{% endfor %}
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d 10.0.0.0/8 -m state --state NEW -j REJECT
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d 172.16.0.0/12 -m state --state NEW -j REJECT
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d 192.168.0.0/16 -m state --state NEW -j REJECT
+"$IPT" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d 100.64.0.0/10 -m state --state NEW -j REJECT
+{% endfor %}
+{% endif %}
+
+{% if _iptables_docker_systemd_file_stat.stat.exists | bool %}
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_docker_ports %}
+"$IPT" -w -t filter -A MPIG-DOCKER-USER -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j RETURN
+{% endfor %}
+"$IPT" -w -t filter -A MPIG-DOCKER-USER -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
+{% endif %}
+
+"$IP6T" -w -t filter -A MPIG-INPUT -i lo -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -m state --state INVALID -j DROP
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_ports %}
+{% if not ((port.skip_v6 | default(false)) | bool) %}
+"$IP6T" -w -t filter -A MPIG-INPUT -s {{ port.src_v6 | default('::/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
+{% endif %}
+{% endfor %}
+{% if iptables_external_ping_enable | bool %}
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp -j DROP
+{% endif %}
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
+
+"$IP6T" -w -t filter -A MPIG-OUTPUT -o lo -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-OUTPUT -m state --state INVALID -j DROP
+"$IP6T" -w -t filter -A MPIG-OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-OUTPUT -p udp -m udp --dport 547 -j DROP
+{% if iptables_disable_local_output | bool %}
+{% for inf in _iptables_inf_ext_list %}
+{% for range in iptables_disable_local_excluded_ipv6_ranges %}
+"$IP6T" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d {{ range }} -m state --state NEW -j ACCEPT
+{% endfor %}
+"$IP6T" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d fe80::/10 -m state --state NEW -j REJECT
+"$IP6T" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d fc00::/7 -m state --state NEW -j REJECT
+{% endfor %}
+{% endif %}
+{% for inf in _iptables_inf_ext_list %}
+"$IP6T" -w -t filter -A MPIG-FORWARD -i {{ inf }} -m state --state NEW -j DROP
+{% endfor %}
+
+{# Static SNAT goes into MPIG-POSTROUTING ahead of the broad masquerade
+   block; narrow matches terminate first, the rest falls through. #}
+{% for rule in iptables_snat_rules %}
+"$IPT" -w -t nat -A MPIG-POSTROUTING{% if rule.output_inf is defined and rule.output_inf %} -o {{ rule.output_inf }}{% endif %}{% if rule.dst_address is defined and rule.dst_address %} -d {{ rule.dst_address }}{% endif %}{% if rule.protocol is defined and rule.protocol %} -p {{ rule.protocol }} -m {{ rule.protocol }}{% endif %}{% if rule.src_port is defined and rule.src_port %} --sport {{ rule.src_port }}{% endif %}{% if rule.dst_port is defined and rule.dst_port %} --dport {{ rule.dst_port }}{% endif %} -j SNAT --to-source {{ rule.to_source }}
+{% endfor %}
+{% if iptables_ext_inf_masquerade | bool %}
+{% for inf in _iptables_inf_ext_list %}
+"$IPT" -w -t nat -A MPIG-POSTROUTING -o {{ inf }} -j MASQUERADE
+{% endfor %}
+{% endif %}
+{% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
+"$IPT" -w -t nat -A MPIG-PREROUTING -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -j DNAT --to-destination {{ port.dst_address }}:{{ port.dst_port }}
+"$IPT" -w -t nat -A MPIG-POSTROUTING -d {{ port.dst_address }}/32 -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -j MASQUERADE
+{% endif %}
+{% endfor %}
+
+exit 0

@@ -1,7 +1,7 @@
 FROM {{ item.image }}
 # iptables: target of the role; iproute2 brings `ip` (veth, netns);
-# netcat-openbsd is the small TCP probe used by verify; iptables-persistent
-# the role would normally install via apt, baking it here cuts converge time.
+# netcat-openbsd is the small TCP probe used by verify; iptables-persistent is
+# baked in so the scenario proves the role removes the old persistence package.
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
         systemd systemd-sysv python3 ca-certificates \

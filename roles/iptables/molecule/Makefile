@@ -5,6 +5,8 @@
 ##
 ## Scenarios x drivers:
 ##   default-podman-<action>          default scenario, podman
+##   scoped-migration-podman-<action> iptables-persistent → scoped iptables migration
+##   nftables-podman-<action>         nftables scenario (incl. iptables→nft migration), podman
 ##
 ## Supported actions (forwarded verbatim to molecule):
 ##   test create converge verify idempotence destroy login reset prepare check
@@ -14,32 +16,18 @@
 ##   make default-podman-test
 ##   make default-podman-converge
 ##   make default-podman-verify
+##   make scoped-migration-podman-test
+##   make scoped-migration-podman-converge
+##   make scoped-migration-podman-verify
+##   make nftables-podman-test
+##   make nftables-podman-converge
+##   make nftables-podman-verify
 
 MOLECULE ?= molecule
 
 # Path to this Makefile -> role directory (parent of molecule/).
 THIS_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 ROLE_DIR := $(abspath $(THIS_DIR)..)
-
-# GIT_DIR shim: collections/ is gitignored at the repo root, which makes
-# molecule misidentify the role as a broken collection. Hiding the git
-# context keeps molecule in role mode.
-GIT_SHIM := GIT_DIR=/dev/null
-
-# ANSIBLE_COLLECTIONS_PATH pin. By default Ansible searches
-# ~/.ansible/collections (and the venv's site-packages) for
-# `kogeler.mini_pig.*`, which can hold a galaxy-installed snapshot that
-# silently shadows the in-repo version molecule is supposed to be
-# testing. Forcing the path makes Ansible ignore every other copy and
-# load this collection from the same tree the Makefile lives in.
-#
-# Derivation: drop everything from `/ansible_collections/` onward in
-# ROLE_DIR — what remains is the directory Ansible expects on
-# ANSIBLE_COLLECTIONS_PATH. No hardcoded `../../...` chain, so the
-# Makefile stays correct if the role is renamed or moved within the
-# collection.
-COLLECTIONS_ROOT := $(shell echo '$(ROLE_DIR)' | sed -E 's|/ansible_collections/.*||')
-COLLECTIONS_ENV  := ANSIBLE_COLLECTIONS_PATH=$(COLLECTIONS_ROOT)
 
 # Role-scoped base config. Deep-merged under each scenario's
 # molecule.yml so cross-scenario defaults (deps, verifier, host_vars,
@@ -49,9 +37,46 @@ COLLECTIONS_ENV  := ANSIBLE_COLLECTIONS_PATH=$(COLLECTIONS_ROOT)
 BASE_CONFIG := molecule/shared/base.yml
 MOLECULE_BASE := -c $(BASE_CONFIG)
 
-PODMAN_ENV := $(GIT_SHIM) $(COLLECTIONS_ENV)
+# -- Regression guard ---------------------------------------------------------
+#
+# DO NOT remove `_guard` or weaken these env-var checks. They exist
+# because in a previous round somebody (an agent — me) pinned
+# ANSIBLE_COLLECTIONS_PATH and GIT_DIR=/dev/null in this Makefile to
+# "fix" a Molecule discovery issue. The "fix" silently caused Molecule
+# to test a stale collection cached under that override path instead of
+# the in-tree role — green CI, broken code in production. See
+# roles/iptables/AGENTS.md pitfall P5 for the doc-backed reasoning.
+#
+# If you find yourself wanting to set ANSIBLE_COLLECTIONS_PATH or
+# GIT_DIR here as a workaround, STOP. The canonical workflow is
+# `cd $(ROLE_DIR) && molecule …` — ansible-compat auto-discovers the
+# collection from galaxy.yml. If discovery is failing, fix the
+# invocation, not the environment.
 
 .DEFAULT_GOAL := help
+
+.PHONY: _guard
+_guard:
+	@if [ -n "$$ANSIBLE_COLLECTIONS_PATH" ]; then \
+	    echo ""; \
+	    echo "ERROR: ANSIBLE_COLLECTIONS_PATH is set in the environment."; \
+	    echo ""; \
+	    echo "This breaks ansible-compat's collection auto-discovery from"; \
+	    echo "galaxy.yml and causes Molecule to test a stale checkout from"; \
+	    echo "the override path instead of the in-tree role."; \
+	    echo "Unset it and retry. See roles/iptables/AGENTS.md pitfall P5."; \
+	    echo ""; \
+	    exit 1; \
+	fi
+	@if [ -n "$$GIT_DIR" ]; then \
+	    echo ""; \
+	    echo "ERROR: GIT_DIR is set in the environment."; \
+	    echo ""; \
+	    echo "This masks the git state ansible-compat reads when locating"; \
+	    echo "galaxy.yml. Unset it. See roles/iptables/AGENTS.md pitfall P5."; \
+	    echo ""; \
+	    exit 1; \
+	fi
 
 .PHONY: help
 help:
@@ -59,6 +84,8 @@ help:
 	@echo ""
 	@echo "Scenarios x drivers:"
 	@echo "  default-podman-<action>          default scenario, podman"
+	@echo "  scoped-migration-podman-<action> iptables-persistent → scoped iptables migration"
+	@echo "  nftables-podman-<action>         nftables scenario (incl. migration), podman"
 	@echo ""
 	@echo "Actions:"
 	@echo "  test create converge verify idempotence destroy login reset prepare check"
@@ -67,6 +94,18 @@ help:
 	@echo "  make default-podman-test"
 	@echo "  make default-podman-converge"
 	@echo "  make default-podman-verify"
+	@echo "  make scoped-migration-podman-test"
+	@echo "  make scoped-migration-podman-converge"
+	@echo "  make scoped-migration-podman-verify"
+	@echo "  make nftables-podman-test"
+	@echo "  make nftables-podman-converge"
+	@echo "  make nftables-podman-verify"
 
-default-podman-%:
-	cd $(ROLE_DIR) && $(PODMAN_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s default
+default-podman-%: _guard
+	cd $(ROLE_DIR) && $(MOLECULE) $(MOLECULE_BASE) $* -s default
+
+scoped-migration-podman-%: _guard
+	cd $(ROLE_DIR) && $(MOLECULE) $(MOLECULE_BASE) $* -s scoped_migration
+
+nftables-podman-%: _guard
+	cd $(ROLE_DIR) && $(MOLECULE) $(MOLECULE_BASE) $* -s nftables
