@@ -11,6 +11,21 @@
         path: "/lib/systemd/system/docker.service"
       register: _iptables_docker_systemd_file_stat
 
+    - name: iptables | Validate iptables_snat_rules
+      ansible.builtin.assert:
+        that:
+          - item.to_source is defined
+          - item.to_source | string | length > 0
+          - (item.src_port is not defined and item.dst_port is not defined) or item.protocol is defined
+        fail_msg: >-
+          iptables_snat_rules[{{ ansible_loop.index0 }}] is invalid:
+          `to_source` is required, and `protocol` must be set when
+          `src_port` or `dst_port` is given. Got: {{ item }}
+      loop: "{{ iptables_snat_rules }}"
+      loop_control:
+        extended: true
+        label: "{{ item.to_source | default('<missing to_source>') }}"
+
     - name: iptables | Enable ipv4 forward
       ansible.posix.sysctl:
         name: net.ipv4.ip_forward

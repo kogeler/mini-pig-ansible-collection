@@ -32,3 +32,23 @@ molecule_iptables_src_restricted_port: 12346
 # <peer_ip_b>:<allowed_port>, end-to-end exercising iptables_forwarded_ports
 # (DNAT + FORWARD), ip_forward, and the DNAT-target MASQUERADE rule.
 molecule_iptables_dnat_external_port: 12347
+
+# iptables_snat_rules fixtures for Stage 4. Source IPs are TEST-NET-1
+# addresses; the rules are only used to assert template rendering and
+# verify presence in the live nat POSTROUTING chain — no probe expects
+# them to be reachable. Every rule has matchers narrow enough that it
+# does not intercept the ext0/ext1 traffic probes the rest of Stage 4
+# depends on (so e.g. an SNAT on `-o lo` with no protocol filter would
+# break the wait_for 127.0.0.1 listener checks and is not used).
+molecule_iptables_snat_kilo_src: "192.0.2.11"
+molecule_iptables_snat_kilo_dst_port: 51820
+molecule_iptables_snat_pinned_inf_src: "192.0.2.12"
+molecule_iptables_snat_pinned_inf_dst_port: 8443
+molecule_iptables_snat_dst_src: "192.0.2.13"
+molecule_iptables_snat_dst_sport: 8080
+molecule_iptables_snat_dst_addr: "10.20.0.0/16"
+# No-protocol variant: exercises the "protocol omitted" template branch.
+# Scoped to RFC 2544 (198.18.0.0/15) so the rule never matches any
+# traffic the scenario generates.
+molecule_iptables_snat_no_proto_src: "192.0.2.14"
+molecule_iptables_snat_no_proto_addr: "198.18.0.0/15"

@@ -84,4 +84,7 @@ COMMIT
 -A POSTROUTING -d {{ port.dst_address }}/32 -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -j MASQUERADE
 {% endif %}
 {% endfor %}
+{% for rule in iptables_snat_rules %}
+-A POSTROUTING{% if rule.output_inf is defined and rule.output_inf %} -o {{ rule.output_inf }}{% endif %}{% if rule.dst_address is defined and rule.dst_address %} -d {{ rule.dst_address }}{% endif %}{% if rule.protocol is defined and rule.protocol %} -p {{ rule.protocol }} -m {{ rule.protocol }}{% endif %}{% if rule.src_port is defined and rule.src_port %} --sport {{ rule.src_port }}{% endif %}{% if rule.dst_port is defined and rule.dst_port %} --dport {{ rule.dst_port }}{% endif %} -j SNAT --to-source {{ rule.to_source }}
+{% endfor %}
 COMMIT

@@ -174,6 +174,72 @@
           - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -p icmp --icmp-type echo-request'
               in _snapshots['list']"
 
+    # iptables_snat_rules: cover every optional-field branch of the
+    # template. Each rule renders exactly one line — `output_inf` is the
+    # only field that produces a `-o <iface>` clause; when omitted, the
+    # rule has no `-o` and matches every output interface.
+    - name: Assert iptables_snat_rules rendered every variant
+      ansible.builtin.assert:
+        that:
+          # Kilo case: protocol + dst_port, no output_inf → no `-o`.
+          - "'-A POSTROUTING -p udp -m udp --dport '
+              ~ molecule_iptables_snat_kilo_dst_port
+              ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_kilo_src
+              in _snapshots['list']"
+          # Explicit output_inf: rendered with -o for inf_b only.
+          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_b
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_snat_pinned_inf_dst_port
+              ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_pinned_inf_src
+              in _snapshots['list']"
+          # Sanity: that same rule must NOT appear with `-o inf_a` or no -o.
+          - "('-A POSTROUTING -o ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_snat_pinned_inf_dst_port)
+              not in _snapshots['list']"
+          # dst_address + src_port, no output_inf → no `-o`.
+          - "'-A POSTROUTING -d ' ~ molecule_iptables_snat_dst_addr
+              ~ ' -p tcp -m tcp --sport ' ~ molecule_iptables_snat_dst_sport
+              ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_dst_src
+              in _snapshots['list']"
+          # No-protocol branch: dst_address only, no `-p ...` rendered.
+          - "'-A POSTROUTING -d ' ~ molecule_iptables_snat_no_proto_addr
+              ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_no_proto_src
+              in _snapshots['list']"
+
+    # Count of SNAT lines must match the rule count exactly — protects
+    # against accidental fan-out, duplicate, or extra entries on re-apply.
+    - name: Assert iptables_snat_rules line count is exact
+      ansible.builtin.assert:
+        that:
+          - (_snapshots['list'].split('\n')
+              | select('search', '-A POSTROUTING .* -j SNAT --to-source ')
+              | list | length) == 4
+        fail_msg: |
+          unexpected SNAT line count in list snapshot. Lines:
+          {{ _snapshots['list'].split('\n')
+              | select('search', '-A POSTROUTING .* -j SNAT --to-source ')
+              | list }}
+
+    # Regression: Stages 1–3 do not set iptables_snat_rules, so the
+    # default ([]) must produce zero SNAT lines in those snapshots.
+    - name: Assert empty iptables_snat_rules renders no SNAT lines
+      ansible.builtin.assert:
+        that:
+          - "'-j SNAT --to-source' not in _snapshots['string']"
+          - "'-j SNAT --to-source' not in _snapshots['empty-string']"
+          - "'-j SNAT --to-source' not in _snapshots['empty-list']"
+
+    # Live kernel probe: the Stage 4 restore loaded the SNAT rules into
+    # the running nat table. `iptables -t nat -C` returns rc=0 when the
+    # exact rule is present — a smoke check that the template-rendered
+    # syntax is also accepted by iptables-restore and the kernel.
+    - name: Probe live nat POSTROUTING for the Kilo SNAT rule
+      ansible.builtin.command:
+        cmd: >-
+          iptables -t nat -C POSTROUTING
+          -p udp -m udp --dport {{ molecule_iptables_snat_kilo_dst_port }}
+          -j SNAT --to-source {{ molecule_iptables_snat_kilo_src }}
+      changed_when: false
+
     # -- Normalization filter sanity check (mirrors role's vars/main.yml) ---
     # Re-run the exact normalization expression from vars/main.yml against
     # all four input shapes to keep verify aware of the contract even when

@@ -36,6 +36,26 @@ iptables_randomized_ext_ips: []
 # minutes
 iptables_randomized_ext_ips_timer: 5
 
+# Static SNAT rules rendered into *nat POSTROUTING of rules.v4.
+# Independent of the randomized SNAT mechanism above — protocol/port match
+# scopes prevent overlap. Each item must define `to_source`; all other
+# fields are optional. `output_inf` is rendered as `-o <iface>` only when
+# explicitly set — when omitted, the rule has no `-o` and matches every
+# output interface. If `src_port` or `dst_port` is set, `protocol` is
+# required.
+iptables_snat_rules: []
+#  - to_source: 203.0.113.10
+#    protocol: udp
+#    dst_port: 51820
+#  - to_source: 203.0.113.11
+#    protocol: tcp
+#    dst_port: 443
+#    output_inf: eth0
+#  - to_source: 203.0.113.12
+#    protocol: tcp
+#    src_port: 8080
+#    dst_address: 10.20.0.0/16
+
 iptables_external_ping_enable: false
 # per minute
 iptables_external_ping_limit: 10

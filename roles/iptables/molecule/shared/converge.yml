@@ -99,6 +99,32 @@
         iptables_ipv4_forward_enable: true
         iptables_ext_inf_masquerade: true
         iptables_external_ping_enable: true
+        # Exercise every optional-field branch of iptables_snat_rules.
+        # Each item renders exactly one line — `output_inf` is the only
+        # field that controls interface scoping; when omitted, the line
+        # has no `-o` and matches every output interface.
+        # - protocol + dst_port (the Kilo WireGuard pinning case): no
+        #   output_inf, so the rule has no `-o` clause.
+        # - protocol + dst_port + explicit output_inf: rendered with -o.
+        # - protocol + src_port + dst_address: scoped to a destination
+        #   subnet, exercises the dst_address and src_port branches.
+        # - no protocol, only dst_address scoped to RFC 2544 range:
+        #   exercises the "protocol omitted" branch without intercepting
+        #   any live traffic the rest of Stage 4 depends on.
+        iptables_snat_rules:
+          - to_source: "{{ molecule_iptables_snat_kilo_src }}"
+            protocol: udp
+            dst_port: "{{ molecule_iptables_snat_kilo_dst_port }}"
+          - to_source: "{{ molecule_iptables_snat_pinned_inf_src }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_snat_pinned_inf_dst_port }}"
+            output_inf: "{{ molecule_iptables_inf_b }}"
+          - to_source: "{{ molecule_iptables_snat_dst_src }}"
+            protocol: tcp
+            src_port: "{{ molecule_iptables_snat_dst_sport }}"
+            dst_address: "{{ molecule_iptables_snat_dst_addr }}"
+          - to_source: "{{ molecule_iptables_snat_no_proto_src }}"
+            dst_address: "{{ molecule_iptables_snat_no_proto_addr }}"
 
     - name: Snapshot rendered v4 ruleset — list form
       ansible.builtin.copy:
