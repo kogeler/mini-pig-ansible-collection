@@ -3,5 +3,6 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: restart docker
-  ansible.builtin.include_tasks: tasks/restart_docker.yml
+- name: reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true

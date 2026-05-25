@@ -1,0 +1,14 @@
+FROM {{ item.image }}
+# The scenario installs iptables-persistent itself during converge so it can
+# prove the role removes the old persistence package after migrating to the
+# scoped MPIG chain layout. iptables is present as the low-level firewall CLI;
+# iproute2/netcat/ping are used by the shared netns traffic probes.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        systemd systemd-sysv python3 ca-certificates \
+        iptables iproute2 netcat-openbsd procps iputils-ping && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    systemctl mask getty@tty1.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

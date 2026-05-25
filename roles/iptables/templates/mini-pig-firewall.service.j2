@@ -1,0 +1,21 @@
+{{ ansible_managed | comment }}
+[Unit]
+# Type=oneshot, no RemainAfterExit — each start runs ExecStart again,
+# which re-asserts firewall state for the active backend.
+# `systemctl status` normally reports "inactive (dead)"; that is expected.
+# Called by the role at apply time, by mini-pig-firewall.timer
+# periodically, and on boot via WantedBy=multi-user.target.
+Description=Mini Pig firewall (idempotent apply + drift check)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=local-fs.target systemd-modules-load.service
+Conflicts=shutdown.target
+ConditionPathExists=/usr/local/sbin/mini-pig-firewall-apply
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mini-pig-firewall-apply
+
+[Install]
+WantedBy=multi-user.target

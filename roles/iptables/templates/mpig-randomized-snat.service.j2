@@ -1,0 +1,24 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Mini Pig randomized SNAT (native nft chain at priority srcnat - 10)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=local-fs.target systemd-modules-load.service nftables.service
+Conflicts=shutdown.target
+ConditionPathExists=/etc/nftables.d/mpig-randomized-snat.conf
+
+[Service]
+# Type=oneshot without RemainAfterExit — mirrors mini-pig-firewall.service.
+# Each start atomically re-applies the chain. The atomic delete-then-create
+# lives INSIDE the conf file (`add table; delete table; table {…}` idiom,
+# see AGENTS.md pitfall P4), so a bare `nft -f` is one kernel transaction
+# — no shell wrapper, no race window. Periodic re-application is driven
+# by mpig-randomized-snat.timer. No PartOf= or ReloadPropagatedFrom=
+# coupling to nftables.service: the two units own independent nft tables
+# and stay decoupled.
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/mpig-randomized-snat.conf
+
+[Install]
+WantedBy=multi-user.target

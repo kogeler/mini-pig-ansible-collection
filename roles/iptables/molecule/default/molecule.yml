@@ -1,5 +1,7 @@
 ---
-# Default scenario: podman, Debian trixie.
+# Default scenario: podman, Debian 12 (bookworm, nft 1.0.6 — the
+# supported-OS baseline).
+#
 # Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
 # default playbooks) lives in `../shared/base.yml` — injected via
 # `molecule -c molecule/shared/base.yml`. Only scenario-specific bits
@@ -15,7 +17,7 @@ driver:
   name: podman
 platforms:
   - name: molecule-iptables
-    image: "docker.io/library/debian:trixie"
+    image: "docker.io/library/debian:bookworm"
     pre_build_image: false
     systemd: always
     network: "${MP_NETWORK:-slirp4netns}"

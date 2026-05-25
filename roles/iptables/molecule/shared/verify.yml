@@ -16,9 +16,9 @@
       ansible.builtin.set_fact:
         _default_iface: "{{ (_default_iface_raw.content | b64decode).strip() }}"
 
-    - name: Read rendered v4 ruleset snapshots
+    - name: Read rendered apply-script snapshots
       ansible.builtin.slurp:
-        src: "/tmp/molecule-iptables-snap-{{ item }}.v4"
+        src: "/tmp/molecule-iptables-snap-{{ item }}.apply"
       register: _snap_raws
       loop:
         - string
@@ -39,27 +39,35 @@
                 )
             ) }}
 
-    # Only Stage 4 snapshots v6 — the shape stages already prove the
-    # template loop logic and rendering for v6 mirrors v4. Stage 4 is
-    # the final apply and the one verify probes live, so we lock down
-    # that its v6 file gets the same per-interface DROP + ACCEPT rules.
-    - name: Read rendered v6 ruleset snapshot (list-form / final state)
+    - name: Read final iptables-save snapshot
       ansible.builtin.slurp:
-        src: /tmp/molecule-iptables-snap-list.v6
-      register: _snap_v6_raw
+        src: /tmp/molecule-iptables-final-iptables-save.txt
+      register: _iptables_save_raw
 
-    - name: Decode v6 snapshot
+    - name: Read legacy-rule-file existence dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-legacy-files.env
+      register: _legacy_files_raw
+
+    - name: Read service enablement dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-services.env
+      register: _services_raw
+
+    - name: Decode final runtime snapshots
       ansible.builtin.set_fact:
-        _snapshot_v6: "{{ _snap_v6_raw.content | b64decode }}"
+        _iptables_save: "{{ _iptables_save_raw.content | b64decode }}"
+        _legacy_files_env: "{{ _legacy_files_raw.content | b64decode }}"
+        _services_env: "{{ _services_raw.content | b64decode }}"
 
     # -- Stage 1: string form (single explicit interface) --------------------
 
     - name: Assert string form rendered rules for ext0 only on INPUT chain
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
               in _snapshots['string']"
-          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['string']
+          - ('-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['string']
         fail_msg: |
           string-form snapshot did not match expectations.
           Snapshot:
@@ -68,7 +76,7 @@
     - name: Assert string form rendered allowed-port rule on ext0
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
+          - "'-A MPIG-INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['string']"
@@ -78,10 +86,10 @@
     - name: Assert empty-string form fell back to host's default iface
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
+          - "'-A MPIG-INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
               in _snapshots['empty-string']"
-          - ('-A INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-string']
-          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-string']
+          - ('-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-string']
+          - ('-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-string']
         fail_msg: |
           empty-string snapshot did not fall back to default interface
           ({{ _default_iface }}). Snapshot:
@@ -92,10 +100,10 @@
     - name: Assert empty-list form fell back to host's default iface
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
+          - "'-A MPIG-INPUT -i ' ~ _default_iface ~ ' -m state --state NEW -j DROP'
               in _snapshots['empty-list']"
-          - ('-A INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-list']
-          - ('-A INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-list']
+          - ('-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a) not in _snapshots['empty-list']
+          - ('-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b) not in _snapshots['empty-list']
         fail_msg: |
           empty-list snapshot did not fall back to default interface
           ({{ _default_iface }}). Snapshot:
@@ -106,15 +114,15 @@
     - name: Assert list form rendered rules for both ext0 and ext1
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
               in _snapshots['list']"
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
               in _snapshots['list']"
-          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
+          - "'-A MPIG-INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
-          - "'-A INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_b
+          - "'-A MPIG-INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_b
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
@@ -124,11 +132,11 @@
     - name: Assert src_v4-restricted port rendered on both interfaces
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_a
+          - "'-A MPIG-INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_src_restricted_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
-          - "'-A INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_b
+          - "'-A MPIG-INPUT -s ' ~ molecule_iptables_subnet_a ~ ' -i ' ~ molecule_iptables_inf_b
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_src_restricted_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
@@ -138,9 +146,9 @@
     - name: Assert MASQUERADE rule rendered on both ext interfaces
       ansible.builtin.assert:
         that:
-          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE'
+          - "'-A MPIG-POSTROUTING -o ' ~ molecule_iptables_inf_a ~ ' -j MASQUERADE'
               in _snapshots['list']"
-          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_b ~ ' -j MASQUERADE'
+          - "'-A MPIG-POSTROUTING -o ' ~ molecule_iptables_inf_b ~ ' -j MASQUERADE'
               in _snapshots['list']"
 
     # iptables_forwarded_ports DNAT mode renders three rules: PREROUTING
@@ -150,17 +158,17 @@
     - name: Assert DNAT entry rendered (PREROUTING + FORWARD + POSTROUTING)
       ansible.builtin.assert:
         that:
-          - "'-A PREROUTING -i ' ~ molecule_iptables_inf_a
+          - "'-A MPIG-PREROUTING -i ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_dnat_external_port
               ~ ' -j DNAT --to-destination ' ~ molecule_iptables_peer_ip_b
               ~ ':' ~ molecule_iptables_allowed_port
               in _snapshots['list']"
-          - "'-A FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i '
+          - "'-A MPIG-FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i '
               ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport '
               ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
-          - "'-A POSTROUTING -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -p tcp -m tcp --dport '
+          - "'-A MPIG-POSTROUTING -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -p tcp -m tcp --dport '
               ~ molecule_iptables_allowed_port ~ ' -j MASQUERADE'
               in _snapshots['list']"
 
@@ -169,39 +177,39 @@
     - name: Assert ICMP allow rules rendered on both ext interfaces
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p icmp --icmp-type echo-request'
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a ~ ' -p icmp --icmp-type echo-request'
               in _snapshots['list']"
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -p icmp --icmp-type echo-request'
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b ~ ' -p icmp --icmp-type echo-request'
               in _snapshots['list']"
 
     # iptables_snat_rules: cover every optional-field branch of the
-    # template. Each rule renders exactly one line — `output_inf` is the
-    # only field that produces a `-o <iface>` clause; when omitted, the
-    # rule has no `-o` and matches every output interface.
+    # template. Each rule renders exactly one line inside MPIG-POSTROUTING
+    # — `output_inf` is the only field that produces a `-o <iface>` clause;
+    # when omitted, the rule has no `-o` and matches every output interface.
     - name: Assert iptables_snat_rules rendered every variant
       ansible.builtin.assert:
         that:
           # Kilo case: protocol + dst_port, no output_inf → no `-o`.
-          - "'-A POSTROUTING -p udp -m udp --dport '
+          - "'-A MPIG-POSTROUTING -p udp -m udp --dport '
               ~ molecule_iptables_snat_kilo_dst_port
               ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_kilo_src
               in _snapshots['list']"
           # Explicit output_inf: rendered with -o for inf_b only.
-          - "'-A POSTROUTING -o ' ~ molecule_iptables_inf_b
+          - "'-A MPIG-POSTROUTING -o ' ~ molecule_iptables_inf_b
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_snat_pinned_inf_dst_port
               ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_pinned_inf_src
               in _snapshots['list']"
           # Sanity: that same rule must NOT appear with `-o inf_a` or no -o.
-          - "('-A POSTROUTING -o ' ~ molecule_iptables_inf_a
+          - "('-A MPIG-POSTROUTING -o ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_snat_pinned_inf_dst_port)
               not in _snapshots['list']"
           # dst_address + src_port, no output_inf → no `-o`.
-          - "'-A POSTROUTING -d ' ~ molecule_iptables_snat_dst_addr
+          - "'-A MPIG-POSTROUTING -d ' ~ molecule_iptables_snat_dst_addr
               ~ ' -p tcp -m tcp --sport ' ~ molecule_iptables_snat_dst_sport
               ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_dst_src
               in _snapshots['list']"
           # No-protocol branch: dst_address only, no `-p ...` rendered.
-          - "'-A POSTROUTING -d ' ~ molecule_iptables_snat_no_proto_addr
+          - "'-A MPIG-POSTROUTING -d ' ~ molecule_iptables_snat_no_proto_addr
               ~ ' -j SNAT --to-source ' ~ molecule_iptables_snat_no_proto_src
               in _snapshots['list']"
 
@@ -211,12 +219,12 @@
       ansible.builtin.assert:
         that:
           - (_snapshots['list'].split('\n')
-              | select('search', '-A POSTROUTING .* -j SNAT --to-source ')
+              | select('search', '-A MPIG-POSTROUTING .* -j SNAT --to-source ')
               | list | length) == 4
         fail_msg: |
           unexpected SNAT line count in list snapshot. Lines:
           {{ _snapshots['list'].split('\n')
-              | select('search', '-A POSTROUTING .* -j SNAT --to-source ')
+              | select('search', '-A MPIG-POSTROUTING .* -j SNAT --to-source ')
               | list }}
 
     # Regression: Stages 1–3 do not set iptables_snat_rules, so the
@@ -228,17 +236,189 @@
           - "'-j SNAT --to-source' not in _snapshots['empty-string']"
           - "'-j SNAT --to-source' not in _snapshots['empty-list']"
 
-    # Live kernel probe: the Stage 4 restore loaded the SNAT rules into
-    # the running nat table. `iptables -t nat -C` returns rc=0 when the
+    # Live kernel probe: the Stage 4 apply script populated MPIG-POSTROUTING
+    # with the SNAT rules. `iptables -t nat -C` returns rc=0 when the
     # exact rule is present — a smoke check that the template-rendered
-    # syntax is also accepted by iptables-restore and the kernel.
-    - name: Probe live nat POSTROUTING for the Kilo SNAT rule
+    # syntax is also accepted by iptables and the kernel.
+    - name: Probe live MPIG-POSTROUTING for the Kilo SNAT rule
       ansible.builtin.command:
         cmd: >-
-          iptables -t nat -C POSTROUTING
+          iptables -t nat -C MPIG-POSTROUTING
           -p udp -m udp --dport {{ molecule_iptables_snat_kilo_dst_port }}
           -j SNAT --to-source {{ molecule_iptables_snat_kilo_src }}
       changed_when: false
+
+    # -- Randomized SNAT module --------------------------------------------
+    # Stage 4 set iptables_randomized_ext_ips to a 2-element pool, which
+    # routes through tasks/randomized_snat.yml: render the nft conf,
+    # render the service unit, enable+start it. Verify that:
+    #   1. mpig-randomized-snat.service is enabled AND active.
+    #   2. /etc/nftables.d/mpig-randomized-snat.conf is on disk.
+    #   3. `nft list table ip mpig_randomized_snat` shows the chain at
+    #      `priority srcnat - 10` with the configured pool IPs in the
+    #      numgen-random map. PRIORITY 90 < 100 is what makes the kernel
+    #      preempt iptables-nft chains at `srcnat`; if a regression
+    #      changes the priority literal, this assertion catches it.
+    #   4. Legacy `iptables-custom-rules.*` artefacts are gone.
+
+    # The SNAT unit is Type=oneshot without RemainAfterExit — it returns to
+    # inactive between fires, so "is-active" is the wrong probe. We check
+    # that the most recent ExecStart finished cleanly (Result=success), and
+    # that the new drift-check timer is enabled+active. Kernel-state
+    # presence of the chain is verified separately below.
+    - name: Assert randomized SNAT service is enabled and last run succeeded
+      ansible.builtin.assert:
+        that:
+          - "'mpig_snat_service_enabled=enabled' in _services_env"
+          - "'mpig_snat_service_result=success' in _services_env"
+          - "'mpig_snat_service_unit_exists=True' in _services_env"
+          - "'mpig_snat_conf_exists=True' in _services_env"
+          - "'mpig_snat_timer_unit_exists=True' in _services_env"
+          - "'mpig_snat_timer_enabled=enabled' in _services_env"
+          - "'mpig_snat_timer_active=active' in _services_env"
+        fail_msg: |
+          randomized SNAT module state is wrong. Services env:
+          {{ _services_env }}
+
+    - name: Assert legacy randomized SNAT artefacts are absent
+      ansible.builtin.assert:
+        that:
+          - "'legacy_snat_timer_exists=False' in _services_env"
+          - "'legacy_snat_service_exists=False' in _services_env"
+          - "'legacy_snat_script_exists=False' in _services_env"
+        fail_msg: |
+          Legacy iptables-custom-rules.* artefacts survived the apply.
+          Services env:
+          {{ _services_env }}
+
+    - name: Read /etc/nftables.d/mpig-randomized-snat.conf
+      ansible.builtin.slurp:
+        src: /etc/nftables.d/mpig-randomized-snat.conf
+      register: _snat_conf_raw
+
+    - name: Set rendered SNAT conf fact
+      ansible.builtin.set_fact:
+        _snat_conf: "{{ _snat_conf_raw.content | b64decode }}"
+
+    - name: Assert SNAT conf declares the hook priority literal
+      ansible.builtin.assert:
+        that:
+          - "'priority srcnat - 10' in _snat_conf"
+          - "'table ip mpig_randomized_snat' in _snat_conf"
+          - "'numgen random mod' in _snat_conf"
+          # In-file atomic-replace idiom (see AGENTS.md pitfall P4).
+          # Catches a regression that drops the `add … ; delete …`
+          # prefix and reverts the unit to a shell-wrapped delete + load.
+          - "'add table ip mpig_randomized_snat' in _snat_conf"
+          - "'delete table ip mpig_randomized_snat' in _snat_conf"
+          - "'destroy table' not in _snat_conf"
+        fail_msg: |
+          SNAT conf is missing expected literals or dropped the in-file
+          `add table … ; delete table …` atomic-replace prefix:
+          {{ _snat_conf }}
+
+    - name: Read live mpig_randomized_snat nft table
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-snat-nft-table.txt
+      register: _snat_nft_table_raw
+
+    - name: Set live SNAT table fact
+      ansible.builtin.set_fact:
+        _snat_nft_table: "{{ _snat_nft_table_raw.content | b64decode }}"
+
+    - name: Assert live mpig_randomized_snat table contains the pool IPs
+      ansible.builtin.assert:
+        that:
+          - "'priority srcnat - 10' in _snat_nft_table"
+          - molecule_iptables_snat_randomized_ip_a in _snat_nft_table
+          - molecule_iptables_snat_randomized_ip_b in _snat_nft_table
+        fail_msg: |
+          Live mpig_randomized_snat table missing priority literal or
+          configured pool IPs:
+          {{ _snat_nft_table }}
+
+    # Packet-level proof that the SNAT chain actually rewrites traffic
+    # at hook priority 90 ahead of the standard srcnat chains AND that
+    # `numgen random` did not collapse to a constant. Converge ran an
+    # accept-loop listener inside extns_b that recorded the peer IP of
+    # every connection across N=20 probes; we assert here that BOTH
+    # pool IPs appeared at least once and that peer_ip_a never leaked
+    # through. No statistical distribution check — chi-squared on N=20
+    # is flaky and not what we're catching (we're catching "the map
+    # degenerated" or "the chain didn't preempt", both binary failures).
+    - name: Read SNAT-distribution capture
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-snat-distribution.txt
+      register: _snat_dist_raw
+
+    - name: Set SNAT-distribution facts (unique source IPs observed)
+      ansible.builtin.set_fact:
+        _snat_dist_seen: "{{ (_snat_dist_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | unique | list }}"
+        _snat_dist_count: "{{ (_snat_dist_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list | length }}"
+
+    - name: Assert all N probes were captured
+      ansible.builtin.assert:
+        that:
+          - (_snat_dist_count | int) == 20
+        fail_msg: |
+          Distribution listener captured {{ _snat_dist_count }} IPs out of
+          the N=20 probes converge fired. Either a probe timed out or
+          extns_b's listener exited early.
+
+    - name: Assert both pool IPs appeared and peer_ip_a never leaked
+      ansible.builtin.assert:
+        that:
+          - molecule_iptables_snat_randomized_ip_a in _snat_dist_seen
+          - molecule_iptables_snat_randomized_ip_b in _snat_dist_seen
+          - molecule_iptables_peer_ip_a not in _snat_dist_seen
+        fail_msg: |
+          Across N=20 SNAT-routed connections the listener inside extns_b
+          recorded these unique source IPs:
+          {{ _snat_dist_seen }}
+          Expected BOTH pool IPs ({{ molecule_iptables_snat_randomized_ip_a }},
+          {{ molecule_iptables_snat_randomized_ip_b }}) to appear at least
+          once and peer_ip_a ({{ molecule_iptables_peer_ip_a }}) to never
+          appear. A missing pool IP suggests the numgen-random map
+          collapsed (kernel returns a constant, or the rendered map is
+          missing an entry); peer_ip_a leaking through means the chain
+          did NOT preempt at priority srcnat - 10.
+
+    # Re-assertion: converge flushed MPIG-POSTROUTING, ran the unified
+    # firewall service, captured before/after dumps. "Before" must be
+    # empty; "after" must have at least one MPIG-POSTROUTING rule back.
+    - name: Assert firewall timer is enabled and active
+      ansible.builtin.assert:
+        that:
+          - "'firewall_timer_enabled=enabled' in _services_env"
+          - "'firewall_timer_active=active' in _services_env"
+        fail_msg: |
+          mini-pig-firewall.timer is not enabled+active. Services env:
+          {{ _services_env }}
+
+    - name: Read repair before/after snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-drift-repair.txt
+      register: _drift_repair_raw
+
+    - name: Set repair snapshot fact
+      ansible.builtin.set_fact:
+        _drift_repair: "{{ _drift_repair_raw.content | b64decode }}"
+
+    - name: Assert unified service repaired the flushed MPIG-POSTROUTING
+      ansible.builtin.assert:
+        that:
+          # "flushed" section: chain header only.
+          - >-
+            _drift_repair.split('=== flushed ===')[1].split('=== repaired ===')[0]
+            is not search('-A MPIG-POSTROUTING')
+          # "repaired" section: at least one MPIG-POSTROUTING rule back.
+          - >-
+            _drift_repair.split('=== repaired ===')[1]
+            is search('-A MPIG-POSTROUTING')
+        fail_msg: |
+          Unified firewall service did not restore MPIG-POSTROUTING after
+          flush. Snapshot:
+          {{ _drift_repair }}
 
     # -- Normalization filter sanity check (mirrors role's vars/main.yml) ---
     # Re-run the exact normalization expression from vars/main.yml against
@@ -273,6 +453,43 @@
           - _norm_results.empty_list == [_default_iface]
           - _norm_results.list == ["ext0", "ext1"]
         fail_msg: "normalization mismatch: {{ _norm_results }}"
+
+    # -- Runtime ownership / foreign rule preservation -----------------------
+
+    - name: Assert scoped iptables runtime preserved foreign chains
+      ansible.builtin.assert:
+        that:
+          - "':MPIG-INPUT ' in _iptables_save"
+          - "':MPIG-FORWARD ' in _iptables_save"
+          - "':MPIG-POSTROUTING ' in _iptables_save"
+          - "'-A INPUT -m comment --comment \"mini-pig firewall: INPUT\" -j MPIG-INPUT' in _iptables_save"
+          - "'-A FORWARD -m comment --comment \"mini-pig firewall: FORWARD\" -j MPIG-FORWARD' in _iptables_save"
+          - "'-A POSTROUTING -m comment --comment \"mini-pig firewall: POSTROUTING\" -j MPIG-POSTROUTING' in _iptables_save"
+          - "':KUBE-FORWARD ' in _iptables_save"
+          - "'-A FORWARD -j KUBE-FORWARD' in _iptables_save"
+          - "'molecule-foreign-filter' in _iptables_save"
+          - "':KUBE-POSTROUTING ' in _iptables_save"
+          - "'-A POSTROUTING -j KUBE-POSTROUTING' in _iptables_save"
+          - "'molecule-foreign-nat' in _iptables_save"
+        fail_msg: |
+          Final iptables-save does not show both role-owned MPIG state and
+          preserved foreign KUBE-like state:
+          {{ _iptables_save }}
+
+    - name: Assert iptables-persistent was replaced by unified firewall service
+      ansible.builtin.assert:
+        that:
+          - "'rules.v4_exists=False' in _legacy_files_env"
+          - "'rules.v6_exists=False' in _legacy_files_env"
+          - "'mini_pig_firewall_enabled=enabled' in _services_env"
+          - "'netfilter_persistent_enabled=enabled' not in _services_env"
+          - "'netfilter_persistent_rc=0' not in _services_env"
+        fail_msg: |
+          Expected mini-pig-firewall.service enabled and legacy
+          iptables-persistent files/packages disabled or removed. Services:
+          {{ _services_env }}
+          Files:
+          {{ _legacy_files_env }}
 
     # -- Real firewall traffic test ------------------------------------------
     # The final converge stage loaded rules for [ext0, ext1] with a single
@@ -362,26 +579,26 @@
       failed_when: _probe_b_blocked.rc == 0
 
     # -- IPv6 render assertion (final state) ---------------------------------
-    # Lightweight: rules.v6 should still emit per-interface DROP + the
-    # universally-allowed TCP port for both interfaces. Real IPv6 traffic
-    # testing would need v6 addresses on the veth pairs and v6 forwarding
-    # config — out of scope for this scenario.
+    # Lightweight: the scoped apply script should still emit ip6tables
+    # per-interface DROP + the universally-allowed TCP port for both
+    # interfaces. Real IPv6 traffic testing would need v6 addresses on the
+    # veth pairs and v6 forwarding config — out of scope for this scenario.
 
     - name: Assert v6 ruleset rendered for both ext0 and ext1
       ansible.builtin.assert:
         that:
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
-              in _snapshot_v6"
-          - "'-A INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
-              in _snapshot_v6"
-          - "'-A INPUT -s ::/0 -i ' ~ molecule_iptables_inf_a
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a ~ ' -m state --state NEW -j DROP'
+              in _snapshots['list']"
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b ~ ' -m state --state NEW -j DROP'
+              in _snapshots['list']"
+          - "'-A MPIG-INPUT -s ::/0 -i ' ~ molecule_iptables_inf_a
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
-              in _snapshot_v6"
-          - "'-A INPUT -s ::/0 -i ' ~ molecule_iptables_inf_b
+              in _snapshots['list']"
+          - "'-A MPIG-INPUT -s ::/0 -i ' ~ molecule_iptables_inf_b
               ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
-              in _snapshot_v6"
+              in _snapshots['list']"
 
     # -- iptables_ipv4_forward_enable: sysctl actually applied --------------
 
@@ -487,3 +704,40 @@
       register: _ping
       changed_when: false
       failed_when: _ping.rc != 0
+
+    # Off-path test: setting iptables_drift_check_interval=0 must tear
+    # down mini-pig-firewall.timer (the service itself stays — it is
+    # the apply path). Run as the very last step so the resulting
+    # absent-timer state does not affect earlier assertions.
+    - name: Off-path apply with iptables_drift_check_interval=0
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+        iptables_drift_check_interval: 0
+
+    - name: Stat firewall timer after interval=0 apply (must be absent)
+      ansible.builtin.stat:
+        path: /etc/systemd/system/mini-pig-firewall.timer
+      register: _off_path_timer_stat
+
+    - name: Stat firewall apply script after interval=0 apply (must stay)
+      ansible.builtin.stat:
+        path: /usr/local/sbin/mini-pig-firewall-apply
+      register: _off_path_apply_stat
+
+    - name: Assert interval=0 removed the timer but kept the apply script
+      ansible.builtin.assert:
+        that:
+          - not _off_path_timer_stat.stat.exists
+          - _off_path_apply_stat.stat.exists
+        fail_msg: |
+          iptables_drift_check_interval=0 should remove the timer file
+          but leave the apply script in place. Got:
+            timer exists: {{ _off_path_timer_stat.stat.exists }}
+            apply exists: {{ _off_path_apply_stat.stat.exists }}

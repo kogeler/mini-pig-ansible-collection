@@ -1,0 +1,15 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Mini Pig randomized SNAT periodic re-assertion
+
+[Timer]
+# Mirrors mini-pig-firewall.timer cadence (same iptables_drift_check_interval
+# knob). Each fire runs mpig-randomized-snat.service, whose ExecStart is an
+# atomic delete-then-load — idempotent, no-op when the kernel state matches.
+OnBootSec=15min
+OnUnitActiveSec={{ iptables_drift_check_interval }}min
+Unit=mpig-randomized-snat.service
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

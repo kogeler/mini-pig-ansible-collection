@@ -1,0 +1,327 @@
+---
+- name: Converge
+  hosts: all
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    - name: Install old persistence packages
+      ansible.builtin.apt:
+        name:
+          - iptables-persistent
+          - netfilter-persistent
+        state: present
+        update_cache: true
+
+    - name: Ensure legacy rules directory exists
+      ansible.builtin.file:
+        path: /etc/iptables
+        state: directory
+        mode: "0755"
+
+    - name: Write legacy IPv4 iptables-persistent rules
+      ansible.builtin.copy:
+        dest: /etc/iptables/rules.v4
+        mode: "0640"
+        content: |
+          *mangle
+          :PREROUTING ACCEPT [0:0]
+          :INPUT ACCEPT [0:0]
+          :FORWARD ACCEPT [0:0]
+          :OUTPUT ACCEPT [0:0]
+          :POSTROUTING ACCEPT [0:0]
+          COMMIT
+          *filter
+          :INPUT ACCEPT [0:0]
+          :FORWARD ACCEPT [0:0]
+          :DOCKER-USER - [0:0]
+          :OUTPUT ACCEPT [0:0]
+          -A INPUT -i lo -j ACCEPT
+          -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+          -A INPUT -m state --state INVALID -j DROP
+          -A INPUT -s 0.0.0.0/0 -i {{ molecule_iptables_inf_a }} -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -s {{ molecule_iptables_subnet_a }} -i {{ molecule_iptables_inf_a }} -p tcp -m tcp --dport {{ molecule_iptables_src_restricted_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_a }} -p udp -m udp --sport 67:68 --dport 67:68 -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_a }} -m state --state NEW -j DROP
+          -A INPUT -s 0.0.0.0/0 -i {{ molecule_iptables_inf_b }} -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -s {{ molecule_iptables_subnet_a }} -i {{ molecule_iptables_inf_b }} -p tcp -m tcp --dport {{ molecule_iptables_src_restricted_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_b }} -p udp -m udp --sport 67:68 --dport 67:68 -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_b }} -m state --state NEW -j DROP
+          -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+          -A FORWARD -m state --state INVALID -j DROP
+          -A FORWARD -d {{ molecule_iptables_peer_ip_b }}/32 -i {{ molecule_iptables_inf_a }} -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -m state --state NEW -j ACCEPT
+          -A FORWARD -i {{ molecule_iptables_inf_a }} -m state --state NEW -j DROP
+          -A FORWARD -i {{ molecule_iptables_inf_b }} -m state --state NEW -j DROP
+          -A OUTPUT -o lo -j ACCEPT
+          -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+          -A OUTPUT -m state --state INVALID -j DROP
+          COMMIT
+          *nat
+          :PREROUTING ACCEPT [0:0]
+          :INPUT ACCEPT [0:0]
+          :OUTPUT ACCEPT [0:0]
+          :POSTROUTING ACCEPT [0:0]
+          -A PREROUTING -i {{ molecule_iptables_inf_a }} -p tcp -m tcp --dport {{ molecule_iptables_dnat_external_port }} -j DNAT --to-destination {{ molecule_iptables_peer_ip_b }}:{{ molecule_iptables_allowed_port }}
+          -A POSTROUTING -o {{ molecule_iptables_inf_a }} -j MASQUERADE
+          -A POSTROUTING -o {{ molecule_iptables_inf_b }} -j MASQUERADE
+          -A POSTROUTING -d {{ molecule_iptables_peer_ip_b }}/32 -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -j MASQUERADE
+          COMMIT
+
+    - name: Write legacy IPv6 iptables-persistent rules
+      ansible.builtin.copy:
+        dest: /etc/iptables/rules.v6
+        mode: "0640"
+        content: |
+          *filter
+          :INPUT ACCEPT [0:0]
+          :FORWARD ACCEPT [0:0]
+          :OUTPUT ACCEPT [0:0]
+          -A INPUT -i lo -j ACCEPT
+          -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+          -A INPUT -m state --state INVALID -j DROP
+          -A INPUT -s ::/0 -i {{ molecule_iptables_inf_a }} -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_a }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_a }} -m state --state NEW -j DROP
+          -A INPUT -s ::/0 -i {{ molecule_iptables_inf_b }} -p tcp -m tcp --dport {{ molecule_iptables_allowed_port }} -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_b }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
+          -A INPUT -i {{ molecule_iptables_inf_b }} -m state --state NEW -j DROP
+          -A OUTPUT -o lo -j ACCEPT
+          -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+          -A OUTPUT -m state --state INVALID -j DROP
+          -A OUTPUT -p udp -m udp --dport 547 -m limit --limit 10/min -j ACCEPT
+          -A OUTPUT -p udp -m udp --dport 547 -j DROP
+          -A FORWARD -i {{ molecule_iptables_inf_a }} -m state --state NEW -j DROP
+          -A FORWARD -i {{ molecule_iptables_inf_b }} -m state --state NEW -j DROP
+          COMMIT
+
+    - name: Enable and start old netfilter-persistent service
+      ansible.builtin.systemd:
+        name: netfilter-persistent.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Capture legacy iptables-save before migration
+      ansible.builtin.command:
+        cmd: iptables-save
+      register: _legacy_iptables_save
+      changed_when: false
+
+    - name: Persist legacy iptables-save before migration
+      ansible.builtin.copy:
+        content: "{{ _legacy_iptables_save.stdout }}\n"
+        dest: /tmp/molecule-scoped-migration-pre-iptables-save.txt
+        mode: "0644"
+
+    # NOTE: foreign KUBE-* state is added AFTER the first role apply (see
+    # below), not before. The first apply performs an atomic legacy wipe of
+    # filter/nat/ip6filter, which by design tears down everything in those
+    # tables (legacy and foreign alike) — kube-proxy / dockerd would re-add
+    # theirs on the next reconcile pass. The interesting test for steady-
+    # state foreign preservation is whether a SECOND apply leaves the
+    # already-running KUBE-* chains alone; that's exercised below.
+
+    - name: Install legacy custom-rules refresh script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/reload_iptables_custom_rules.sh
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          exit 0
+
+    - name: Install legacy custom-rules service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/iptables-custom-rules.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Legacy molecule iptables custom rules
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/reload_iptables_custom_rules.sh
+
+    - name: Install legacy custom-rules timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/iptables-custom-rules.timer
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Legacy molecule iptables custom rules timer
+
+          [Timer]
+          OnBootSec=1h
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start legacy custom-rules timer
+      ansible.builtin.systemd:
+        name: iptables-custom-rules.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # Untagged SNAT rules in base nat POSTROUTING (the shape the legacy
+    # timer used). The role's apply must strip them.
+    - name: Install untagged randomized-SNAT rules into base nat POSTROUTING
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - >-
+          iptables -w -t nat -A POSTROUTING -p tcp -m multiport --dports 80,443
+          -m conntrack --ctstate NEW -m statistic --mode random --probability 0.333
+          -o {{ molecule_iptables_inf_a }} -j SNAT --to-source 192.0.2.30
+        - >-
+          iptables -w -t nat -A POSTROUTING -p tcp -m multiport --dports 80,443
+          -m conntrack --ctstate NEW -m statistic --mode random --probability 0.500
+          -o {{ molecule_iptables_inf_a }} -j SNAT --to-source 192.0.2.31
+        - >-
+          iptables -w -t nat -A POSTROUTING -p tcp -m multiport --dports 80,443
+          -m conntrack --ctstate NEW
+          -o {{ molecule_iptables_inf_a }} -j SNAT --to-source 192.0.2.32
+      changed_when: true
+
+    # -- First apply: legacy → scoped migration -----------------------------
+    - name: Apply current role over legacy persisted state (first apply)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+
+    # -- Re-create foreign KUBE-* state post-migration ----------------------
+    # The first apply performed the one-shot atomic wipe; the second apply
+    # below must leave this state alone (steady-state preservation).
+    - name: Create foreign runtime iptables state after first apply
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - iptables -w -t filter -N KUBE-FORWARD
+        - iptables -w -t filter -A FORWARD -j KUBE-FORWARD
+        - iptables -w -t filter -A KUBE-FORWARD -m comment --comment molecule-foreign-filter -j RETURN
+        - iptables -w -t nat -N KUBE-POSTROUTING
+        - iptables -w -t nat -A POSTROUTING -j KUBE-POSTROUTING
+        - iptables -w -t nat -A KUBE-POSTROUTING -m comment --comment molecule-foreign-nat -j RETURN
+      changed_when: false
+      failed_when: false
+
+    # -- Second apply: steady-state, must preserve KUBE-* -------------------
+    - name: Apply current role a second time (steady state)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+
+    - name: Capture scoped iptables-save after migration
+      ansible.builtin.command:
+        cmd: iptables-save
+      register: _scoped_iptables_save
+      changed_when: false
+
+    - name: Persist scoped iptables-save after migration
+      ansible.builtin.copy:
+        content: "{{ _scoped_iptables_save.stdout }}\n"
+        dest: /tmp/molecule-scoped-migration-post-iptables-save.txt
+        mode: "0644"
+
+    - name: Capture base nat POSTROUTING after migration (for legacy-SNAT cleanup check)
+      ansible.builtin.command:
+        cmd: iptables -w -t nat -S POSTROUTING
+      register: _scoped_post_chain
+      changed_when: false
+
+    - name: Persist base nat POSTROUTING dump after migration
+      ansible.builtin.copy:
+        content: "{{ _scoped_post_chain.stdout }}\n"
+        dest: /tmp/molecule-scoped-migration-post-POSTROUTING.txt
+        mode: "0644"
+
+    - name: Stat post-migration files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _post_file_stats
+      loop:
+        - /etc/iptables/rules.v4
+        - /etc/iptables/rules.v6
+        - /etc/systemd/system/iptables-custom-rules.service
+        - /etc/systemd/system/iptables-custom-rules.timer
+        - /usr/local/bin/reload_iptables_custom_rules.sh
+        - /etc/systemd/system/mini-pig-firewall.service
+        - /usr/local/sbin/mini-pig-firewall-apply
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Capture post-migration service enablement
+      ansible.builtin.command:
+        cmd: "systemctl is-enabled {{ item }}"
+      register: _post_services
+      changed_when: false
+      failed_when: false
+      loop:
+        - mini-pig-firewall.service
+        - netfilter-persistent.service
+        - iptables-custom-rules.timer
+
+    - name: Capture post-migration package status
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f=${db:Status-Abbrev} {{ item }}"
+      register: _post_packages
+      changed_when: false
+      failed_when: false
+      loop:
+        - iptables-persistent
+        - netfilter-persistent
+
+    - name: Persist post-migration state dump
+      ansible.builtin.copy:
+        dest: /tmp/molecule-scoped-migration-state.env
+        mode: "0644"
+        content: |
+          rules_v4_exists={{ _post_file_stats.results[0].stat.exists }}
+          rules_v6_exists={{ _post_file_stats.results[1].stat.exists }}
+          legacy_service_exists={{ _post_file_stats.results[2].stat.exists }}
+          legacy_timer_exists={{ _post_file_stats.results[3].stat.exists }}
+          legacy_script_exists={{ _post_file_stats.results[4].stat.exists }}
+          mini_pig_service_exists={{ _post_file_stats.results[5].stat.exists }}
+          mini_pig_script_exists={{ _post_file_stats.results[6].stat.exists }}
+          mini_pig_firewall_enabled={{ _post_services.results[0].stdout | default('') | trim }}
+          mini_pig_firewall_rc={{ _post_services.results[0].rc }}
+          netfilter_persistent_enabled={{ _post_services.results[1].stdout | default('') | trim }}
+          netfilter_persistent_rc={{ _post_services.results[1].rc }}
+          legacy_timer_enabled={{ _post_services.results[2].stdout | default('') | trim }}
+          legacy_timer_rc={{ _post_services.results[2].rc }}
+          iptables_persistent_status={{ _post_packages.results[0].stdout | default('') | trim }}
+          iptables_persistent_rc={{ _post_packages.results[0].rc }}
+          netfilter_persistent_status={{ _post_packages.results[1].stdout | default('') | trim }}
+          netfilter_persistent_package_rc={{ _post_packages.results[1].rc }}

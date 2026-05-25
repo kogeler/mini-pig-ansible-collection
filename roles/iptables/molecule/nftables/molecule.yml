@@ -1,0 +1,54 @@
+---
+# nftables scenario: podman, Debian 12 (bookworm, nft 1.0.6 — the
+# supported-OS baseline; rejects `destroy table`, which is exactly what
+# this scenario needs to exercise).
+#
+# Shared config (deps, verifier, host_vars defaults, callbacks_enabled)
+# lives in `../shared/base.yml` — injected via
+# `molecule -c molecule/shared/base.yml`. Scenario-local converge/verify
+# files cover the nft-specific behaviour (fresh apply in nft mode,
+# seamless live migration from the iptables backend, idempotence, and
+# the reverse-migration guard), so the `ansible.playbooks` keys point
+# at this scenario's own playbooks instead of the shared ones.
+#
+# Idempotence is disabled: the scenario's converge walks the host
+# through `iptables backend → nftables backend (migration)` and a
+# second molecule-driven converge re-walks that transition, which
+# legitimately re-renders rules and re-tears-down legacy state.
+# Idempotence of the steady-state nftables apply is asserted inside
+# converge.yml itself via a re-include + `_check_mode` register.
+driver:
+  name: podman
+platforms:
+  - name: molecule-iptables
+    image: "docker.io/library/debian:bookworm"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    # Same capability set as the default scenario:
+    # SYS_ADMIN — `ip netns add`, `nsenter -n`
+    # NET_ADMIN — install firewall rules, manipulate links/addresses
+    # NET_RAW   — `ping` (SOCK_RAW) used by the external-ping probe
+    security_opts:
+      - "unmask=/proc/*"
+    capabilities:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - NET_RAW
+    command: ""
+    override_command: false
+
+ansible:
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  test_sequence:
+    - dependency
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

@@ -1,27 +1,60 @@
 # iptables
 
-Ansible role that renders a complete `iptables-save`-format ruleset for IPv4 and IPv6 into `/etc/iptables/rules.v{4,6}`, restores it through `community.general.iptables_state`, and persists it across reboots via `iptables-persistent`.
+Ansible role that programs the host firewall through one of two backends:
 
-The role is opinionated: every external-facing chain (`INPUT`, `FORWARD`, container-side `DOCKER-USER`) defaults to deny-all on the listed external interfaces, and only the rules generated from role variables are allowed. Outbound traffic is permitted by default and can optionally be locked down against RFC1918 / ULA destinations.
+- **scoped iptables backend** (default): role-owned `MPIG-*` chains in
+  `filter` and `nat` are loaded by `mini-pig-firewall.service` (which
+  invokes the rule-rendering apply script) and the built-in
+  `INPUT`/`FORWARD`/`OUTPUT`/`PREROUTING`/`POSTROUTING` chains receive
+  append-only jump anchors. Foreign rules from Kubernetes / Docker /
+  libvirt / Podman / CNI plugins / local operators are not touched.
+- **nftables backend** (`iptables_use_nftables: true`): role-owned
+  `table ip mpig_filter` / `table ip6 mpig_filter` / `table ip mpig_nat`
+  rendered into `/etc/nftables.conf`, loaded via a flat `nft -f`. Each
+  managed table is wrapped in the `add table … ; delete table … ;
+  table … { … }` idiom so the whole batch is one atomic kernel
+  transaction (in-file delete-then-create, nft 1.0.6 compatible, no
+  shell wrapper). The file declares only the `mpig_*` tables — it
+  never `flush ruleset` and never restarts external services.
+
+The role is opinionated: every external-facing chain (`INPUT`, `FORWARD`,
+container-side `DOCKER-USER`) defaults to deny-all on the listed external
+interfaces, and only the rules generated from role variables are allowed.
+Outbound traffic is permitted by default and can optionally be locked down
+against RFC1918 / ULA destinations.
 
 ## Features
 
-- IPv4 + IPv6 ruleset rendered from a single set of variables
+- IPv4 + IPv6 ruleset rendered from a single set of variables (works in both backends)
 - Per-port `INPUT` allow list with optional source CIDR restriction and IPv6 skip
 - `DOCKER-USER` chain rendered automatically when `docker.service` is present, so containers published with `-p` are not exposed past the firewall
 - DNAT + matching `FORWARD` allow via `iptables_forwarded_ports` (with a FORWARD-only variant when `dst_*` is omitted)
-- Static SNAT rules via `iptables_snat_rules` (rendered into `nat POSTROUTING`)
-- Randomized SNAT pool over multiple external IPs via a systemd timer (`iptables-custom-rules.timer`), re-balancing weighted SNAT rules across all configured IPs on a tunable interval
+- Static SNAT rules via `iptables_snat_rules` (rendered ahead of the masquerade block in `MPIG-POSTROUTING` (scoped iptables backend) / `chain postrouting` of `table ip mpig_nat` (nftables backend))
+- Randomized SNAT pool over multiple external IPs via a native nft chain
+  in its own table (`table ip mpig_randomized_snat`) at
+  `priority srcnat - 10`. Backend-independent: the kernel evaluates this
+  chain BEFORE every iptables-nft chain at `srcnat`, so randomized-pool
+  traffic is rewritten and terminated before kube-proxy (k8s), Kilo CNI,
+  or any other manager at `srcnat` sees the packet. Replaces the old
+  timer-based mechanism — no recurring re-insert, no first-match race
 - External-interface `MASQUERADE` for k8s / NAT gateway hosts
 - `net.ipv4.ip_forward` sysctl toggle
 - Optional rate-limited ICMP echo-request / echo-reply on the external interfaces
 - Optional egress-to-local-networks blocking (RFC1918 + CGNAT for IPv4, ULA + link-local for IPv6) with per-range exceptions
+- Seamless one-way migration `iptables → nftables` via `iptables_use_nftables: true`. The reverse direction is intentionally rejected
 
 ## Requirements
 
-- Debian-based target host (`apt`, `iptables-persistent`)
+- Debian-based target host (`apt`, `iptables`)
 - `community.general` and `ansible.posix` collections
 - root privileges (rule restore + sysctl)
+
+### Supported OS / nft version
+
+| Backend | Distros |
+|---|---|
+| `iptables_use_nftables: false` (default) | Every Debian/Ubuntu the `iptables` CLI supports |
+| `iptables_use_nftables: true` | Debian 12 (bookworm, nft 1.0.6) / Ubuntu 22.04 (jammy) and newer. The role uses the in-file `add table; delete table; table {…}` idiom for atomic delete-then-create (not `destroy table`, which 1.0.6 rejects), so a flat `nft -f` is one kernel transaction on the bookworm baseline. Both backends also need the `nftables` package because the randomized SNAT module is native nft (loaded into `table ip mpig_randomized_snat` at `priority srcnat - 10`) |
 
 ## External interface selection
 
@@ -107,7 +140,7 @@ DNAT entries also add a matching `MASQUERADE` rule on `POSTROUTING` for the dest
 
 | Variable | Default | Description |
 |---|---|---|
-| `iptables_snat_rules` | `[]` | Static SNAT rules rendered into `nat POSTROUTING`. Validated at apply time |
+| `iptables_snat_rules` | `[]` | Static SNAT rules rendered into `MPIG-POSTROUTING` (scoped iptables backend) or `chain postrouting` of `table ip mpig_nat` (nftables backend), ahead of the generic masquerade block so the narrow match terminates first. Validated at apply time |
 
 Each entry supports:
 
@@ -126,10 +159,27 @@ Independent of the randomized SNAT pool — match scopes prevent overlap. Valida
 
 | Variable | Default | Description |
 |---|---|---|
-| `iptables_randomized_ext_ips` | `[]` | External IPs to spread outbound TCP/80,443 traffic across. When non-empty, the role installs a systemd timer that re-balances weighted SNAT rules across all listed IPs |
-| `iptables_randomized_ext_ips_timer` | `5` | Re-balance interval in minutes (`OnCalendar=*:0/N`) |
+| `iptables_randomized_ext_ips` | `[]` | External IPs to spread outbound TCP/80,443 traffic across. When non-empty, the role installs a native nft chain in `table ip mpig_randomized_snat` at `priority srcnat - 10` that SNATs each new connection to a random pool IP |
 
-The script (`/usr/local/bin/reload_iptables_custom_rules.sh`) walks the IP list, deletes any existing matching rules, then re-inserts them with `-m statistic --mode random --probability` weights so the connection-NEW SNAT decision is uniformly distributed across the pool. The last IP in the list catches the remainder unconditionally.
+The chain is loaded from `/etc/nftables.d/mpig-randomized-snat.conf` by `mpig-randomized-snat.service` (`Type=oneshot`, no `RemainAfterExit`). Each `systemctl start` re-runs `ExecStart`, which is a flat `nft -f` on that file — the conf carries the in-file `add table; delete table; table {…}` idiom so the apply is one atomic kernel transaction (delete-then-create in a single commit, no shell wrapper). Selection uses `numgen random mod N map { ... }` so the connection-NEW SNAT decision is uniformly distributed across the pool — no `-m statistic --mode random --probability` weighting.
+
+The unit is fully decoupled from `nftables.service`: no `PartOf=` / `ReloadPropagatedFrom=`. Drift recovery (e.g. an `apt upgrade nftables` postinst that restarted the parent and lost our chain) is driven by `mpig-randomized-snat.timer`, which fires `mpig-randomized-snat.service` on the same `iptables_drift_check_interval` cadence as `mini-pig-firewall.timer`. To temporarily disable randomization from another role, stop the timer first (so it can't re-arm), then delete the table; reverse the order to resume:
+
+```bash
+systemctl stop mpig-randomized-snat.timer
+nft delete table ip mpig_randomized_snat 2>/dev/null || true
+# … window of no randomization …
+systemctl start mpig-randomized-snat.timer
+systemctl start mpig-randomized-snat.service
+```
+
+### Drift check
+
+| Variable | Default | Description |
+|---|---|---|
+| `iptables_drift_check_interval` | `10` | Minutes between re-assertion runs. Drives two independent timers: `mini-pig-firewall.timer` (re-asserts MPIG state on the active backend) and, when `iptables_randomized_ext_ips` is non-empty, `mpig-randomized-snat.timer` (re-applies the randomized SNAT chain). Idempotent — only diverged hosts pay the reload cost. Set to `0` to disable both timers |
+
+The unified service + timer doubles as the drift-check safety net for the active firewall backend (operator runs `iptables -F MPIG-INPUT`, a package postinst flushes nft state, etc.). `mpig-randomized-snat.timer` is the corresponding safety net for the SNAT chain. Each timer fires its own service — same code path the role invokes at apply time and at boot, no special drift-check binary.
 
 ### Egress and forwarding toggles
 
@@ -232,7 +282,6 @@ iptables_randomized_ext_ips:
   - 203.0.113.10
   - 203.0.113.11
   - 203.0.113.12
-iptables_randomized_ext_ips_timer: 5
 ```
 
 ### Restrict outbound to LAN, with one exception
@@ -267,33 +316,50 @@ iptables_docker_ports:
 
 ## Docker integration
 
-When `/lib/systemd/system/docker.service` is present, the role:
+When `/lib/systemd/system/docker.service` is present, the scoped iptables backend (via `/usr/local/sbin/mini-pig-firewall-apply`) manages a `MPIG-DOCKER-USER` chain that hangs off Docker's `DOCKER-USER`. The chain is populated from `iptables_docker_ports` and followed by a default `DROP` on the listed external interfaces, so containers published with `-p` are not exposed past the firewall. Docker itself is never restarted: the apply script touches only role-owned chains and the anchor jump, leaving Docker's own `DOCKER` / `DOCKER-ISOLATION-*` chains alone.
 
-1. Renders the `DOCKER-USER` chain with per-port allow entries from `iptables_docker_ports`, followed by a default `DROP` on the external interfaces.
-2. Notifies a `restart docker` handler whenever the IPv4 or IPv6 ruleset changes — Docker's own chains (`DOCKER`, `DOCKER-ISOLATION-*`) are flushed by `iptables-restore` and must be re-installed by `dockerd`.
-
-If Docker is not installed, both behaviors are skipped silently — the `stat` check is the only signal.
+If Docker is not installed, the `MPIG-DOCKER-USER` chain is not rendered — the `stat` on the unit file is the only signal.
 
 ## Idempotency
 
-- Templates rewrite the rule files only when input changes.
-- `community.general.iptables_state` applies the saved rules via `iptables-restore`; subsequent runs with the same input produce no `changed`.
-- The Docker handler fires only on rule changes, not on every play.
-- `iptables_randomized_ext_ips_timer` ticks the SNAT re-balance script outside Ansible — repeated apply runs do not churn it.
+- Backend templates re-render only when input variables change.
+- Scoped iptables backend: the apply script uses `ensure_chain` (create-then-flush) + `ensure_anchor` (`-C` before `-A`) so re-applies with the same inputs produce no `changed`.
+- nftables backend: `/etc/nftables.conf` is re-rendered only when variables change, and the apply step's `changed_when` is gated on the template's `changed`. Every apply is a flat `nft -f` against the rendered file; the in-file `add table; delete table; table {…}` idiom (see AGENTS.md pitfall P4) gives atomic delete-then-create within a single kernel transaction, keeping kernel state in lock-step with the file without ever flushing the global ruleset.
+- Randomized SNAT: the service unit is `Type=oneshot` without `RemainAfterExit`, so each `systemctl start` re-fires `ExecStart` (flat `nft -f /etc/nftables.d/mpig-randomized-snat.conf`; the conf carries the in-file `add table; delete table; table {…}` idiom so the apply is one atomic kernel transaction). Ansible's `changed` reporting is gated on the managed config (the conf or the unit file) actually changing.
+- Drift-check timers (`mini-pig-firewall.timer`, `mpig-randomized-snat.timer`) restart only when their unit files change.
+
+## Migration
+
+The role supports two migration paths:
+
+1. **legacy `iptables-persistent` → scoped iptables** (first apply on a host coming from the old layout).
+2. **scoped iptables → nftables** (flip `iptables_use_nftables: false → true`).
+
+Both paths perform an **atomic, one-shot wipe** of the role-owned iptables-nft tables (`ip filter`, `ip nat`, `ip6 filter`; `mangle` is left untouched). The wipe replaces the contents in a single `iptables-restore` / `ip6tables-restore` transaction so the host is never observed without firewall coverage. Steady-state applies after the migration never wipe again — the surgical apply script (or the nft delete-then-load) is used instead.
+
+> ⚠️ **The wipe also removes foreign chains in the affected iptables-nft tables** (`KUBE-FORWARD`, `KUBE-POSTROUTING`, `DOCKER`, `DOCKER-USER`, `DOCKER-ISOLATION-*`, libvirt, podman/netavark, operator hand-written chains, …). This is the accepted one-time migration cost — the same trade-off both paths take.
+>
+> If the host runs background managers that maintain their own iptables/nftables rules (kube-proxy, dockerd, libvirt, podman, custom systemd units), **restart those services after migration** to force an immediate reconcile. Most of them self-heal on their next periodic pass anyway, but a restart removes the window of partially-restored foreign state.
+>
+> For the lazy-but-safe option: **reboot the host** after migration completes. All managers come up clean and rebuild their iptables-nft state from scratch.
+>
+> The reverse direction (nftables → iptables) is intentionally rejected by the role's marker guard.
 
 ## Molecule
 
-The role ships with a single Molecule scenario.
+The role ships with three Molecule scenarios driven by `molecule/Makefile`.
 
 ### Scenarios
 
 | Scenario | Driver | Purpose |
 |----------|--------|---------|
-| `default` | podman | Debian trixie in a privileged container; veth pairs in dedicated netns simulate external interfaces |
+| `default` | podman | Debian 12 (bookworm); exercises the scoped iptables backend, multiple `iptables_inf_ext` shapes, all four `iptables_snat_rules` template branches, the native nft randomized-SNAT chain at `priority srcnat - 10`, the drift-check timer, and a packet-level distribution probe (N=20 SNAT-routed TCP connects to a listener inside the peer netns — both pool IPs must appear, peer source must never leak through) |
+| `scoped_migration` | podman | Debian 12 (bookworm); starts from the legacy iptables-persistent layout (with the old `iptables-custom-rules.timer/.service` + script) and proves the first apply migrates cleanly to scoped MPIG state while a second apply preserves foreign `KUBE-*` chains |
+| `nftables` | podman | Debian 12 (bookworm); walks iptables backend → nftables migration → idempotent re-apply → changed-ruleset re-apply → forbidden reverse migration. Asserts ownership of `mpig_*` tables, decoupled SNAT drift recovery (delete table → fire service → chain restored), `nftables.service` reload independence (SNAT chain survives because no `PartOf=`/`ReloadPropagatedFrom=` coupling), absence of `destroy table` in the rendered config, and randomized-SNAT preemption |
 
-The scenario applies the role four times with different `iptables_inf_ext` shapes (string, empty string, empty list, list) and snapshots the rendered `/etc/iptables/rules.v4` after each apply. Verify reads the snapshots and asserts backward compatibility plus normalization across all four input forms. The final apply uses the list form so verify can drive real traffic through the veth peer netns against the loaded ruleset.
+The default scenario snapshots the rendered scoped apply script after each transition; the nftables scenario snapshots `/etc/nftables.conf` and `nft list ruleset`; the scoped_migration scenario asserts a clean migration. Always run via the Makefile — it pins `ANSIBLE_COLLECTIONS_PATH` to the in-repo install dir so a stale `~/.ansible/collections/` snapshot cannot shadow the version under test.
 
-Idempotence is intentionally disabled: re-running converge would legitimately re-render rules as it walks the four interface shapes.
+Idempotence is intentionally disabled for `default` and `nftables`: their converge plays walk through multiple role-variable transitions, which legitimately re-renders rules.
 
 ### Running tests
 
@@ -302,6 +368,9 @@ cd roles/iptables/molecule
 make help
 
 make default-podman-test
+make scoped-migration-podman-test
+make nftables-podman-test
+
 make default-podman-converge
 make default-podman-verify
 make default-podman-login

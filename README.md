@@ -16,7 +16,7 @@ Target OS: Debian / Ubuntu. Container workloads run under **Podman + systemd** (
 | [`telemt`](roles/telemt) | Telegram SOCKS / MTProto proxy with Fake TLS masking, Caddy decoy, and Let's Encrypt (or Pebble) issuance. |
 | [`wireguard`](roles/wireguard) | WireGuard VPN with three modes: local config generation, server instance, or MikroTik router integration. |
 | [`ssl_router`](roles/ssl_router) | Nginx reverse proxy in Podman for TLS termination and HTTP routing. |
-| [`iptables`](roles/iptables) | IPv4/IPv6 firewall via `iptables-persistent`; optional periodic external-IP rotation across multiple interfaces. |
+| [`iptables`](roles/iptables) | IPv4/IPv6 firewall via `iptables-persistent` (default) or scoped `nftables` tables (opt-in via `iptables_use_nftables`, live migration from the legacy backend); optional periodic external-IP rotation across multiple interfaces. |
 | [`cf_ddns`](roles/cf_ddns) | Cloudflare dynamic-DNS updater running as a Podman service. |
 
 **Observability**

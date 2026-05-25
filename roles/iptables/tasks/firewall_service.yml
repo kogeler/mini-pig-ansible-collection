@@ -1,0 +1,34 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Render the unified firewall apply script + its service unit. The script
+# reads the backend marker and dispatches to the matching apply body
+# (iptables MPIG-* chains or nft `mpig_*` tables). Enabled here so it is
+# set for boot; started by each backend once its files + marker are in
+# place.
+
+- name: iptables | service | Render unified firewall apply script
+  ansible.builtin.template:
+    src: mini-pig-firewall-apply.j2
+    dest: /usr/local/sbin/mini-pig-firewall-apply
+    mode: "0755"
+    owner: root
+    group: root
+    validate: "/bin/bash -n %s"
+  register: _iptables_firewall_apply_script
+
+- name: iptables | service | Render unified firewall service
+  ansible.builtin.template:
+    src: mini-pig-firewall.service.j2
+    dest: /etc/systemd/system/mini-pig-firewall.service
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: iptables | service | Enable unified firewall service
+  ansible.builtin.systemd:
+    name: mini-pig-firewall.service
+    enabled: true
+    daemon_reload: true

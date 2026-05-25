@@ -1,12 +1,10 @@
 ---
 # Apply the iptables role four times with different `iptables_inf_ext`
-# shapes, snapshotting the rendered `/etc/iptables/rules.v4` (the role's
-# template output, not `iptables-save`'s canonicalised kernel dump) after
-# each apply. Verify reads those snapshots and asserts the rule set was
+# shapes, snapshotting the rendered scoped apply script after each apply.
+# Verify reads those snapshots and asserts the role-owned MPIG chains were
 # rendered for the right interfaces in each case (backward-compat +
-# normalization). The final apply uses the list form so verify can also
-# drive real traffic through the veth peer netns against the loaded
-# ruleset.
+# normalization). The final apply uses the list form so verify can also drive
+# real traffic through the veth peer netns against the loaded ruleset.
 - name: Converge
   hosts: all
   vars_files:
@@ -18,6 +16,15 @@
         dest: /tmp/molecule-iptables-default-iface.txt
         mode: "0644"
 
+    # NOTE: foreign KUBE-* state is added AFTER Stage 1 (see below). The
+    # container ships with iptables-persistent baked in, which triggers the
+    # role's one-shot atomic legacy wipe on the first apply — by design that
+    # wipe tears down everything in `filter`/`nat`/`ip6 filter`, foreign or
+    # not, since the role doesn't have a reliable way to tell role-owned
+    # from operator-owned state without a rule-file source-of-truth. The
+    # interesting test of foreign preservation is whether SUBSEQUENT applies
+    # leave the running KUBE-* chains alone; we set them up post-Stage-1.
+
     # -- Stage 1: string form (backward compatibility) ---------------------
     - name: Apply iptables role — string form (backward-compat)
       ansible.builtin.include_role:
@@ -28,12 +35,25 @@
           - port: "{{ molecule_iptables_allowed_port }}"
             protocol: tcp
 
-    - name: Snapshot rendered v4 ruleset — string form
+    - name: Snapshot rendered apply script — string form
       ansible.builtin.copy:
-        src: /etc/iptables/rules.v4
-        dest: /tmp/molecule-iptables-snap-string.v4
+        src: /usr/local/sbin/mini-pig-firewall-apply
+        dest: /tmp/molecule-iptables-snap-string.apply
         remote_src: true
         mode: "0644"
+
+    - name: Create foreign iptables state that subsequent role applies must preserve
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - iptables -w -t filter -N KUBE-FORWARD
+        - iptables -w -t filter -A FORWARD -j KUBE-FORWARD
+        - iptables -w -t filter -A KUBE-FORWARD -m comment --comment molecule-foreign-filter -j RETURN
+        - iptables -w -t nat -N KUBE-POSTROUTING
+        - iptables -w -t nat -A POSTROUTING -j KUBE-POSTROUTING
+        - iptables -w -t nat -A KUBE-POSTROUTING -m comment --comment molecule-foreign-nat -j RETURN
+      changed_when: false
+      failed_when: false
 
     # -- Stage 2: empty string (must fall back to default iface) -----------
     - name: Apply iptables role — empty string (must fall back)
@@ -45,10 +65,10 @@
           - port: "{{ molecule_iptables_allowed_port }}"
             protocol: tcp
 
-    - name: Snapshot rendered v4 ruleset — empty string
+    - name: Snapshot rendered apply script — empty string
       ansible.builtin.copy:
-        src: /etc/iptables/rules.v4
-        dest: /tmp/molecule-iptables-snap-empty-string.v4
+        src: /usr/local/sbin/mini-pig-firewall-apply
+        dest: /tmp/molecule-iptables-snap-empty-string.apply
         remote_src: true
         mode: "0644"
 
@@ -62,10 +82,10 @@
           - port: "{{ molecule_iptables_allowed_port }}"
             protocol: tcp
 
-    - name: Snapshot rendered v4 ruleset — empty list
+    - name: Snapshot rendered apply script — empty list
       ansible.builtin.copy:
-        src: /etc/iptables/rules.v4
-        dest: /tmp/molecule-iptables-snap-empty-list.v4
+        src: /usr/local/sbin/mini-pig-firewall-apply
+        dest: /tmp/molecule-iptables-snap-empty-list.apply
         remote_src: true
         mode: "0644"
 
@@ -96,6 +116,14 @@
             protocol: tcp
             dst_port: "{{ molecule_iptables_allowed_port }}"
             dst_address: "{{ molecule_iptables_peer_ip_b }}"
+          # FORWARD-only allow for port 80 — the randomized-SNAT packet
+          # probe forwards extns_a -> peer_ip_b:80 through the host so
+          # the mpig_randomized_snat chain at priority srcnat - 10 can
+          # rewrite the source.
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: 80
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
         iptables_ipv4_forward_enable: true
         iptables_ext_inf_masquerade: true
         iptables_external_ping_enable: true
@@ -125,17 +153,258 @@
             dst_address: "{{ molecule_iptables_snat_dst_addr }}"
           - to_source: "{{ molecule_iptables_snat_no_proto_src }}"
             dst_address: "{{ molecule_iptables_snat_no_proto_addr }}"
+        # Randomized SNAT pool — exercises tasks/randomized_snat.yml:
+        # native nft chain in `table ip mpig_randomized_snat` at
+        # `priority srcnat - 10`, loaded by `mpig-randomized-snat.service`.
+        # Verify asserts the chain is loaded and the legacy
+        # `iptables-custom-rules.*` units/script are absent.
+        iptables_randomized_ext_ips:
+          - "{{ molecule_iptables_snat_randomized_ip_a }}"
+          - "{{ molecule_iptables_snat_randomized_ip_b }}"
 
-    - name: Snapshot rendered v4 ruleset — list form
+    - name: Snapshot rendered apply script — list form
       ansible.builtin.copy:
-        src: /etc/iptables/rules.v4
-        dest: /tmp/molecule-iptables-snap-list.v4
+        src: /usr/local/sbin/mini-pig-firewall-apply
+        dest: /tmp/molecule-iptables-snap-list.apply
         remote_src: true
         mode: "0644"
 
-    - name: Snapshot rendered v6 ruleset — list form
+    - name: Capture final iptables-save output
+      ansible.builtin.command:
+        cmd: iptables-save
+      register: _iptables_save_final
+      changed_when: false
+
+    - name: Persist final iptables-save output
       ansible.builtin.copy:
-        src: /etc/iptables/rules.v6
-        dest: /tmp/molecule-iptables-snap-list.v6
-        remote_src: true
+        content: "{{ _iptables_save_final.stdout }}\n"
+        dest: /tmp/molecule-iptables-final-iptables-save.txt
         mode: "0644"
+
+    - name: Stat legacy iptables-persistent rule files
+      ansible.builtin.stat:
+        path: "/etc/iptables/{{ item }}"
+      register: _legacy_rule_stats
+      loop:
+        - "rules.v4"
+        - "rules.v6"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Persist legacy-rule-file existence dump
+      ansible.builtin.copy:
+        content: |
+          rules.v4_exists={{ _legacy_rule_stats.results[0].stat.exists }}
+          rules.v6_exists={{ _legacy_rule_stats.results[1].stat.exists }}
+        dest: /tmp/molecule-iptables-legacy-files.env
+        mode: "0644"
+
+    - name: Capture service enablement state
+      ansible.builtin.command:
+        cmd: "systemctl is-enabled {{ item }}"
+      register: _service_enabled
+      changed_when: false
+      failed_when: false
+      loop:
+        - mini-pig-firewall.service
+        - netfilter-persistent.service
+        - mpig-randomized-snat.service
+        - mini-pig-firewall.timer
+        - mpig-randomized-snat.timer
+
+    # mpig-randomized-snat.service is Type=oneshot without RemainAfterExit;
+    # it returns to inactive between fires. Capture the last execution
+    # result instead of the (mostly inactive) is-active state — proves the
+    # most recent ExecStart finished cleanly.
+    - name: Capture mpig-randomized-snat service Result
+      ansible.builtin.command:
+        cmd: "systemctl show mpig-randomized-snat.service --property=Result --value"
+      register: _snat_result
+      changed_when: false
+      failed_when: false
+
+    - name: Capture firewall timer active state
+      ansible.builtin.command:
+        cmd: "systemctl is-active mini-pig-firewall.timer"
+      register: _drift_active
+      changed_when: false
+      failed_when: false
+
+    - name: Capture mpig-randomized-snat timer active state
+      ansible.builtin.command:
+        cmd: "systemctl is-active mpig-randomized-snat.timer"
+      register: _snat_timer_active
+      changed_when: false
+      failed_when: false
+
+    - name: Stat new randomized SNAT module files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _snat_new_stats
+      loop:
+        - /etc/systemd/system/mpig-randomized-snat.service
+        - /etc/nftables.d/mpig-randomized-snat.conf
+        - /etc/systemd/system/mpig-randomized-snat.timer
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Stat legacy randomized SNAT artefacts (must be absent after apply)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _snat_legacy_stats
+      loop:
+        - /etc/systemd/system/iptables-custom-rules.timer
+        - /etc/systemd/system/iptables-custom-rules.service
+        - /usr/local/bin/reload_iptables_custom_rules.sh
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Capture live mpig_randomized_snat table
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _snat_nft_table
+      changed_when: false
+      failed_when: false
+
+    - name: Persist mpig_randomized_snat live table
+      ansible.builtin.copy:
+        content: "{{ _snat_nft_table.stdout }}\n"
+        dest: /tmp/molecule-iptables-snat-nft-table.txt
+        mode: "0644"
+
+    - name: Persist service enablement state
+      ansible.builtin.copy:
+        content: |
+          mini_pig_firewall_enabled={{ _service_enabled.results[0].stdout | default('') | trim }}
+          mini_pig_firewall_rc={{ _service_enabled.results[0].rc }}
+          netfilter_persistent_enabled={{ _service_enabled.results[1].stdout | default('') | trim }}
+          netfilter_persistent_rc={{ _service_enabled.results[1].rc }}
+          mpig_snat_service_enabled={{ _service_enabled.results[2].stdout | default('') | trim }}
+          mpig_snat_service_rc={{ _service_enabled.results[2].rc }}
+          mpig_snat_service_result={{ _snat_result.stdout | default('') | trim }}
+          mpig_snat_service_result_rc={{ _snat_result.rc }}
+          firewall_timer_enabled={{ _service_enabled.results[3].stdout | default('') | trim }}
+          firewall_timer_rc={{ _service_enabled.results[3].rc }}
+          firewall_timer_active={{ _drift_active.stdout | default('') | trim }}
+          firewall_timer_active_rc={{ _drift_active.rc }}
+          mpig_snat_timer_enabled={{ _service_enabled.results[4].stdout | default('') | trim }}
+          mpig_snat_timer_rc={{ _service_enabled.results[4].rc }}
+          mpig_snat_timer_active={{ _snat_timer_active.stdout | default('') | trim }}
+          mpig_snat_timer_active_rc={{ _snat_timer_active.rc }}
+          mpig_snat_service_unit_exists={{ _snat_new_stats.results[0].stat.exists }}
+          mpig_snat_conf_exists={{ _snat_new_stats.results[1].stat.exists }}
+          mpig_snat_timer_unit_exists={{ _snat_new_stats.results[2].stat.exists }}
+          legacy_snat_timer_exists={{ _snat_legacy_stats.results[0].stat.exists }}
+          legacy_snat_service_exists={{ _snat_legacy_stats.results[1].stat.exists }}
+          legacy_snat_script_exists={{ _snat_legacy_stats.results[2].stat.exists }}
+        dest: /tmp/molecule-iptables-services.env
+        mode: "0644"
+
+    # Flush MPIG-POSTROUTING, trigger the unified firewall service, and
+    # assert the chain is restored.
+    - name: Flush MPIG-POSTROUTING to simulate operator drift
+      ansible.builtin.command:
+        cmd: iptables -w -t nat -F MPIG-POSTROUTING
+      changed_when: true
+
+    - name: Capture MPIG-POSTROUTING content right after flush (must be empty)
+      ansible.builtin.command:
+        cmd: iptables -w -t nat -S MPIG-POSTROUTING
+      register: _mpig_post_flushed
+      changed_when: false
+
+    - name: Run unified firewall service once to repair the flush
+      ansible.builtin.systemd:
+        name: mini-pig-firewall.service
+        state: started
+
+    - name: Capture MPIG-POSTROUTING content after repair
+      ansible.builtin.command:
+        cmd: iptables -w -t nat -S MPIG-POSTROUTING
+      register: _mpig_post_repaired
+      changed_when: false
+
+    - name: Persist repair before/after snapshots
+      ansible.builtin.copy:
+        content: |
+          === flushed ===
+          {{ _mpig_post_flushed.stdout }}
+          === repaired ===
+          {{ _mpig_post_repaired.stdout }}
+        dest: /tmp/molecule-iptables-drift-repair.txt
+        mode: "0644"
+
+    # Packet-level test of randomized SNAT: N TCP connects from extns_a
+    # to peer_ip_b:80 must each be rewritten by the mpig_randomized_snat
+    # chain (priority srcnat - 10) so the listener in extns_b records
+    # one of iptables_randomized_ext_ips as the source for every probe,
+    # NEVER peer_ip_a. With N=20 we have ~2e-6 probability of NOT seeing
+    # one of a 2-IP pool by chance — a degenerate numgen (constant) or a
+    # broken numgen-random map will only land one IP and verify will catch
+    # it. We don't enforce strict uniform distribution: chi-squared on
+    # N=20 is flaky and we don't need it — the regression we care about
+    # is "map collapsed", not "ratio is 47/53 vs 53/47".
+    - name: Remove stale SNAT-distribution capture file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-snat-distribution.txt
+        state: absent
+
+    - name: Start accept-loop listener inside extns_b on port 80 (records N peer IPs)
+      ansible.builtin.command:
+        argv:
+          - nsenter
+          - "-n/var/run/netns/{{ molecule_iptables_netns_b }}"
+          - python3
+          - -c
+          - |
+            import socket
+            sock = socket.socket()
+            # SO_REUSEADDR: the previous oneshot listener on :80 may have
+            # left a TIME_WAIT socket. The loop accepts exactly N
+            # connections then exits; settimeout caps the wait window
+            # so a hung probe doesn't leave the listener forever.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", 80))
+            sock.listen(64)
+            sock.settimeout(60)
+            with open("/tmp/molecule-iptables-snat-distribution.txt", "w") as fh:
+                for _ in range(20):
+                    conn, addr = sock.accept()
+                    fh.write(addr[0] + "\n")
+                    fh.flush()
+                    conn.close()
+            sock.close()
+      async: 90
+      poll: 0
+      changed_when: false
+
+    - name: Wait for distribution listener inside extns_b to bind
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          ss -ltn sport = :80
+      register: _snat_dist_listener_wait
+      changed_when: false
+      until: "'LISTEN' in _snat_dist_listener_wait.stdout"
+      retries: 10
+      delay: 1
+
+    - name: Probe peer_ip_b:80 from extns_a — N=20 connects for distribution
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -w 3 {{ molecule_iptables_peer_ip_b }} 80
+        stdin: ""
+      loop: "{{ range(20) | list }}"
+      loop_control:
+        label: "probe #{{ item + 1 }}"
+      changed_when: false
+
+    - name: Wait for distribution capture file to have N lines
+      ansible.builtin.command:
+        cmd: wc -l /tmp/molecule-iptables-snat-distribution.txt
+      register: _snat_dist_wait
+      changed_when: false
+      until: (_snat_dist_wait.stdout.split()[0] | int) >= 20
+      retries: 30
+      delay: 1
