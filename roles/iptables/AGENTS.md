@@ -396,6 +396,37 @@ Docs:
   (`PartOf=` propagates stop+restart only, not start; `ReloadPropagatedFrom=`
   propagates reload; neither covers the start-via-timer case used here).
 
+### P12. ICMP echo-request rate-limit must sit ABOVE `ct state related,established accept`
+
+ICMP conntrack tuples are stable per `ping` process (same `id`), so
+packets 2..N of a continuous inbound ping match `ESTABLISHED` and skip
+the rate-limit. Required order in both backends:
+
+1. `iif lo accept`
+2. echo-request rate-limit (hashlimit / `update @icmp_echo_v4 { ... limit rate }`) — accept in-burst
+3. echo-request **explicit drop** — over-burst, otherwise `hashlimit`/`update` non-match falls through to (4)
+4. `ct state related,established accept`
+
+Echo-reply stays BELOW (4): our own outbound `ping <peer>` returns as
+echo-reply matching `ESTABLISHED`, and we don't want to throttle that.
+
+Don't "clean up" to the conventional state-first idiom — it silently
+disables ICMP rate-limiting for steady inbound pings. The `default`
+scenario probes this in `molecule/shared/{converge,verify}.yml`: fire
+N=20 parallel `ping -c 1` from extns_a, record each ping's exit
+status; verify asserts `1 ≤ OK < N` — i.e. the peer actually saw
+packet loss. All-OK means the rate-limit was bypassed (state shortcut
+took over); all-FAIL means even the in-burst portion was dropped.
+Only covers the iptables backend — the nft template carries the same
+ordering by construction.
+
+Docs:
+
+- iptables-extensions(8) `hashlimit` semantics (match-only, no implicit drop):
+  <https://manpages.debian.org/bookworm/iptables/iptables-extensions.8.en.html>
+- nft `update @set { ... limit rate }` falls through on non-match:
+  <https://wiki.nftables.org/wiki-nftables/index.php/Rate_limiting_matchings>
+
 ## Rules for AI agents running Molecule
 
 1. Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule`.
@@ -732,6 +763,12 @@ Before approving changes to this role, confirm:
 - The scope of an nft rate-limit set matches the iptables-side scope
   (e.g. ICMP hashlimit is a single global bucket, NOT per-interface —
   pitfall P2).
+- ICMP echo-request rate-limit sits ABOVE `ct state related,established
+  accept` (both in `MPIG-INPUT` and `chain input` of `mpig_filter` /
+  `ip6 mpig_filter`), followed by an explicit `drop` for over-burst.
+  Echo-reply rate-limit stays BELOW the state accept. Reverting to the
+  state-first idiom silently disables the limit for steady-state inbound
+  pings (pitfall P12).
 - Migration to nft loads replacement runtime rules before teardown
   (pitfall P6).
 - Reverse migration from nftables to iptables still fails early.
