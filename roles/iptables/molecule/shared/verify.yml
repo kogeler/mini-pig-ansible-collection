@@ -705,6 +705,39 @@
       changed_when: false
       failed_when: _ping.rc != 0
 
+    # -- AGENTS.md P12: echo-request rate-limit sits ABOVE state shortcut ----
+    # Converge fired 20 parallel `ping -c 1` from extns_a (each its own
+    # ICMP id → its own conntrack tuple, so the ESTABLISHED shortcut
+    # does not save them). Real observable outcome: the peer ping
+    # command reports timeout for the dropped packets. We assert that
+    # fewer than N pings succeeded — i.e. rate-limit really cut traffic.
+
+    - name: Read ICMP burst results
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-icmp-results.txt
+      register: _icmp_results_raw
+
+    - name: Count successful and dropped pings
+      ansible.builtin.set_fact:
+        _icmp_lines: "{{ (_icmp_results_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert rate-limit cut some of the N parallel pings (P12)
+      ansible.builtin.assert:
+        that:
+          - (_icmp_lines | length) == 20
+          - (_icmp_lines | select('equalto', 'OK') | list | length) >= 1
+          - (_icmp_lines | select('equalto', 'OK') | list | length) < 20
+        fail_msg: |
+          ICMP rate-limit did not throttle the burst. Out of N=20 parallel
+          pings from extns_a, OK={{ _icmp_lines | select('equalto', 'OK') | list | length }},
+          FAIL={{ _icmp_lines | select('equalto', 'FAIL') | list | length }}.
+          Expected OK in 1..19 — all-success means the rate-limit was
+          bypassed (likely P12 ordering regressed below state-accept),
+          all-fail means even the in-burst portion was dropped (broken
+          ACCEPT or the listener netns is wrong).
+          Raw results:
+          {{ _icmp_lines }}
+
     # Off-path test: setting iptables_drift_check_interval=0 must tear
     # down mini-pig-firewall.timer (the service itself stays — it is
     # the apply path). Run as the very last step so the resulting

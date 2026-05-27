@@ -871,6 +871,35 @@
       changed_when: false
       failed_when: _ping_nft.rc != 0
 
+    # -- AGENTS.md P12: echo-request rate-limit sits ABOVE state shortcut ----
+    # Stage 4c fired 20 parallel `ping -c 1` from extns_a — each its own
+    # ICMP id → fresh conntrack tuple, no ESTABLISHED shortcut. Assert the
+    # peer saw real packet loss (1 ≤ OK < N).
+    - name: Read ICMP burst results (nft)
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-icmp-results.txt
+      register: _icmp_results_nft_raw
+
+    - name: Count successful and dropped pings (nft)
+      ansible.builtin.set_fact:
+        _icmp_lines_nft: "{{ (_icmp_results_nft_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert rate-limit cut some of the N parallel pings (nft, P12)
+      ansible.builtin.assert:
+        that:
+          - (_icmp_lines_nft | length) == 20
+          - (_icmp_lines_nft | select('equalto', 'OK') | list | length) >= 1
+          - (_icmp_lines_nft | select('equalto', 'OK') | list | length) < 20
+        fail_msg: |
+          ICMP rate-limit did not throttle the burst under nft mode. Out of
+          N=20 parallel pings from extns_a, OK={{ _icmp_lines_nft | select('equalto', 'OK') | list | length }},
+          FAIL={{ _icmp_lines_nft | select('equalto', 'FAIL') | list | length }}.
+          Expected OK in 1..19 — all-success means the nft rate-limit was
+          bypassed (P12 ordering regressed below `ct state related,established
+          accept`), all-fail means even the in-burst portion was dropped.
+          Raw results:
+          {{ _icmp_lines_nft }}
+
     # -- sysctl propagation under nft mode --------------------------------
     - name: Read net.ipv4.ip_forward sysctl (nft)
       ansible.builtin.slurp:

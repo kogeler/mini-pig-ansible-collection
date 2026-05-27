@@ -40,6 +40,13 @@ table ip mpig_filter {
     chain input {
         type filter hook input priority filter; policy accept;
         iif "lo" accept
+{# echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" icmp type echo-request update @icmp_echo_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" icmp type echo-request drop
+{% endfor %}
+{% endif %}
         ct state related,established accept
         ct state invalid drop
 {% for inf in _iptables_inf_ext_list %}
@@ -47,7 +54,6 @@ table ip mpig_filter {
         iifname "{{ inf }}" ip saddr {{ port.src_v4 | default('0.0.0.0/0') }} {{ port.protocol }} dport {{ port.port }} ct state new accept
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-        iifname "{{ inf }}" icmp type echo-request update @icmp_echo_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
         iifname "{{ inf }}" icmp type echo-reply update @icmp_reply_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
         iifname "{{ inf }}" meta l4proto icmp drop
 {% endif %}
@@ -106,6 +112,13 @@ table ip6 mpig_filter {
     chain input {
         type filter hook input priority filter; policy accept;
         iif "lo" accept
+{# same ordering as v4 above; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" icmpv6 type echo-request update @icmpv6_echo { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" icmpv6 type echo-request drop
+{% endfor %}
+{% endif %}
         ct state related,established accept
         ct state invalid drop
 {% for inf in _iptables_inf_ext_list %}
@@ -115,7 +128,6 @@ table ip6 mpig_filter {
 {% endif %}
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-        iifname "{{ inf }}" icmpv6 type echo-request update @icmpv6_echo { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
         iifname "{{ inf }}" icmpv6 type echo-reply update @icmpv6_reply { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
         iifname "{{ inf }}" meta l4proto ipv6-icmp drop
 {% endif %}

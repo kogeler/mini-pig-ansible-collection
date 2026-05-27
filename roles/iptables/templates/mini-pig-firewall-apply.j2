@@ -121,6 +121,13 @@ fi
 {% endif %}
 
 "$IPT" -w -t filter -A MPIG-INPUT -i lo -j ACCEPT
+{# echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -j DROP
+{% endfor %}
+{% endif %}
 "$IPT" -w -t filter -A MPIG-INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 "$IPT" -w -t filter -A MPIG-INPUT -m state --state INVALID -j DROP
 {% for inf in _iptables_inf_ext_list %}
@@ -128,7 +135,6 @@ fi
 "$IPT" -w -t filter -A MPIG-INPUT -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp -j DROP
 {% endif %}
@@ -175,6 +181,13 @@ fi
 {% endif %}
 
 "$IP6T" -w -t filter -A MPIG-INPUT -i lo -j ACCEPT
+{# same ordering as v4 above; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -j DROP
+{% endfor %}
+{% endif %}
 "$IP6T" -w -t filter -A MPIG-INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 "$IP6T" -w -t filter -A MPIG-INPUT -m state --state INVALID -j DROP
 {% for inf in _iptables_inf_ext_list %}
@@ -184,7 +197,6 @@ fi
 {% endif %}
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp -j DROP
 {% endif %}

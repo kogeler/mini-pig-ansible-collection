@@ -408,3 +408,27 @@
       until: (_snat_dist_wait.stdout.split()[0] | int) >= 20
       retries: 30
       delay: 1
+
+    # AGENTS.md P12: fire N parallel `ping -c 1` from extns_a — each
+    # process has a distinct ICMP id → distinct conntrack tuple → no
+    # ESTABLISHED shortcut. With the correct ordering the rate-limit
+    # accepts in-burst and drops over-burst, so the peer sees real
+    # packet loss. Verify counts OK lines and asserts success < N.
+    - name: Remove stale ICMP rate-limit result file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-icmp-results.txt
+        state: absent
+
+    - name: Fire N=20 parallel pings from extns_a, record each result
+      ansible.builtin.shell: |
+        : > /tmp/molecule-iptables-icmp-results.txt
+        for _ in $(seq 1 20); do
+          (nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }} \
+             ping -c 1 -W 2 {{ molecule_iptables_host_ip_a }} >/dev/null 2>&1 \
+             && echo OK >> /tmp/molecule-iptables-icmp-results.txt \
+             || echo FAIL >> /tmp/molecule-iptables-icmp-results.txt) &
+        done
+        wait
+      args:
+        executable: /bin/bash
+      changed_when: false
