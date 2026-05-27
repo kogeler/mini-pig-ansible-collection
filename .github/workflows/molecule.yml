@@ -15,7 +15,7 @@ jobs:
       has_jobs: ${{ steps.build-matrix.outputs.has_jobs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -99,7 +99,7 @@ jobs:
         include: ${{ fromJson(needs.detect.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: ansible_collections/kogeler/mini_pig
 

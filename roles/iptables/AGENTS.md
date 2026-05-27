@@ -411,14 +411,15 @@ Echo-reply stays BELOW (4): our own outbound `ping <peer>` returns as
 echo-reply matching `ESTABLISHED`, and we don't want to throttle that.
 
 Don't "clean up" to the conventional state-first idiom — it silently
-disables ICMP rate-limiting for steady inbound pings. The `default`
-scenario probes this in `molecule/shared/{converge,verify}.yml`: fire
-N=20 parallel `ping -c 1` from extns_a, record each ping's exit
-status; verify asserts `1 ≤ OK < N` — i.e. the peer actually saw
-packet loss. All-OK means the rate-limit was bypassed (state shortcut
-took over); all-FAIL means even the in-burst portion was dropped.
-Only covers the iptables backend — the nft template carries the same
-ordering by construction.
+disables ICMP rate-limiting for steady inbound pings. Both backends
+have a probe: `default` scenario covers iptables backend
+(`molecule/shared/{converge,verify}.yml`); `nftables` scenario covers
+nft backend (Stage 4c in `molecule/nftables/converge.yml` + matching
+assert in `verify.yml`). Each fires N=20 parallel `ping -c 1` from
+extns_a (distinct PIDs → distinct ICMP ids → no conntrack shortcut),
+records every ping's exit status, asserts `1 ≤ OK < N`. All-OK means
+the rate-limit was bypassed; all-FAIL means even the in-burst portion
+was dropped.
 
 Docs:
 

@@ -650,6 +650,30 @@
         dest: /tmp/molecule-iptables-drift-status.txt
         mode: "0644"
 
+    # -- Stage 4c: ICMP echo-request rate-limit (AGENTS.md P12, nft) ----------
+    # Mirror of the default-scenario probe but against the nft backend.
+    # Each `ping -c 1` spawns a fresh ICMP id → fresh conntrack tuple → no
+    # ESTABLISHED shortcut. With the correct nft ordering the rate-limit
+    # accepts in-burst and drops over-burst, so the peer sees real loss.
+    - name: Stage 4c — Remove stale ICMP rate-limit result file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-icmp-results.txt
+        state: absent
+
+    - name: Stage 4c — Fire N=20 parallel pings from extns_a, record each result
+      ansible.builtin.shell: |
+        : > /tmp/molecule-iptables-icmp-results.txt
+        for _ in $(seq 1 20); do
+          (nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }} \
+             ping -c 1 -W 2 {{ molecule_iptables_host_ip_a }} >/dev/null 2>&1 \
+             && echo OK >> /tmp/molecule-iptables-icmp-results.txt \
+             || echo FAIL >> /tmp/molecule-iptables-icmp-results.txt) &
+        done
+        wait
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     # -- Stage 5: reverse-migration must hard-fail at the guard ------------
     # The guard reads /var/lib/mini-pig-firewall-backend; if it sees
     # "nftables" and `iptables_use_nftables` is false, the assertion in

@@ -40,7 +40,7 @@ table ip mpig_filter {
     chain input {
         type filter hook input priority filter; policy accept;
         iif "lo" accept
-{#- echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 -#}
+{# echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 #}
 {% if iptables_external_ping_enable | bool %}
 {% for inf in _iptables_inf_ext_list %}
         iifname "{{ inf }}" icmp type echo-request update @icmp_echo_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
@@ -112,7 +112,7 @@ table ip6 mpig_filter {
     chain input {
         type filter hook input priority filter; policy accept;
         iif "lo" accept
-{#- same ordering as v4 above; see AGENTS.md P12 -#}
+{# same ordering as v4 above; see AGENTS.md P12 #}
 {% if iptables_external_ping_enable | bool %}
 {% for inf in _iptables_inf_ext_list %}
         iifname "{{ inf }}" icmpv6 type echo-request update @icmpv6_echo { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
