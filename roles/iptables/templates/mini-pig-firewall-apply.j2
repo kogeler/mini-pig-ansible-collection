@@ -124,7 +124,7 @@ fi
 {# echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 #}
 {% if iptables_external_ping_enable | bool %}
 {% for inf in _iptables_inf_ext_list %}
-"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -m hashlimit --hashlimit-name icmp-req --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-request -j DROP
 {% endfor %}
 {% endif %}
@@ -135,7 +135,7 @@ fi
 "$IPT" -w -t filter -A MPIG-INPUT -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.port }} -m state --state NEW -j ACCEPT
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp --icmp-type echo-reply -m hashlimit --hashlimit-name icmp-rep --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p icmp -j DROP
 {% endif %}
 "$IPT" -w -t filter -A MPIG-INPUT -i {{ inf }} -p udp -m udp --sport 67:68 --dport 67:68 -m state --state NEW -j ACCEPT
@@ -146,7 +146,7 @@ fi
 "$IPT" -w -t filter -A MPIG-FORWARD -m state --state INVALID -j DROP
 {% for port in iptables_forwarded_ports %}
 {% if port.dst_address is defined %}
-"$IPT" -w -t filter -A MPIG-FORWARD -d {{ port.dst_address }}/32 -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -m state --state NEW -j ACCEPT
+"$IPT" -w -t filter -A MPIG-FORWARD -d {{ port.dst_address }} -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -m state --state NEW -j ACCEPT
 {% else %}
 "$IPT" -w -t filter -A MPIG-FORWARD -s {{ port.src_v4 | default('0.0.0.0/0') }} -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -m state --state NEW -j ACCEPT
 {% endif %}
@@ -181,10 +181,14 @@ fi
 {% endif %}
 
 "$IP6T" -w -t filter -A MPIG-INPUT -i lo -j ACCEPT
+{# NDP + MLD allow on any interface — IPv6 stack relies on these regardless of source iface (RFC 4890) #}
+{% for icmpv6_type in [130, 131, 132, 133, 134, 135, 136, 137, 143] %}
+"$IP6T" -w -t filter -A MPIG-INPUT -p ipv6-icmp -m icmp6 --icmpv6-type {{ icmpv6_type }} -j ACCEPT
+{% endfor %}
 {# same ordering as v4 above; see AGENTS.md P12 #}
 {% if iptables_external_ping_enable | bool %}
 {% for inf in _iptables_inf_ext_list %}
-"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -m hashlimit --hashlimit-name icmpv6-req --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-request -j DROP
 {% endfor %}
 {% endif %}
@@ -197,7 +201,7 @@ fi
 {% endif %}
 {% endfor %}
 {% if iptables_external_ping_enable | bool %}
-"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmp --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp --icmpv6-type echo-reply -m hashlimit --hashlimit-name icmpv6-rep --hashlimit-mode srcip --hashlimit {{ iptables_external_ping_limit }}/minute -j ACCEPT
 "$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p ipv6-icmp -j DROP
 {% endif %}
 "$IP6T" -w -t filter -A MPIG-INPUT -i {{ inf }} -p udp -m udp --sport 547 --dport 546 -m state --state NEW -j ACCEPT
@@ -218,6 +222,8 @@ fi
 "$IP6T" -w -t filter -A MPIG-OUTPUT -o {{ inf }} -d fc00::/7 -m state --state NEW -j REJECT
 {% endfor %}
 {% endif %}
+"$IP6T" -w -t filter -A MPIG-FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+"$IP6T" -w -t filter -A MPIG-FORWARD -m state --state INVALID -j DROP
 {% for inf in _iptables_inf_ext_list %}
 "$IP6T" -w -t filter -A MPIG-FORWARD -i {{ inf }} -m state --state NEW -j DROP
 {% endfor %}
@@ -235,7 +241,7 @@ fi
 {% for port in iptables_forwarded_ports %}
 {% if port.dst_address is defined %}
 "$IPT" -w -t nat -A MPIG-PREROUTING -i {{ port.forwarded_inf }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.forwarded_port }} -j DNAT --to-destination {{ port.dst_address }}:{{ port.dst_port }}
-"$IPT" -w -t nat -A MPIG-POSTROUTING -d {{ port.dst_address }}/32 -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -j MASQUERADE
+"$IPT" -w -t nat -A MPIG-POSTROUTING -d {{ port.dst_address }} -p {{ port.protocol }} -m {{ port.protocol }} --dport {{ port.dst_port }} -j MASQUERADE
 {% endif %}
 {% endfor %}
 

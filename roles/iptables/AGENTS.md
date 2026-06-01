@@ -95,37 +95,41 @@ Do NOT "fix" the EBUSY symptom by dropping `validate:` or by replacing
 `ExecReload=nft -f` with `ExecReload=systemctl restart`. The template
 must be re-applyable.
 
-### P2. iptables `--hashlimit-name icmp` is a single global bucket — preserve that in nft
+### P2. ICMP rate-limit bucket is global across interfaces, per-direction
 
-When I rewrote ICMP rate-limit into explicit dynamic sets I first
-suffixed each set with the interface name (`icmp_echo_v4_{{ inf }}`).
-That looked tidy but it silently broke parity with the iptables side.
+`iptables-extensions(8)` on `-m hashlimit`: rules sharing
+`--hashlimit-name foo` share one `/proc/net/{ipt,ip6t}_hashlimit/foo`
+bucket. With `--hashlimit-mode srcip` that bucket counts per source IP
+across every rule that references it — and that's the property an
+attacker would otherwise abuse to bypass the limit by spreading floods
+across interfaces. Earlier I tried suffixing the nft set with the
+interface name (`icmp_echo_v4_{{ inf }}`) and it silently broke that
+invariant; **never reintroduce per-interface scoping**.
 
-`iptables-extensions(8)` for `-m hashlimit`:
+The geometry both backends now share — one bucket per (family,
+direction) combination, global across external interfaces:
 
-> `--hashlimit-name foo` — The name for the /proc/net/ipt_hashlimit/foo
-> entry. There is one shared rate-limit bucket per name, regardless of
-> which rule references it.
+| family | direction    | iptables `--hashlimit-name` | nft set         |
+|--------|--------------|-----------------------------|-----------------|
+| v4     | echo-request | `icmp-req`                  | `icmp_echo_v4`  |
+| v4     | echo-reply   | `icmp-rep`                  | `icmp_reply_v4` |
+| v6     | echo-request | `icmpv6-req`                | `icmpv6_echo`   |
+| v6     | echo-reply   | `icmpv6-rep`                | `icmpv6_reply`  |
 
-i.e. `-m hashlimit --hashlimit-name icmp --hashlimit-mode srcip` in the
-iptables backend counts per source IP across ALL interfaces. My
-per-interface suffix split that into N counters and would have let an
-attacker bypass the rate limit by spreading floods across interfaces.
-
-Current correct form: ONE set per direction shared across all external
-interfaces, mirroring iptables semantics:
-
-```nft
-set icmp_echo_v4  { type ipv4_addr; flags dynamic; timeout 5m; }
-set icmp_reply_v4 { type ipv4_addr; flags dynamic; timeout 5m; }
-set icmpv6_echo   { type ipv6_addr; flags dynamic; timeout 5m; }
-set icmpv6_reply  { type ipv6_addr; flags dynamic; timeout 5m; }
-```
+Why per-direction split (and NOT a single shared `icmp` bucket): with
+P12 ordering echo-request sits ABOVE `ct state related,established
+accept` and echo-reply BELOW. The two predicates evaluate independent
+flows — an inbound flood (echo-request from an attacker IP) and our
+own outbound diagnostic ping (echo-reply from peer matching
+ESTABLISHED above the reply rule). A shared bucket would couple them:
+a flood of echo-request from IP X would also exhaust the budget for
+echo-reply from IP X if X also happens to be a peer we're pinging.
+Cheap to confuse, hard to debug. Per-direction is the safe default.
 
 Rule: when porting any iptables match to nft, READ the iptables-side
 match documentation first, not just the nft syntax. The scope of the
-key (per-saddr, per-saddr-dport, per-interface, …) is part of the
-behaviour and must round-trip.
+key (per-saddr, per-saddr-dport, per-interface, per-direction, …) is
+part of the behaviour and must round-trip across templates.
 
 ### P3. Don't silence `validate:` or replace dynamic tests with static snapshots
 
@@ -427,6 +431,45 @@ Docs:
   <https://manpages.debian.org/bookworm/iptables/iptables-extensions.8.en.html>
 - nft `update @set { ... limit rate }` falls through on non-match:
   <https://wiki.nftables.org/wiki-nftables/index.php/Rate_limiting_matchings>
+
+### P13. Docker integration is intentionally asymmetric between backends
+
+The two backends model Docker traffic differently — by design, not
+drift:
+
+- **iptables backend**: renders `iptables_docker_ports` into a
+  dedicated `MPIG-DOCKER-USER` chain attached as an anchor to the
+  Docker-owned `DOCKER-USER` chain. Gated on `docker.service` presence
+  (`_iptables_docker_systemd_file_stat.stat.exists`). The mechanism
+  injects our policy INTO Docker's own iptables-nft chain layout.
+- **nftables backend**: renders `iptables_docker_ports` directly into
+  `chain forward` of `table ip mpig_filter`. Unconditional — no docker
+  presence check. The mechanism runs our policy in OUR OWN native nft
+  table, evaluated in parallel with Docker's iptables-nft layer by
+  netfilter hook semantics.
+
+The intent of the nft migration is to **stop touching foreign chains
+and tables**. iptables-nft (Docker, kube-proxy, libvirt, podman) keeps
+running its automation untouched, our `mpig_*` tables sit alongside it
+on the same hooks, and netfilter applies all of them in priority
+order. If we ever need to drop Docker traffic from the nft side, we
+add the rule in `mpig_filter`; we never reach back into
+`DOCKER-USER`/`DOCKER-INGRESS` from nft mode.
+
+Concrete consequences (don't "fix" any of these):
+
+- On a host without Docker, the iptables backend renders no
+  `MPIG-DOCKER-USER`; the nft backend still renders accept lines for
+  the configured `iptables_docker_ports`. The lines are inert without
+  a destination but visible — that is the architectural cost of
+  parallel-tables, not a rendering bug.
+- nft mode does not have a `docker present?` guard. Don't add one. If
+  Docker is removed later, the dpkg/systemctl side handles its half;
+  our rules in `mpig_filter` are policy-by-port and remain meaningful
+  regardless.
+- The two mechanisms are NOT meant to be unified into a single shared
+  abstraction. The whole point of moving to nft is to not need the
+  `DOCKER-USER` attachment dance.
 
 ## Rules for AI agents running Molecule
 
