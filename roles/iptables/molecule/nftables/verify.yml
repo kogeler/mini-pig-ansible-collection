@@ -247,10 +247,11 @@
           # See AGENTS.md pitfalls P1 and P2:
           #   * `meter NAME { … }` (deprecated shorthand) breaks re-apply
           #     with EBUSY — use explicit `set` / `update @set`.
-          #   * iptables `-m hashlimit --hashlimit-name icmp` is a SINGLE
-          #     global bucket counting per saddr across all interfaces;
-          #     the nft port must mirror that. ONE shared set per
-          #     direction, NOT one set per interface.
+          #   * iptables `-m hashlimit --hashlimit-name icmp-{req,rep}`
+          #     and `icmpv6-{req,rep}` are global buckets counting per
+          #     saddr across all external interfaces; the nft port mirrors
+          #     that with ONE shared set per (family, direction), NOT one
+          #     set per interface.
           - "'set icmp_echo_v4 {' in _post_nft_conf"
           - "'set icmp_reply_v4 {' in _post_nft_conf"
           - "'set icmpv6_echo {' in _post_nft_conf"
@@ -268,6 +269,43 @@
           - "'@icmpv6_echo_' not in _post_nft_conf"
           - "'@icmpv6_reply_' not in _post_nft_conf"
           - "'meter ' not in _post_nft_conf"
+
+    # IPv6 NDP + MLD allow on any interface (RFC 4890). Without these the
+    # local IPv6 stack loses neighbor and router discovery — SLAAC breaks
+    # the moment the final `meta l4proto ipv6-icmp drop` matches.
+    - name: Assert NDP and MLD allow rendered in v6 input chain
+      ansible.builtin.assert:
+        that:
+          - "'nd-router-solicit' in _post_nft_conf"
+          - "'nd-router-advert' in _post_nft_conf"
+          - "'nd-neighbor-solicit' in _post_nft_conf"
+          - "'nd-neighbor-advert' in _post_nft_conf"
+          - "'nd-redirect' in _post_nft_conf"
+          - "'mld-listener-query' in _post_nft_conf"
+          - "'mld-listener-report' in _post_nft_conf"
+          - "'mld-listener-done' in _post_nft_conf"
+          - "'mld2-listener-report' in _post_nft_conf"
+
+    # v6 forward must carry the conntrack shortcut symmetric to v4 forward.
+    # Slice out exactly `table ip6 mpig_filter / chain forward { ... }` so
+    # the assert can't accidentally hit v4 forward (same chain name).
+    - name: Slice v6 forward chain block out of /etc/nftables.conf
+      ansible.builtin.set_fact:
+        _v6_forward_block: >-
+          {{ (((_post_nft_conf.split('table ip6 mpig_filter') | last)
+                .split('chain forward {') | last)
+                .split('}') | first) }}
+
+    - name: Assert v6 forward chain carries ct state related,established accept
+      ansible.builtin.assert:
+        that:
+          - "'ct state related,established accept' in _v6_forward_block"
+          - "'ct state invalid drop' in _v6_forward_block"
+        fail_msg: |
+          The ct state RELATED,ESTABLISHED accept shortcut is missing from
+          `table ip6 mpig_filter / chain forward`. Without it transit IPv6
+          ESTABLISHED falls through to the chain's default policy. Block:
+          {{ _v6_forward_block }}
 
     # -- Post-migration kernel state: nft tables actually loaded ------------
 

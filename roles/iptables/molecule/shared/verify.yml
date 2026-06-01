@@ -163,14 +163,18 @@
               ~ ' -j DNAT --to-destination ' ~ molecule_iptables_peer_ip_b
               ~ ':' ~ molecule_iptables_allowed_port
               in _snapshots['list']"
-          - "'-A MPIG-FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -i '
+          - "'-A MPIG-FORWARD -d ' ~ molecule_iptables_peer_ip_b ~ ' -i '
               ~ molecule_iptables_inf_a ~ ' -p tcp -m tcp --dport '
               ~ molecule_iptables_allowed_port
               ~ ' -m state --state NEW -j ACCEPT'
               in _snapshots['list']"
-          - "'-A MPIG-POSTROUTING -d ' ~ molecule_iptables_peer_ip_b ~ '/32 -p tcp -m tcp --dport '
+          - "'-A MPIG-POSTROUTING -d ' ~ molecule_iptables_peer_ip_b ~ ' -p tcp -m tcp --dport '
               ~ molecule_iptables_allowed_port ~ ' -j MASQUERADE'
               in _snapshots['list']"
+          # Regression guard: forwarded_ports rendering no longer emits the
+          # `/32` host-prefix (unified with nft). iptables treats a bare IP
+          # as single-host already, so the suffix was redundant drift.
+          - (molecule_iptables_peer_ip_b ~ '/32') not in _snapshots['list']
 
     # iptables_external_ping_enable: rate-limited ICMP allow on each
     # external interface, plus a catch-all DROP for the rest.
@@ -181,6 +185,46 @@
               in _snapshots['list']"
           - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b ~ ' -p icmp --icmp-type echo-request'
               in _snapshots['list']"
+
+    # AGENTS.md P2: per-(family,direction) buckets. echo-request and
+    # echo-reply must use DISTINCT --hashlimit-name values, otherwise an
+    # inbound flood and our diagnostic outbound ping share one budget.
+    # Single shared `icmp` bucket is the regression we are guarding against.
+    - name: Assert ICMP hashlimit buckets are split per direction
+      ansible.builtin.assert:
+        that:
+          - "'--hashlimit-name icmp-req' in _snapshots['list']"
+          - "'--hashlimit-name icmp-rep' in _snapshots['list']"
+          - "'--hashlimit-name icmpv6-req' in _snapshots['list']"
+          - "'--hashlimit-name icmpv6-rep' in _snapshots['list']"
+          # Old combined bucket name must be gone.
+          - "'--hashlimit-name icmp ' not in _snapshots['list']"
+
+    # IPv6 NDP and MLD must be accepted on any interface (RFC 4890): the
+    # local IPv6 stack relies on Neighbor Solicitation/Advertisement,
+    # Router Solicitation/Advertisement, Redirect, and MLD listener
+    # messages. Without explicit allow the final `-p ipv6-icmp -j DROP`
+    # kills SLAAC and L2 resolution.
+    - name: Assert NDP and MLD allow rendered on any iface (v6)
+      ansible.builtin.assert:
+        that:
+          - "'--icmpv6-type 130 -j ACCEPT' in _snapshots['list']"
+          - "'--icmpv6-type 133 -j ACCEPT' in _snapshots['list']"
+          - "'--icmpv6-type 134 -j ACCEPT' in _snapshots['list']"
+          - "'--icmpv6-type 135 -j ACCEPT' in _snapshots['list']"
+          - "'--icmpv6-type 136 -j ACCEPT' in _snapshots['list']"
+          - "'--icmpv6-type 143 -j ACCEPT' in _snapshots['list']"
+
+    # v6 FORWARD must have the same ct state RELATED,ESTABLISHED accept +
+    # INVALID drop shortcut as v4 FORWARD. Without it transit ESTABLISHED
+    # falls back to the default FORWARD policy — which is fine today, but
+    # fragile if someone tightens the policy later. The `IP6T` literal in
+    # the regex distinguishes the v6 rule from the v4 one.
+    - name: Assert v6 MPIG-FORWARD carries the conntrack shortcut
+      ansible.builtin.assert:
+        that:
+          - _snapshots['list'] is search('IP6T.* -A MPIG-FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT')
+          - _snapshots['list'] is search('IP6T.* -A MPIG-FORWARD -m state --state INVALID -j DROP')
 
     # iptables_snat_rules: cover every optional-field branch of the
     # template. Each rule renders exactly one line inside MPIG-POSTROUTING
