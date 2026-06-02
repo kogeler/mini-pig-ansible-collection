@@ -1,0 +1,133 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Fail-fast configuration validation, run before either backend renders.
+#
+# The role writes every address / port / interface value VERBATIM into the
+# active backend's native syntax — it never translates between the iptables
+# and nftables dialects. A value written in the wrong dialect for the
+# selected backend would otherwise either blow up `nft -f` / the iptables
+# apply with a cryptic parser error, or — for interface wildcards — load
+# silently and match nothing. These asserts turn every such case into a
+# clear failure at apply time, before a single rule is written.
+#
+# Dialect rules (see README "Backend-specific value syntax"):
+#   * address sets — iptables `a,b`  vs nft `{ a, b }`
+#   * port ranges  — iptables `LOW:HIGH` vs nft `LOW-HIGH`
+#   * iface globs  — iptables `eth+`  vs nft `eth*`
+
+# -- Structural validation (backend-independent) -----------------------------
+
+- name: iptables | validate | iptables_ports / iptables_docker_ports entries
+  ansible.builtin.assert:
+    that:
+      - item.port is defined
+      - item.protocol is defined
+    fail_msg: >-
+      Invalid port entry {{ item }}: both `port` and `protocol` are required.
+  loop: "{{ iptables_ports + iptables_docker_ports }}"
+  loop_control:
+    label: "{{ item.port | default('<missing port>') }}"
+
+- name: iptables | validate | iptables_forwarded_ports entries
+  ansible.builtin.assert:
+    that:
+      - item.forwarded_inf is defined
+      - item.forwarded_port is defined
+      - item.protocol is defined
+      - (item.dst_address is not defined) or (item.dst_port is defined)
+    fail_msg: >-
+      Invalid forwarded-port entry {{ item }}: `forwarded_inf`,
+      `forwarded_port`, and `protocol` are required; `dst_port` is required
+      whenever `dst_address` is set (DNAT needs a target port).
+  loop: "{{ iptables_forwarded_ports }}"
+  loop_control:
+    label: "{{ item.forwarded_port | default('<missing forwarded_port>') }}"
+
+- name: iptables | validate | iptables_snat_rules entries
+  ansible.builtin.assert:
+    that:
+      - item.to_source is defined
+      - item.to_source | string | length > 0
+      - (item.src_port is not defined and item.dst_port is not defined) or item.protocol is defined
+    fail_msg: >-
+      Invalid SNAT rule {{ item }}: `to_source` is required, and `protocol`
+      must be set when `src_port` or `dst_port` is given.
+  loop: "{{ iptables_snat_rules }}"
+  loop_control:
+    extended: true
+    label: "{{ item.to_source | default('<missing to_source>') }}"
+
+# -- Backend dialect validation ----------------------------------------------
+# Flatten every user-supplied value of each kind into one list, then check
+# each list against the dialect of the active backend.
+
+- name: iptables | validate | Collect address / port / interface values
+  ansible.builtin.set_fact:
+    _iptables_addr_values: >-
+      {{ ((iptables_ports | map(attribute='src_v4', default='') | list)
+        + (iptables_ports | map(attribute='src_v6', default='') | list)
+        + (iptables_docker_ports | map(attribute='src_v4', default='') | list)
+        + (iptables_forwarded_ports | map(attribute='src_v4', default='') | list)
+        + (iptables_forwarded_ports | map(attribute='dst_address', default='') | list)
+        + (iptables_snat_rules | map(attribute='dst_address', default='') | list)
+        + iptables_disable_local_excluded_ipv4_ranges
+        + iptables_disable_local_excluded_ipv6_ranges)
+        | map('string') | select | list }}
+    _iptables_port_values: >-
+      {{ ((iptables_ports | map(attribute='port', default='') | list)
+        + (iptables_docker_ports | map(attribute='port', default='') | list)
+        + (iptables_forwarded_ports | map(attribute='forwarded_port', default='') | list)
+        + (iptables_forwarded_ports | map(attribute='dst_port', default='') | list)
+        + (iptables_snat_rules | map(attribute='src_port', default='') | list)
+        + (iptables_snat_rules | map(attribute='dst_port', default='') | list))
+        | map('string') | select | list }}
+    _iptables_iface_values: >-
+      {{ (_iptables_inf_ext_list
+        + (iptables_forwarded_ports | map(attribute='forwarded_inf', default='') | list)
+        + (iptables_snat_rules | map(attribute='output_inf', default='') | list))
+        | map('string') | select | list }}
+
+# nftables backend: ranges use `-`, sets/multiports use `{ }`, wildcards `*`.
+# A comma in a port or address is only valid inside an nft set `{ … }`.
+- name: iptables | validate | nftables dialect of address / port / interface values
+  ansible.builtin.assert:
+    that:
+      - _iptables_port_values | select('search', ':') | list | length == 0
+      - (_iptables_port_values | select('search', ',') | reject('search', '{') | list) | length == 0
+      - _iptables_iface_values | select('search', '\\+$') | list | length == 0
+      - (_iptables_addr_values | select('search', ',') | reject('search', '{') | list) | length == 0
+    fail_msg: >-
+      iptables_use_nftables is true but some values use iptables syntax.
+      For the nftables backend: port ranges are `LOW-HIGH` (not `LOW:HIGH`);
+      interface wildcards end in `*` (not `+`); multi-value port and address
+      matches are nft sets `{ a, b }` (not a bare `a,b` list).
+      Bad ports: {{ _iptables_port_values | select('search', ':') | list
+        + (_iptables_port_values | select('search', ',') | reject('search', '{') | list) }};
+      bad interfaces: {{ _iptables_iface_values | select('search', '\\+$') | list }};
+      bad addresses: {{ _iptables_addr_values | select('search', ',') | reject('search', '{') | list }}.
+  when: iptables_use_nftables | bool
+
+# scoped iptables backend: ranges use `:`, address lists are bare `a,b`,
+# wildcards `+`. `--dport` takes a single port or `LOW:HIGH` range only — a
+# comma multiport list is NOT supported (use one iptables_ports entry per
+# port), so any `,`, `-`, or nft `{ }` in a port value is rejected here.
+- name: iptables | validate | iptables dialect of address / port / interface values
+  ansible.builtin.assert:
+    that:
+      - _iptables_port_values | select('search', '[-,{}]') | list | length == 0
+      - _iptables_iface_values | select('search', '\\*$') | list | length == 0
+      - _iptables_addr_values | select('search', '[{}]') | list | length == 0
+    fail_msg: >-
+      iptables_use_nftables is false but some values use nftables syntax or
+      an unsupported multiport list. For the scoped iptables backend: port
+      ranges are `LOW:HIGH` (not `LOW-HIGH`); each entry is one port (no
+      `a,b` list and no nft set `{ }` — use separate entries); interface
+      wildcards end in `+` (not `*`); address lists are a bare `a,b` (not an
+      nft set `{ a, b }`).
+      Bad ports: {{ _iptables_port_values | select('search', '[-,{}]') | list }};
+      bad interfaces: {{ _iptables_iface_values | select('search', '\\*$') | list }};
+      bad addresses: {{ _iptables_addr_values | select('search', '[{}]') | list }}.
+  when: not (iptables_use_nftables | bool)

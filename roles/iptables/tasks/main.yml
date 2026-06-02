@@ -6,27 +6,17 @@
 - name: iptables | Configure firewall
   tags: ["iptables"]
   block:
+    # Fail fast on a config whose values don't match the selected backend's
+    # syntax, before anything is rendered or applied. See tasks/validate.yml.
+    - name: iptables | Validate configuration against the selected backend
+      ansible.builtin.include_tasks: validate.yml
+
     # Shared probes — both backends and the SNAT module branch on a single
     # snapshot of host state.
     - name: iptables | Check docker systemd unit file exists
       ansible.builtin.stat:
         path: "/lib/systemd/system/docker.service"
       register: _iptables_docker_systemd_file_stat
-
-    - name: iptables | Validate iptables_snat_rules
-      ansible.builtin.assert:
-        that:
-          - item.to_source is defined
-          - item.to_source | string | length > 0
-          - (item.src_port is not defined and item.dst_port is not defined) or item.protocol is defined
-        fail_msg: >-
-          iptables_snat_rules[{{ ansible_loop.index0 }}] is invalid:
-          `to_source` is required, and `protocol` must be set when
-          `src_port` or `dst_port` is given. Got: {{ item }}
-      loop: "{{ iptables_snat_rules }}"
-      loop_control:
-        extended: true
-        label: "{{ item.to_source | default('<missing to_source>') }}"
 
     # Both backends and the randomized SNAT module need iptables and nft
     # binaries; install both unconditionally regardless of host state.

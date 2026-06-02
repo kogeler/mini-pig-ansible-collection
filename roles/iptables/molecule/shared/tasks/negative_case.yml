@@ -1,0 +1,35 @@
+---
+# Run the role with a deliberately invalid config (`neg_case`) and record
+# whether the role's fail-fast validation rejected it. Used by converge to
+# prove tasks/validate.yml actually aborts the play end-to-end in the
+# container (not just in a unit harness). Validation runs before any backend
+# work, so a rejected case applies nothing and leaves host state untouched.
+#
+# `neg_case` keys: name, nft (backend bool), and any of inf/ports/fwd/snat to
+# override the otherwise-valid defaults with the one bad value under test.
+- name: "neg: {{ neg_case.name }}"
+  block:
+    - name: "neg: apply role — must be rejected — {{ neg_case.name }}"
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_use_nftables: "{{ neg_case.nft }}"
+        iptables_inf_ext: "{{ neg_case.inf | default('ext0') }}"
+        iptables_ports: "{{ neg_case.ports | default([{'port': 22, 'protocol': 'tcp'}]) }}"
+        iptables_docker_ports: []
+        iptables_forwarded_ports: "{{ neg_case.fwd | default([]) }}"
+        iptables_snat_rules: "{{ neg_case.snat | default([]) }}"
+
+    - name: "neg: record UNEXPECTED-APPLY — {{ neg_case.name }}"
+      ansible.builtin.lineinfile:
+        path: /tmp/molecule-iptables-negcases.txt
+        create: true
+        mode: "0644"
+        line: "{{ neg_case.name }}=applied"
+  rescue:
+    - name: "neg: record rejected — {{ neg_case.name }}"
+      ansible.builtin.lineinfile:
+        path: /tmp/molecule-iptables-negcases.txt
+        create: true
+        mode: "0644"
+        line: "{{ neg_case.name }}=rejected"

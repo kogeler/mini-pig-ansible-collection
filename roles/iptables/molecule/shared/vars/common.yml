@@ -41,6 +41,31 @@ molecule_iptables_nft_update_extra_port: 12348
 # chains keep the iptables-nft filter table alive.
 molecule_iptables_stale_direct_port: 12349
 
+# Multi-CIDR source restriction. The allowed set is {subnet_a, an unrelated
+# reserved CIDR}; extns_a (in subnet_a) must connect, extns_b (in neither)
+# must be dropped. Written per-backend: a bare comma list for iptables, an
+# nft set `{ a, b }` for nftables (the role renders the value verbatim).
+molecule_iptables_multi_src_port: 12350
+molecule_iptables_multi_src_extra: "203.0.113.0/24"
+molecule_iptables_multi_src_v4_ipt: "{{ molecule_iptables_subnet_a }},{{ molecule_iptables_multi_src_extra }}"
+molecule_iptables_multi_src_v4_nft: "{ {{ molecule_iptables_subnet_a }}, {{ molecule_iptables_multi_src_extra }} }"
+
+# Port range. Written per-backend: `LOW:HIGH` for iptables, `LOW-HIGH` for
+# nft. A probe to a port inside the range must connect; a port just outside
+# (with a live listener) must be dropped — proving the boundary, not just
+# that one port opened.
+molecule_iptables_range_spec_ipt: "13000:13010"
+molecule_iptables_range_spec_nft: "13000-13010"
+molecule_iptables_range_in_port: 13005
+molecule_iptables_range_out_port: 13020
+
+# nft multiport set `{ p1, p2 }` (nftables backend only — iptables `--dport`
+# has no list form, so a comma multiport is rejected by validation there).
+# Both ports, opened by a single entry, must connect.
+molecule_iptables_mport_a: 13030
+molecule_iptables_mport_b: 13031
+molecule_iptables_mport_spec_nft: "{ 13030, 13031 }"
+
 # iptables_snat_rules fixtures for Stage 4 of the default scenario. Source
 # IPs are TEST-NET-1 addresses; the rules are only used to assert template
 # rendering and verify presence in the live `MPIG-POSTROUTING` chain — no
