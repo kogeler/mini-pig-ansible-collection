@@ -471,6 +471,39 @@ Concrete consequences (don't "fix" any of these):
   abstraction. The whole point of moving to nft is to not need the
   `DOCKER-USER` attachment dance.
 
+### P14. Render values verbatim; never translate dialects between backends
+
+Address / port / interface values from the role's variables go into the
+templates **verbatim** (`{{ port.src_v4 }}`, `{{ port.port }}`,
+`iifname "{{ inf }}"`). Do NOT add Jinja macros that rewrite a value into
+the other backend's syntax (an earlier attempt wrapped comma lists in nft
+`{ }`, translated `:`→`-`, `+`→`*`). That was deliberately reverted: the
+user picks one backend and writes values in that backend's dialect, and the
+role's job is to render, not to guess-translate.
+
+The dialect divergences (see README "Backend-specific value syntax"):
+
+| value | scoped iptables | nftables |
+|-------|-----------------|----------|
+| CIDR list | `a,b` (`-s` expands) | `{ a, b }` (anonymous set) |
+| port range | `LOW:HIGH` | `LOW-HIGH` |
+| port list | unsupported (one entry per port) | `{ 80, 443 }` (set) |
+| iface glob | `eth+` | `eth*` |
+
+A bare `a,b` or `LOW:HIGH` on nft fails `nft -f` loudly; an `eth+` on nft
+loads and matches **nothing** (silent). So the safety net is `tasks/validate.yml`,
+which fails the play at apply time when a value's dialect doesn't match
+`iptables_use_nftables`. When you add a new variable that feeds an
+address/port/interface match, add it to the relevant flat list in
+`validate.yml` — otherwise a wrong-dialect value sails through to a broken
+or silent ruleset.
+
+Also reverted with it: a `{#- … -#}` (trim-marked) comment placed right
+before `table ip mpig_filter {` swallowed the preceding newline and produced
+`delete table ip mpig_nattable …`, which fails `nft -f`. Keep template
+comments untrimmed (`{# … #}`) near top-level statements (see the
+trim_blocks pitfall).
+
 ## Rules for AI agents running Molecule
 
 1. Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule`.

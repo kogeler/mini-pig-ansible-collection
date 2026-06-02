@@ -698,6 +698,80 @@
       changed_when: false
       failed_when: _probe_src_blocked.rc == 0
 
+    # Multi-CIDR src_v4 (iptables comma list): extns_a (in subnet_a) connects,
+    # extns_b (in neither CIDR) is dropped — proves the comma list expanded.
+
+    - name: Start nc listener on multi-CIDR port (async, host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_multi_src_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for multi-CIDR port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_multi_src_port }}"
+        timeout: 10
+
+    - name: Probe multi-CIDR port from extns_a (in subnet_a → must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_multi_allowed
+      changed_when: false
+      failed_when: _probe_multi_allowed.rc != 0
+
+    - name: Probe multi-CIDR port from extns_b (in neither CIDR → must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_multi_blocked
+      changed_when: false
+      failed_when: _probe_multi_blocked.rc == 0
+
+    # Port range (iptables LOW:HIGH): a port inside connects; one just outside
+    # (listener up) is dropped — tests the boundary, not just one open port.
+
+    - name: Start nc listeners on in-range and out-of-range ports (async)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ item }}"
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for in-range / out-of-range listeners to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 10
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+
+    - name: Probe in-range port from extns_a (must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_in_port }}
+      register: _probe_range_in
+      changed_when: false
+      failed_when: _probe_range_in.rc != 0
+
+    - name: Probe out-of-range port from extns_a (listener up, but must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_out_port }}
+      register: _probe_range_out
+      changed_when: false
+      failed_when: _probe_range_out.rc == 0
+
     # -- iptables_forwarded_ports DNAT: end-to-end traffic test -------------
     # PREROUTING rewrites ext0:<dnat_external_port> to <peer_ip_b>:
     # <allowed_port>, FORWARD allows the rewritten dst on ext0, and either
@@ -781,6 +855,28 @@
           ACCEPT or the listener netns is wrong).
           Raw results:
           {{ _icmp_lines }}
+
+    # Negative-validation outcomes: every invalid config in converge must read
+    # `<name>=rejected`. A `=applied` line means one slipped through.
+    - name: Read negative-case outcomes
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-negcases.txt
+      register: _negcases_raw
+
+    - name: Parse negative-case outcomes
+      ansible.builtin.set_fact:
+        _negcases: "{{ (_negcases_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert every invalid config was rejected by validation
+      ansible.builtin.assert:
+        that:
+          - _negcases | length == 7
+          - _negcases | select('search', '=applied') | list | length == 0
+          - _negcases | select('search', '=rejected') | list | length == 7
+        fail_msg: |
+          One or more invalid configs were NOT rejected by tasks/validate.yml.
+          Outcomes (want all `=rejected`):
+          {{ _negcases }}
 
     # Off-path test: setting iptables_drift_check_interval=0 must tear
     # down mini-pig-firewall.timer (the service itself stays — it is

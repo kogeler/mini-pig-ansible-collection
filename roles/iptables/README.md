@@ -92,6 +92,30 @@ This deploys the default deny-all posture on the host's default IPv4 interface, 
 | Variable | Default | Description |
 |---|---|---|
 | `iptables_inf_ext` | `ansible_facts['default_ipv4']['interface']` | External interface(s). String, list, or empty/unset (fall back to default IPv4 interface) |
+| `iptables_use_nftables` | `false` | Backend selector: `false` = scoped iptables, `true` = native nftables |
+
+### Backend-specific value syntax
+
+Address, port, and interface values are written **verbatim** into the
+selected backend's native ruleset — the role does **not** translate between
+the iptables and nftables dialects. Write every value in the syntax of the
+backend you selected with `iptables_use_nftables`:
+
+| Value kind | scoped iptables (`false`) | nftables (`true`) |
+|---|---|---|
+| Multiple source/destination CIDRs | bare comma list: `10.0.0.0/8,192.0.2.0/24` | nft set: `{ 10.0.0.0/8, 192.0.2.0/24 }` |
+| Port range | colon: `60000:61000` | dash: `60000-61000` |
+| Multiple ports in one entry | not supported — use one `iptables_ports` entry per port | nft set: `{ 80, 443 }` |
+| Interface wildcard | trailing `+`: `eth+` | trailing `*`: `eth*` |
+
+A single CIDR, single port, or plain interface name is identical on both
+backends — only multi-value / range / wildcard forms differ. Using the wrong
+dialect for the active backend is rejected at the start of the role (it would
+otherwise fail the ruleset apply with a cryptic parser error, or — for an
+interface wildcard — load silently and match nothing). The role also fails
+fast on structurally invalid entries (a `port` without `protocol`, a DNAT
+`dst_address` without `dst_port`, a SNAT `src_port`/`dst_port` without
+`protocol`).
 
 ### Inbound ports
 

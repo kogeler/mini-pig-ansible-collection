@@ -869,6 +869,128 @@
       changed_when: false
       failed_when: _probe_nft_src_blocked.rc != 124 or 'TIMEOUT' not in _probe_nft_src_blocked.stdout
 
+    # Multi-CIDR src_v4 as an nft set `{ a, b }`: extns_a (in subnet_a)
+    # connects, extns_b (in neither) is dropped — proves the set match works.
+    - name: Start nc listener on multi-CIDR set port (nft, host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_multi_src_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for multi-CIDR set port listener to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_multi_src_port }}"
+        timeout: 10
+
+    - name: Probe multi-CIDR set port from extns_a (in set → must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_nft_multi_allowed
+      changed_when: false
+      failed_when: _probe_nft_multi_allowed.rc != 0
+
+    - name: Probe multi-CIDR set port from extns_b (not in set → must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_nft_multi_blocked
+      changed_when: false
+      failed_when: _probe_nft_multi_blocked.rc == 0
+
+    # Port range as nft `LOW-HIGH`: a port inside connects; one just outside
+    # (listener up) is dropped — tests the dash-range boundary.
+    - name: Start nc listeners on in-range and out-of-range ports (nft)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ item }}"
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for in-range / out-of-range listeners to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 10
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+
+    - name: Probe in-range port from extns_a (nft, must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_in_port }}
+      register: _probe_nft_range_in
+      changed_when: false
+      failed_when: _probe_nft_range_in.rc != 0
+
+    - name: Probe out-of-range port from extns_a (nft, listener up, must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_out_port }}
+      register: _probe_nft_range_out
+      changed_when: false
+      failed_when: _probe_nft_range_out.rc == 0
+
+    # nft multiport set `{ p1, p2 }`: one entry opens both ports, both connect.
+    # iptables has no list form (rejected there — see the negative cases).
+    - name: Start nc listeners on both multiport ports (nft)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ item }}"
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for both multiport listeners to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 10
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+
+    - name: Probe both multiport ports from extns_a (nft, both must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ item }}
+      register: _probe_nft_mport
+      changed_when: false
+      failed_when: _probe_nft_mport.rc != 0
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+
+    # Stage 4 applied `iptables_inf_ext: "ext*"` and the probes above all flow
+    # through it; confirm the verbatim wildcard is what the kernel loaded.
+    - name: Read live nft ruleset (nft)
+      ansible.builtin.command:
+        cmd: nft list ruleset
+      register: _live_nft_ruleset
+      changed_when: false
+
+    - name: Assert the live ruleset matches on the verbatim `ext*` wildcard
+      ansible.builtin.assert:
+        that:
+          - "'iifname \"ext*\"' in _live_nft_ruleset.stdout"
+        fail_msg: |
+          Expected `iifname "ext*"` in the live nft ruleset (Stage 4 set
+          iptables_inf_ext: "ext*"). The probes above only prove enforcement
+          if the wildcard is really what matched.
+
     # -- DNAT through the nft ruleset --------------------------------------
     - name: Start nc listener inside extns_b for DNAT target (nft)
       ansible.builtin.command:
@@ -952,3 +1074,26 @@
           net.ipv4.ip_forward is not 1 under nft mode — sysctl logic
           regressed during migration. Current value:
           '{{ (_ip_forward_nft_raw.content | b64decode).strip() }}'
+
+    # Stage 6: every nft-dialect mismatch must read `=rejected`. The
+    # `nft-plus-iface` case matters most — `nft -f` accepts `iifname "ext+"`
+    # and matches nothing, so only validation catches it.
+    - name: Read nft-dialect negative-case outcomes
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-negcases.txt
+      register: _negcases_nft_raw
+
+    - name: Parse nft-dialect negative-case outcomes
+      ansible.builtin.set_fact:
+        _negcases_nft: "{{ (_negcases_nft_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert every nft-dialect mismatch was rejected by validation
+      ansible.builtin.assert:
+        that:
+          - _negcases_nft | length == 4
+          - _negcases_nft | select('search', '=applied') | list | length == 0
+          - _negcases_nft | select('search', '=rejected') | list | length == 4
+        fail_msg: |
+          An nft-dialect mismatch was NOT rejected by tasks/validate.yml.
+          Outcomes (want all `=rejected`):
+          {{ _negcases_nft }}

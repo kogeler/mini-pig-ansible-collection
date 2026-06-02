@@ -110,6 +110,12 @@
           - port: "{{ molecule_iptables_src_restricted_port }}"
             protocol: tcp
             src_v4: "{{ molecule_iptables_subnet_a }}"
+          # iptables dialect: bare comma list + colon port range.
+          - port: "{{ molecule_iptables_multi_src_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_multi_src_v4_ipt }}"
+          - port: "{{ molecule_iptables_range_spec_ipt }}"
+            protocol: tcp
         iptables_forwarded_ports:
           - forwarded_inf: "{{ molecule_iptables_inf_a }}"
             forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
@@ -432,3 +438,40 @@
       args:
         executable: /bin/bash
       changed_when: false
+
+    # Negative validation: each wrong-dialect/malformed config must be rejected
+    # by validate.yml before any apply (Stage 4 live ruleset untouched). Cases
+    # use the iptables backend (this scenario's) so a validation regression
+    # can't flip the host to nft mid-run; nft-dialect cases live in nftables.
+    - name: Reset negative-case outcome file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-negcases.txt
+        state: absent
+
+    - name: Run negative validation cases (each must be rejected)
+      ansible.builtin.include_tasks: tasks/negative_case.yml
+      loop:
+        - name: "ipt-dash-range"
+          nft: false
+          ports: [{port: "{{ molecule_iptables_range_spec_nft }}", protocol: tcp}]
+        - name: "ipt-star-iface"
+          nft: false
+          inf: "ext*"
+        - name: "ipt-nft-braces"
+          nft: false
+          ports: [{port: 80, protocol: tcp, src_v4: "{{ molecule_iptables_multi_src_v4_nft }}"}]
+        - name: "ipt-comma-multiport"
+          nft: false
+          ports: [{port: "80,443", protocol: tcp}]
+        - name: "struct-missing-protocol"
+          nft: false
+          ports: [{port: 22}]
+        - name: "struct-dnat-no-dstport"
+          nft: false
+          fwd: [{forwarded_inf: "{{ molecule_iptables_inf_a }}", forwarded_port: 8443, protocol: tcp, dst_address: "192.168.1.10"}]
+        - name: "struct-snat-no-protocol"
+          nft: false
+          snat: [{to_source: "203.0.113.10", dst_port: 443}]
+      loop_control:
+        loop_var: neg_case
+        label: "{{ neg_case.name }}"

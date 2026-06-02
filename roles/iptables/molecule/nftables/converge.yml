@@ -353,14 +353,16 @@
     #   * iptables_randomized_ext_ips still installs the comment-tagged
     #     rules into the kernel iptables-nft `nat POSTROUTING` via the
     #     systemd timer — backend-independent module.
+    # iptables_inf_ext is the nft wildcard `ext*` (matches ext0+ext1), so every
+    # verify probe exercises it: if `ext*` matched nothing, allows would miss
+    # (port dropped) and the catch-all drop would miss (blocked port accepted).
+    # `nft -f` accepts `ext*` silently, so traffic is the only real test of it.
     - name: Stage 4 — Apply updated nft rules while foreign table exists
       ansible.builtin.include_role:
         name: kogeler.mini_pig.iptables
       vars:
         iptables_use_nftables: true
-        iptables_inf_ext:
-          - "{{ molecule_iptables_inf_a }}"
-          - "{{ molecule_iptables_inf_b }}"
+        iptables_inf_ext: "ext*"
         iptables_ports:
           - port: "{{ molecule_iptables_allowed_port }}"
             protocol: tcp
@@ -368,6 +370,14 @@
             protocol: tcp
             src_v4: "{{ molecule_iptables_subnet_a }}"
           - port: "{{ molecule_iptables_nft_update_extra_port }}"
+            protocol: tcp
+          # nft dialect: set `{ a, b }` + dash port range + multiport set.
+          - port: "{{ molecule_iptables_multi_src_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_multi_src_v4_nft }}"
+          - port: "{{ molecule_iptables_range_spec_nft }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_mport_spec_nft }}"
             protocol: tcp
         iptables_forwarded_ports:
           - forwarded_inf: "{{ molecule_iptables_inf_a }}"
@@ -704,3 +714,30 @@
             content: "REJECTED\n"
             dest: /tmp/molecule-iptables-reverse-migration-result.txt
             mode: "0644"
+
+    # -- Stage 6: nft-dialect mismatches must be rejected by validate.yml —
+    # especially the iface wildcard `+`, which `nft -f` accepts then silently
+    # matches nothing. Validation aborts first, so Stage 4's ruleset stands.
+    - name: Stage 6 — Reset negative-case outcome file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-negcases.txt
+        state: absent
+
+    - name: Stage 6 — Run nft-dialect negative cases (each must be rejected)
+      ansible.builtin.include_tasks: ../shared/tasks/negative_case.yml
+      loop:
+        - name: "nft-colon-range"
+          nft: true
+          ports: [{port: "{{ molecule_iptables_range_spec_ipt }}", protocol: tcp}]
+        - name: "nft-plus-iface"
+          nft: true
+          inf: "ext+"
+        - name: "nft-bare-comma"
+          nft: true
+          ports: [{port: 443, protocol: tcp, src_v4: "{{ molecule_iptables_multi_src_v4_ipt }}"}]
+        - name: "nft-comma-port"
+          nft: true
+          ports: [{port: "80,443", protocol: tcp}]
+      loop_control:
+        loop_var: neg_case
+        label: "{{ neg_case.name }}"
