@@ -1,12 +1,9 @@
 ---
-# Run the role with a deliberately invalid config (`neg_case`) and record
-# whether the role's fail-fast validation rejected it. Used by converge to
-# prove tasks/validate.yml actually aborts the play end-to-end in the
-# container (not just in a unit harness). Validation runs before any backend
-# work, so a rejected case applies nothing and leaves host state untouched.
-#
-# `neg_case` keys: name, nft (backend bool), and any of inf/ports/fwd/snat to
-# override the otherwise-valid defaults with the one bad value under test.
+# Apply the role with a deliberately invalid `neg_case` config and record
+# whether validate.yml rejected it. Validation runs before any backend work,
+# so a rejected case applies nothing and host state is untouched.
+# `neg_case` keys: name, nft (backend bool), and any of inf/ports/fwd/snat
+# overriding the otherwise-valid defaults with the one bad value under test.
 - name: "neg: {{ neg_case.name }}"
   block:
     - name: "neg: apply role — must be rejected — {{ neg_case.name }}"

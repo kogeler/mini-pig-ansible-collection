@@ -439,13 +439,10 @@
         executable: /bin/bash
       changed_when: false
 
-    # -- Negative validation: wrong-dialect / malformed configs must be
-    # rejected by tasks/validate.yml BEFORE any apply. Validation runs first
-    # in the role, so each rejected case applies nothing and the Stage 4
-    # live ruleset (probed in verify) is untouched. These cases use the
-    # scoped-iptables backend (matching this scenario) so even a validation
-    # regression can't switch the host to nft mid-run; the nft-dialect
-    # rejections are covered by the nftables scenario.
+    # Negative validation: each wrong-dialect/malformed config must be rejected
+    # by validate.yml before any apply (Stage 4 live ruleset untouched). Cases
+    # use the iptables backend (this scenario's) so a validation regression
+    # can't flip the host to nft mid-run; nft-dialect cases live in nftables.
     - name: Reset negative-case outcome file
       ansible.builtin.file:
         path: /tmp/molecule-iptables-negcases.txt

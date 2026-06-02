@@ -869,10 +869,8 @@
       changed_when: false
       failed_when: _probe_nft_src_blocked.rc != 124 or 'TIMEOUT' not in _probe_nft_src_blocked.stdout
 
-    # -- Multi-CIDR src_v4 as an nft set `{ a, b }`: live test --------------
-    # Port opened with src_v4 = "{ subnet_a, extra_cidr }". extns_a (in
-    # subnet_a) must connect; extns_b (in neither) must be dropped — proving
-    # the nft anonymous-set match the role rendered verbatim actually works.
+    # Multi-CIDR src_v4 as an nft set `{ a, b }`: extns_a (in subnet_a)
+    # connects, extns_b (in neither) is dropped — proves the set match works.
     - name: Start nc listener on multi-CIDR set port (nft, host netns)
       ansible.builtin.command:
         cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_multi_src_port }}"
@@ -904,10 +902,8 @@
       changed_when: false
       failed_when: _probe_nft_multi_blocked.rc == 0
 
-    # -- Port range as nft `LOW-HIGH`: live boundary test -------------------
-    # A port inside the range must connect; a port just outside (listener up)
-    # must be dropped — proving the dash-range match the role rendered
-    # verbatim filters at the boundary.
+    # Port range as nft `LOW-HIGH`: a port inside connects; one just outside
+    # (listener up) is dropped — tests the dash-range boundary.
     - name: Start nc listeners on in-range and out-of-range ports (nft)
       ansible.builtin.command:
         cmd: "nc -l -k 0.0.0.0 {{ item }}"
@@ -945,10 +941,8 @@
       changed_when: false
       failed_when: _probe_nft_range_out.rc == 0
 
-    # -- Multiport as an nft set `{ p1, p2 }`: both ports must connect ------
-    # A single iptables_ports entry with `port: "{ 13030, 13031 }"` opens
-    # both. iptables `--dport` has no list form, so this nft-only form is
-    # rejected on the iptables backend (covered by the negative cases).
+    # nft multiport set `{ p1, p2 }`: one entry opens both ports, both connect.
+    # iptables has no list form (rejected there — see the negative cases).
     - name: Start nc listeners on both multiport ports (nft)
       ansible.builtin.command:
         cmd: "nc -l -k 0.0.0.0 {{ item }}"
@@ -980,10 +974,8 @@
         - "{{ molecule_iptables_mport_a }}"
         - "{{ molecule_iptables_mport_b }}"
 
-    # -- Interface wildcard `ext*` is actually what the live ruleset uses ---
-    # Stage 4 applied `iptables_inf_ext: "ext*"`; the probes above all flow
-    # through it. Confirm the wildcard (not an expanded ext0/ext1) is what
-    # the kernel loaded — i.e. the role rendered it verbatim.
+    # Stage 4 applied `iptables_inf_ext: "ext*"` and the probes above all flow
+    # through it; confirm the verbatim wildcard is what the kernel loaded.
     - name: Read live nft ruleset (nft)
       ansible.builtin.command:
         cmd: nft list ruleset
@@ -1083,10 +1075,9 @@
           regressed during migration. Current value:
           '{{ (_ip_forward_nft_raw.content | b64decode).strip() }}'
 
-    # -- Stage 6 negative validation: nft-dialect mismatches must be rejected
-    # by tasks/validate.yml. The `nft-plus-iface` case is the important one —
-    # `nft -f` would accept `iifname "ext+"` and then match nothing, so only
-    # validation can catch it. All three must read `=rejected`.
+    # Stage 6: every nft-dialect mismatch must read `=rejected`. The
+    # `nft-plus-iface` case matters most — `nft -f` accepts `iifname "ext+"`
+    # and matches nothing, so only validation catches it.
     - name: Read nft-dialect negative-case outcomes
       ansible.builtin.slurp:
         src: /tmp/molecule-iptables-negcases.txt

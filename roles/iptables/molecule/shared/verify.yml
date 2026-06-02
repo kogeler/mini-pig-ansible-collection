@@ -698,10 +698,8 @@
       changed_when: false
       failed_when: _probe_src_blocked.rc == 0
 
-    # -- Multi-CIDR src_v4 (bare comma list, iptables dialect): live test ---
-    # Port opened with src_v4 = "{subnet_a},{extra_cidr}". extns_a (in
-    # subnet_a) must connect; extns_b (in neither CIDR) must be dropped —
-    # proving iptables expanded the comma list into a working match.
+    # Multi-CIDR src_v4 (iptables comma list): extns_a (in subnet_a) connects,
+    # extns_b (in neither CIDR) is dropped — proves the comma list expanded.
 
     - name: Start nc listener on multi-CIDR port (async, host netns)
       ansible.builtin.command:
@@ -734,10 +732,8 @@
       changed_when: false
       failed_when: _probe_multi_blocked.rc == 0
 
-    # -- Port range (colon, iptables dialect): live boundary test -----------
-    # Range LOW:HIGH opened. A port INSIDE the range must connect; a port
-    # just OUTSIDE (with a live listener) must be dropped — so this tests
-    # the range boundary, not merely that one port opened.
+    # Port range (iptables LOW:HIGH): a port inside connects; one just outside
+    # (listener up) is dropped — tests the boundary, not just one open port.
 
     - name: Start nc listeners on in-range and out-of-range ports (async)
       ansible.builtin.command:
@@ -860,10 +856,8 @@
           Raw results:
           {{ _icmp_lines }}
 
-    # -- Negative validation outcomes: every wrong-dialect / malformed config
-    # in converge must have been rejected by tasks/validate.yml (recorded as
-    # `<name>=rejected`). A `=applied` line means an invalid config slipped
-    # through — the silent-breakage class this whole feature guards against.
+    # Negative-validation outcomes: every invalid config in converge must read
+    # `<name>=rejected`. A `=applied` line means one slipped through.
     - name: Read negative-case outcomes
       ansible.builtin.slurp:
         src: /tmp/molecule-iptables-negcases.txt
