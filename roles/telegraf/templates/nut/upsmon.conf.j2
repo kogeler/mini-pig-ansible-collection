@@ -1,0 +1,12 @@
+# Managed by Ansible (kogeler.mini_pig telegraf role) — do not edit by hand.
+# Rendered ONLY when telegraf_ups_shutdown_enable is true. Initiates host
+# shutdown on power events — see the role README warning before enabling.
+MONITOR {{ telegraf_ups_name }}@{{ telegraf_ups_listen_address }}:{{ telegraf_ups_listen_port }} {{ telegraf_ups_shutdown_min_supplies }} {{ telegraf_ups_shutdown_user }} {{ telegraf_ups_shutdown_password }} {{ telegraf_ups_shutdown_role }}
+MINSUPPLIES {{ telegraf_ups_shutdown_min_supplies }}
+SHUTDOWNCMD "{{ telegraf_ups_shutdown_command }}"
+POWERDOWNFLAG /run/nut/killpower
+POLLFREQ {{ telegraf_ups_shutdown_poll_freq }}
+POLLFREQALERT {{ telegraf_ups_shutdown_poll_freq_alert }}
+HOSTSYNC {{ telegraf_ups_shutdown_dead_time }}
+DEADTIME {{ telegraf_ups_shutdown_dead_time }}
+FINALDELAY {{ telegraf_ups_shutdown_final_delay }}

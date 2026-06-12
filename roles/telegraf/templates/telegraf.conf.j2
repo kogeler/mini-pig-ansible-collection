@@ -511,6 +511,30 @@
 #   ## Timeout for dialing server.
 #   timeout = "5s"
 {% endif %}
+{% if telegraf_ups_enable %}
+
+
+# # Monitor UPSes attached to a NUT (Network UPS Tools) upsd server
+[[inputs.upsd]]
+  server = "{{ telegraf_ups_listen_address }}"
+  port = {{ telegraf_ups_listen_port }}
+  interval = "{{ telegraf_ups_interval }}"
+  force_float = {{ telegraf_ups_force_float | string | lower }}
+  stringify_ids = {{ telegraf_ups_stringify_ids | string | lower }}
+{% if telegraf_ups_username | length > 0 %}
+  username = "{{ telegraf_ups_username }}"
+{% endif %}
+{% if telegraf_ups_password | length > 0 %}
+  password = "{{ telegraf_ups_password }}"
+{% endif %}
+{% if telegraf_ups_additional_fields | length > 0 %}
+  additional_fields = [
+{% for field in telegraf_ups_additional_fields %}
+    "{{ field }}",
+{% endfor %}
+  ]
+{% endif %}
+{% endif %}
 
 
 {% if telegraf_docker_enable %}

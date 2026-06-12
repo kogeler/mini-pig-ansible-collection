@@ -3,6 +3,61 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+# NUT handlers are defined before the Telegraf restart so the UPS data source is
+# refreshed first. Handlers run in definition order: udev -> driver -> upsd -> telegraf.
+
+# Re-apply NUT's udev rule so an already-connected USB UPS gets group "nut" ownership
+# (it stays root:root if it was plugged in before NUT was installed). No native module.
+- name: telegraf | reload udev rules for nut
+  ansible.builtin.command: udevadm control --reload-rules
+  changed_when: false
+  listen: reload udev for nut
+
+- name: telegraf | trigger udev for usb (re-tag the UPS for group nut)
+  ansible.builtin.command: udevadm trigger --action=add --subsystem-match=usb
+  changed_when: false
+  listen: reload udev for nut
+
+- name: telegraf | restart nut driver (enumerator)
+  ansible.builtin.systemd:
+    name: "nut-driver-enumerator.service"
+    state: restarted
+    daemon_reload: yes
+  listen: restart nut driver
+  when: telegraf_ups_has_enumerator | default(false) | bool
+
+- name: telegraf | restart nut driver (instance)
+  ansible.builtin.systemd:
+    name: "nut-driver@{{ telegraf_ups_name }}.service"
+    state: restarted
+  listen: restart nut driver
+  when: telegraf_ups_has_enumerator | default(false) | bool
+  # Best-effort: a disconnected UPS makes the driver instance fail to start;
+  # surface it via `systemctl status` rather than aborting the whole run.
+  failed_when: false
+
+- name: telegraf | restart nut driver (bundled in nut-server)
+  ansible.builtin.systemd:
+    name: "nut-server.service"
+    state: restarted
+    daemon_reload: yes
+  listen: restart nut driver
+  when: not telegraf_ups_has_enumerator | default(false) | bool
+
+- name: telegraf | restart nut server
+  ansible.builtin.systemd:
+    name: "nut-server.service"
+    state: restarted
+    daemon_reload: yes
+  listen: restart nut server
+
+- name: telegraf | restart nut monitor
+  ansible.builtin.systemd:
+    name: "nut-monitor.service"
+    state: restarted
+    daemon_reload: yes
+  listen: restart nut monitor
+
 - name: restart telegraf on host
   ansible.builtin.systemd:
     name: "telegraf"

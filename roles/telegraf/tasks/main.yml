@@ -150,6 +150,11 @@
         - "Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session"
       notify: restart telegraf on host
 
+    - name: telegraf | configure UPS monitoring (NUT)
+      ansible.builtin.include_tasks: ups.yml
+      when: telegraf_ups_enable | bool
+      tags: ["telegraf-ups"]
+
     - name: telegraf | copy telegraf.conf config
       ansible.builtin.template:
         src: "telegraf.conf.j2"

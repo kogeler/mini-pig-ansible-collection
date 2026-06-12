@@ -1,0 +1,10 @@
+# Managed by Ansible (kogeler.mini_pig telegraf role) — do not edit by hand.
+{% if telegraf_ups_username | length > 0 %}
+[{{ telegraf_ups_username }}]
+    password = {{ telegraf_ups_password }}
+{% endif %}
+{% if telegraf_ups_shutdown_enable | bool %}
+[{{ telegraf_ups_shutdown_user }}]
+    password = {{ telegraf_ups_shutdown_password }}
+    upsmon {{ telegraf_ups_shutdown_role }}
+{% endif %}

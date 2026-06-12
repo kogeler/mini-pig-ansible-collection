@@ -56,3 +56,56 @@ telegraf_ping_timeout: 0.5
 telegraf_ping_deadline: 20
 
 telegraf_mdstat_enable: false
+
+# --- USB UPS monitoring via NUT (Network UPS Tools) ----------------------------
+# Path: USB UPS -> NUT usbhid-ups -> NUT upsd -> Telegraf [[inputs.upsd]].
+# Optional, off by default. Independent of telegraf_apcupsd_enable (a different daemon).
+telegraf_ups_enable: false
+
+# Distro packages providing upsd + usbhid-ups (nut-server) and upsc (nut-client).
+telegraf_ups_packages:
+  - "nut-server"
+  - "nut-client"
+
+# UPS identity (NUT ups.conf section name == host name queried by upsd)
+telegraf_ups_name: "ups"
+telegraf_ups_description: "USB UPS"
+
+# Driver (USB HID). Leave the *_id/serial empty to auto-detect a single USB UPS.
+telegraf_ups_driver: "usbhid-ups"
+telegraf_ups_driver_port: "auto"
+telegraf_ups_driver_vendorid: ""
+telegraf_ups_driver_productid: ""
+telegraf_ups_driver_serial: ""
+telegraf_ups_driver_options: {}        # arbitrary extra ups.conf options, e.g. {pollinterval: 5}
+
+# upsd listener (kept on loopback by default)
+telegraf_ups_listen_address: "127.0.0.1"
+telegraf_ups_listen_port: 3493
+
+# Telegraf inputs.upsd (note: the upsd plugin has no per-plugin timeout option)
+telegraf_ups_interval: "10s"
+telegraf_ups_force_float: true
+telegraf_ups_stringify_ids: true
+telegraf_ups_username: ""              # optional upsd user; leave empty for anonymous read
+telegraf_ups_password: ""             # secret: set via inventory/Vault, never commit
+# Collect every variable the UPS exposes via upsd (glob "*"). Telegraf's upsd input
+# maps a standard field set and adds anything matching additional_fields on top, so
+# "*" captures the full set automatically — no per-field enumeration needed. Narrow
+# this list only if you deliberately want fewer metrics.
+telegraf_ups_additional_fields:
+  - "*"
+
+# Optional host shutdown on power events. OFF by default: a single-board computer
+# (RockPi) will NOT power back on by itself after mains return, so an automatic
+# poweroff can leave it dead until manual intervention. Enable only deliberately.
+telegraf_ups_shutdown_enable: false
+telegraf_ups_shutdown_user: "upsmon"
+telegraf_ups_shutdown_password: ""
+telegraf_ups_shutdown_role: "primary"   # NUT 2.8 wording; on NUT 2.7.x use "master"
+telegraf_ups_shutdown_min_supplies: 1
+telegraf_ups_shutdown_command: "/sbin/shutdown -h now"
+telegraf_ups_shutdown_final_delay: 5
+telegraf_ups_shutdown_dead_time: 15
+telegraf_ups_shutdown_poll_freq: 5
+telegraf_ups_shutdown_poll_freq_alert: 5

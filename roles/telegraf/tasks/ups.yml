@@ -1,0 +1,145 @@
+---
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# USB UPS monitoring via NUT. Brings up usbhid-ups + upsd as a telemetry source
+# for Telegraf's [[inputs.upsd]]. No host shutdown unless explicitly enabled.
+
+- name: telegraf | ups | validate variables
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - telegraf_ups_name is string and telegraf_ups_name | length > 0
+      - telegraf_ups_name is match('^[A-Za-z0-9._-]+$')
+      - telegraf_ups_driver | length > 0
+      - telegraf_ups_driver_port | length > 0
+      - telegraf_ups_listen_port | int >= 1
+      - telegraf_ups_listen_port | int <= 65535
+      - telegraf_ups_additional_fields is sequence and telegraf_ups_additional_fields is not string
+      - telegraf_ups_driver_options is mapping
+      - (telegraf_ups_username | length == 0) == (telegraf_ups_password | length == 0)
+      - not (telegraf_ups_shutdown_enable | bool) or (telegraf_ups_shutdown_user | length > 0 and telegraf_ups_shutdown_password | length > 0)
+    quiet: true
+    fail_msg: >-
+      Invalid telegraf_ups_* configuration: check the UPS name, driver/port, listen
+      port (1-65535), that additional_fields is a list and driver_options a mapping,
+      that Telegraf username/password are set together, and that shutdown (when
+      enabled) has both a username and password.
+
+# A USB UPS plugged in before NUT was installed keeps root:root device-node ownership,
+# so the nut-user driver fails with "insufficient permissions". NUT's udev rule only
+# fires on hotplug, so the reload-udev handler re-applies it — notified only when the
+# packages actually change, then the driver handler restarts the driver after.
+- name: telegraf | ups | install NUT packages
+  ansible.builtin.apt:
+    name: "{{ telegraf_ups_packages }}"
+    install_recommends: no
+    update_cache: yes
+  notify:
+    - reload udev for nut
+    - restart nut driver
+
+# NUT 2.8 (Debian 12/13, Ubuntu 24.04) ships a driver enumerator that runs each
+# driver as nut-driver@<name>.service. NUT 2.7.x (e.g. Ubuntu 22.04) starts the
+# driver from nut-server itself. Detect which model is present and adapt.
+- name: telegraf | ups | gather service facts
+  ansible.builtin.service_facts:
+
+- name: telegraf | ups | detect NUT driver-enumerator model
+  ansible.builtin.set_fact:
+    telegraf_ups_has_enumerator: "{{ 'nut-driver-enumerator.service' in ansible_facts.services }}"
+
+- name: telegraf | ups | configure /etc/nut/nut.conf
+  ansible.builtin.template:
+    src: "nut/nut.conf.j2"
+    dest: "/etc/nut/nut.conf"
+    owner: "root"
+    group: "nut"
+    mode: "0640"
+  notify:
+    - restart nut driver
+    - restart nut server
+
+- name: telegraf | ups | configure /etc/nut/ups.conf
+  ansible.builtin.template:
+    src: "nut/ups.conf.j2"
+    dest: "/etc/nut/ups.conf"
+    owner: "root"
+    group: "nut"
+    mode: "0640"
+  notify: restart nut driver
+
+- name: telegraf | ups | configure /etc/nut/upsd.conf
+  ansible.builtin.template:
+    src: "nut/upsd.conf.j2"
+    dest: "/etc/nut/upsd.conf"
+    owner: "root"
+    group: "nut"
+    mode: "0640"
+  notify: restart nut server
+
+# upsd.users is only needed for an authenticated Telegraf user or for upsmon shutdown.
+- name: telegraf | ups | configure /etc/nut/upsd.users
+  ansible.builtin.template:
+    src: "nut/upsd.users.j2"
+    dest: "/etc/nut/upsd.users"
+    owner: "root"
+    group: "nut"
+    mode: "0640"
+  no_log: true
+  notify: restart nut server
+  when: (telegraf_ups_username | length > 0) or (telegraf_ups_shutdown_enable | bool)
+
+# --- Shutdown monitor (upsmon) -------------------------------------------------
+# Disabled by default: keep nut-monitor stopped AND masked so no power event can
+# ever trigger a host poweroff, and ship no shutdown-capable upsmon.conf.
+- name: telegraf | ups | mask nut-monitor (shutdown disabled)
+  ansible.builtin.systemd:
+    name: "nut-monitor.service"
+    state: stopped
+    enabled: no
+    masked: yes
+  when: not telegraf_ups_shutdown_enable | bool
+
+- name: telegraf | ups | unmask nut-monitor (shutdown enabled)
+  ansible.builtin.systemd:
+    name: "nut-monitor.service"
+    masked: no
+  when: telegraf_ups_shutdown_enable | bool
+
+- name: telegraf | ups | configure /etc/nut/upsmon.conf
+  ansible.builtin.template:
+    src: "nut/upsmon.conf.j2"
+    dest: "/etc/nut/upsmon.conf"
+    owner: "root"
+    group: "nut"
+    mode: "0640"
+  no_log: true
+  notify: restart nut monitor
+  when: telegraf_ups_shutdown_enable | bool
+
+# --- Bring services up (idempotent; never fails when the UPS is unplugged) ------
+# The enumerator is a non-remain oneshot, so a steady-state "started" would re-run it
+# every converge (false changed). Only keep it enabled: it generates the nut-driver@<name>
+# instance at install/boot, and the "restart nut driver" handler re-runs it on ups.conf
+# changes. The generated driver instance is itself enabled and stays running.
+- name: telegraf | ups | enable nut-driver-enumerator
+  ansible.builtin.systemd:
+    name: "nut-driver-enumerator.service"
+    enabled: yes
+  when: telegraf_ups_has_enumerator | bool
+
+- name: telegraf | ups | enable and start upsd (nut-server)
+  ansible.builtin.systemd:
+    name: "nut-server.service"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: telegraf | ups | enable and start upsmon (nut-monitor)
+  ansible.builtin.systemd:
+    name: "nut-monitor.service"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  when: telegraf_ups_shutdown_enable | bool
