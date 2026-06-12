@@ -1,0 +1,43 @@
+---
+# Default scenario: podman, Debian 12 (bookworm, nft 1.0.6 — the
+# supported-OS baseline).
+#
+# Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
+# default playbooks) lives in `../shared/base.yml` — injected via
+# `molecule -c molecule/shared/base.yml`. Only scenario-specific bits
+# live here.
+#
+# Idempotence is disabled: converge applies the role multiple times in
+# sequence with different `iptables_inf_ext` shapes (string, empty
+# string, empty list, list) so verify can assert backward-compat and
+# normalization across all four input forms. A second converge run
+# would re-walk those transitions and legitimately re-render rules,
+# which idempotence would flag.
+driver:
+  name: podman
+platforms:
+  - name: molecule-iptables
+    image: "docker.io/library/debian:bookworm"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    # SYS_ADMIN: `ip netns add` (unshare+mount) and `nsenter -n` (setns)
+    # NET_ADMIN: install iptables rules, create veth pairs, ip addr/route
+    # NET_RAW:   `ping` (SOCK_RAW) used by the external-ping probe
+    # unmask=/proc/*: systemd PID 1 reads /proc/sys/* during boot
+    security_opts:
+      - "unmask=/proc/*"
+    capabilities:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - NET_RAW
+    command: ""
+    override_command: false
+scenario:
+  test_sequence:
+    - dependency
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

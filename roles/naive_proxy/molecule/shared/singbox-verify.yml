@@ -1,0 +1,96 @@
+---
+# Verify playbook for the singbox-stress scenario.
+#
+# This is an intentionally narrow verify: it only exercises the sing-box
+# Naive outbound TUN-mode stress path. The full role contract (cert
+# renewal, decoy modes, official-naive SOCKS5 client, ...) is already
+# covered by shared/verify.yml which runs in the default and
+# debian-bookworm scenarios. Keeping this playbook focused on the
+# reproducer makes failures here unambiguous about *which* component is
+# broken.
+- name: Verify (singbox stress)
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+    - vars/singbox-benchmark.yml
+  tasks:
+    - name: Wait for verify prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    # -- Re-discover the bridge gateway & pod IP --------------------------
+    # singbox-stress/converge.yml set_fact'd these but set_facts only
+    # survive within a single ansible-playbook invocation; molecule
+    # converge and verify are separate invocations, so we redo the
+    # discovery here so verify-clients and singbox-benchmark see the
+    # same IP map the role just rendered.
+    - name: Discover inner podman default-bridge gateway
+      containers.podman.podman_network_info:
+        name: podman
+      register: _singbox_stress_net
+
+    - name: Discover naive-backend container IP (= naive-pod IP)
+      # naive-backend is created by the role and joins the pod's netns,
+      # so its NetworkSettings reflect the pod's bridge IP. Used both
+      # for the urltest probe URL and as the iperf3 destination.
+      containers.podman.podman_container_info:
+        name: naive-backend
+      register: _singbox_stress_backend
+
+    - name: Pin discovered IPs as facts
+      ansible.builtin.set_fact:
+        _singbox_stress_bridge_gateway: >-
+          {{ (_singbox_stress_net.networks[0].subnets
+              | selectattr('gateway', 'defined')
+              | list | first).gateway }}
+        _singbox_stress_pod_ip: >-
+          {{ (_singbox_stress_backend.containers[0].NetworkSettings.Networks
+              | dict2items | first).value.IPAddress }}
+
+    - name: Override naive_proxy external_ip maps for verify-clients
+      # Same precedence trick as converge.yml — set_fact (19) wins over
+      # vars_files (14). Without it verify-clients would assert against the
+      # common.yml maps while the role rendered configs against the bridge
+      # gateway. Both per-mode maps collapse to the single bridge entry here.
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_external_ip: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_auto:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_manual:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+
+    # -- Per-user client configs (auto + manual) -------------------------------
+    # Same coverage as shared/verify.yml: assert each entry in the per-mode
+    # maps (naive_proxy_external_ip_auto / _manual) produced the expected
+    # option with its `server` IP. The maps above are the ones the role saw
+    # during converge, so the generated configs should match.
+    - name: Verify per-IP sing-box client configs
+      ansible.builtin.import_tasks: tasks/verify-clients.yml
+      vars:
+        _verify_clients_users: "{{ molecule_naive_proxy_users }}"
+        _verify_clients_ip_map_auto: "{{ molecule_naive_proxy_external_ip_map_auto }}"
+        _verify_clients_ip_map_manual: "{{ molecule_naive_proxy_external_ip_map_manual }}"
+        _verify_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
+        _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"
+        _verify_clients_anytls_domain: "{{ molecule_naive_proxy_anytls_domain }}"
+        _verify_clients_anytls_enabled: true
+        # singbox-stress keeps uTLS off — assert no tls.utls block is emitted.
+        _verify_clients_anytls_utls_fingerprint: ""
+        _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+        _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+
+    # -- HAProxy diagnostics surface ------------------------------------------
+    # Run before the stress benchmark so that if the diagnostics surface is
+    # broken we fail fast with a clear message instead of timing out on the
+    # 60+ second sing-box benchmark step.
+    - name: Verify HAProxy diagnostics surface
+      ansible.builtin.import_tasks: tasks/verify-diagnostics.yml
+      when: naive_proxy_haproxy_diagnostics_enabled | default(false)
+      vars:
+        naive_proxy_haproxy_diagnostics_port: "{{ naive_proxy_haproxy_diagnostics_port | default(19999) }}"
+
+    - name: Run sing-box TUN stress benchmark
+      ansible.builtin.import_tasks: tasks/singbox-benchmark.yml

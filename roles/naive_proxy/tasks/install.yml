@@ -31,3 +31,5 @@
     - { path: "{{ _naive_proxy_decoy_html_dir }}", mode: "0755" }
     - { path: "{{ _naive_proxy_decoy_data_dir }}", mode: "0755" }
     - { path: "{{ _naive_proxy_build_dir }}" }
+    - { path: "{{ _naive_proxy_anytls_acme_data_dir }}", mode: "0700" }
+    - { path: "{{ _naive_proxy_anytls_certs_dir }}", mode: "0755" }

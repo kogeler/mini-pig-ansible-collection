@@ -1,9 +1,25 @@
 # {{ ansible_managed }}
 # Based on: https://github.com/klzgrad/naiveproxy/wiki/HAProxy-Setup
 
+{% if naive_proxy_haproxy_diagnostics_enabled %}
+ring h2trace
+    format timed
+    size {{ naive_proxy_haproxy_diagnostics_ring_size | int }}
+
+{% endif %}
 global
     log stdout format raw local0
+{% if naive_proxy_haproxy_diagnostics_enabled %}
+    stats socket ipv4@*:{{ naive_proxy_haproxy_diagnostics_port | int }} level admin
+{% endif %}
+{# `no-quic` was removed in HAProxy 3.3 (QUIC is opt-in via listener now).
+   Emit it only on tags that still understand it. Without USE_QUIC binds
+   in the role this directive is purely defensive — it only matters on
+   3.0/3.1/3.2 builds compiled with USE_QUIC=1 to suppress
+   `quic_test_socketopts()` startup checks that crash on some hosts. -#}
+{% if naive_proxy_haproxy_image_tag is match('^(2\.|3\.[0-2]([^0-9]|$))') %}
     no-quic
+{% endif %}
 {% if naive_proxy_haproxy_global_maxconn | int > 0 %}
     maxconn {{ naive_proxy_haproxy_global_maxconn }}
 {% endif %}
@@ -13,9 +29,14 @@ global
 {% if naive_proxy_haproxy_ssl_cache_size | int > 0 %}
     tune.ssl.cachesize {{ naive_proxy_haproxy_ssl_cache_size }}
 {% endif %}
-{% set haproxy_h2_frontend_rxbuf = _naive_proxy_haproxy_h2_frontend_rxbuf_effective | string | trim %}
-{% if haproxy_h2_frontend_rxbuf %}
-    tune.h2.fe.rxbuf {{ haproxy_h2_frontend_rxbuf }}
+{% if (naive_proxy_haproxy_h2_frontend_rxbuf | string | trim) | length > 0 %}
+    tune.h2.fe.rxbuf {{ naive_proxy_haproxy_h2_frontend_rxbuf | string | trim }}
+{% endif %}
+{% if naive_proxy_haproxy_h2_initial_window_size | int > 0 %}
+    tune.h2.fe.initial-window-size {{ naive_proxy_haproxy_h2_initial_window_size | int }}
+{% endif %}
+{% if naive_proxy_haproxy_h2_max_frame_size | int > 0 %}
+    tune.h2.max-frame-size {{ naive_proxy_haproxy_h2_max_frame_size | int }}
 {% endif %}
 {% if naive_proxy_haproxy_notsent_lowat | int > 0 %}
     tune.notsent-lowat.client {{ naive_proxy_haproxy_notsent_lowat }}
@@ -38,8 +59,16 @@ userlist naive_users
     user {{ name }} insecure-password {{ pass }}
 {% endfor %}
 
-# -- TCP frontend: ALPN inspection before TLS termination --------------------
-# Routes acme-tls/1 to ACME responder, everything else to HTTPS frontend.
+# -- TCP frontend: SNI + ALPN inspection before TLS termination --------------
+# Routing, in order:
+#   1. AnyTLS domain (any ALPN) -> sing-box, TCP passthrough. sing-box owns
+#      TLS for AnyTLS AND answers its OWN Let's Encrypt TLS-ALPN-01 challenge
+#      inline, so the anytls domain's acme-tls/1 must also land here. Matched
+#      FIRST so it wins over the acme-tls/1 rule below.
+#   2. acme-tls/1 (naive domain) -> acme.sh responder.
+#   3. everything else -> HTTPS frontend (naive TLS termination + auth).
+# The two independent ACME clients (acme.sh for the naive domain, sing-box's
+# built-in ACME for the anytls domain) are told apart purely by SNI.
 
 frontend tcp_in
     bind *:{{ naive_proxy_listen_port }}
@@ -47,6 +76,10 @@ frontend tcp_in
     tcp-request inspect-delay 5s
     tcp-request content accept if { req.ssl_hello_type 1 }
 
+{% if naive_proxy_anytls_enabled %}
+    acl sni_anytls req.ssl_sni -i {{ naive_proxy_anytls_domain }}
+    use_backend be_anytls if sni_anytls
+{% endif %}
     acl acme_alpn req.ssl_alpn acme-tls/1
     use_backend be_acme if acme_alpn
     default_backend be_https
@@ -54,6 +87,12 @@ frontend tcp_in
 backend be_acme
     mode tcp
     server acme 127.0.0.1:{{ _naive_proxy_acme_alpn_port }}
+{% if naive_proxy_anytls_enabled %}
+
+backend be_anytls
+    mode tcp
+    server anytls 127.0.0.1:{{ _naive_proxy_anytls_port }}
+{% endif %}
 
 backend be_https
     mode tcp

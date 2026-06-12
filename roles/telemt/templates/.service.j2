@@ -28,6 +28,9 @@ ExecStart=/usr/bin/podman container run \
         --pull=never \
         --read-only \
         --security-opt=no-new-privileges \
+{% if telemt_apparmor_profile %}
+        --security-opt=apparmor={{ telemt_apparmor_profile }} \
+{% endif %}
         --cap-drop=ALL \
 {% if telemt_listen_port | int < 1024 %}
         --cap-add=NET_BIND_SERVICE \

@@ -1,0 +1,520 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+  tasks:
+    # -- Service health + listener readiness ----------------------------------
+
+    - name: Wait for verify prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    # -- Health API ------------------------------------------------------------
+    # API + metrics probes go through `podman_container_exec` against the
+    # decoy because telemt's API enforces loopback-only access — see the
+    # comment in wait-services.yml for the DNAT/masq + whitelist details.
+
+    - name: GET /v1/health
+      containers.podman.podman_container_exec:
+        name: telemt-decoy
+        argv:
+          - curl
+          - -fsS
+          - --max-time
+          - "5"
+          - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health"
+      register: _api_health
+      changed_when: false
+
+    - name: Assert /v1/health reports ok
+      ansible.builtin.assert:
+        that:
+          - (_api_health.stdout | from_json).ok | bool
+          - (_api_health.stdout | from_json).data.status == 'ok'
+
+    - name: GET /v1/health/ready
+      containers.podman.podman_container_exec:
+        name: telemt-decoy
+        argv:
+          - curl
+          - -fsS
+          - --max-time
+          - "5"
+          - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health/ready"
+      register: _api_ready
+      changed_when: false
+
+    - name: Assert /v1/health/ready reports ready
+      ansible.builtin.assert:
+        that:
+          - (_api_ready.stdout | from_json).ok | bool
+          - (_api_ready.stdout | from_json).data.ready | bool
+
+    # -- Connection-link assembly ---------------------------------------------
+    # Re-derive expected links from molecule vars (mirrors the same
+    # Jinja the role uses) and assert: (1) link count == users × endpoints,
+    # (2) `ee` prefix on the secret, (3) hex-encoded SNI tail equals the
+    # domain encoded UTF-8, (4) `server=` for each endpoint matches its IP.
+
+    - name: Reset expected-links accumulator
+      ansible.builtin.set_fact:
+        _expected_links: []
+
+    - name: Assemble expected user × endpoint Fake-TLS links
+      ansible.builtin.set_fact:
+        _expected_links: >-
+          {{ _expected_links + [{
+               'user': item.0.key,
+               'endpoint': item.1.key,
+               'ip': item.1.value,
+               'secret_hex': item.0.value,
+               'link': 'tg://proxy?server=' ~ item.1.value
+                       ~ '&port=' ~ molecule_telemt_listen_port
+                       ~ '&secret=ee' ~ item.0.value
+                       ~ molecule_telemt_domain.encode('utf-8').hex()
+             }] }}
+      loop: "{{ (molecule_telemt_users | dict2items) | product(molecule_telemt_link_endpoints | dict2items) | list }}"
+      loop_control:
+        label: "{{ item.0.key }}@{{ item.1.key }}"
+
+    - name: Assert link count is users × endpoints
+      ansible.builtin.assert:
+        that:
+          - (_expected_links | length) ==
+            ((molecule_telemt_users | length) * (molecule_telemt_link_endpoints | length))
+        fail_msg: >-
+          Expected {{ molecule_telemt_users | length }} × {{ molecule_telemt_link_endpoints | length }}
+          links, got {{ _expected_links | length }}.
+
+    - name: Assert every link is well-formed Fake-TLS
+      ansible.builtin.assert:
+        that:
+          - item.link.startswith('tg://proxy?server=' ~ item.ip ~ '&port=' ~ molecule_telemt_listen_port)
+          - ('&secret=ee' ~ item.secret_hex) in item.link
+          - item.link.endswith(molecule_telemt_domain.encode('utf-8').hex())
+        fail_msg: "Malformed link for {{ item.user }}@{{ item.endpoint }}: {{ item.link }}"
+      loop: "{{ _expected_links }}"
+      loop_control:
+        label: "{{ item.user }}@{{ item.endpoint }}"
+
+    - name: Read persisted TLS proxy-link debug output
+      ansible.builtin.slurp:
+        src: /opt/telemt/molecule-tls-link-debug.json
+      register: _rendered_tls_link_raw
+
+    - name: Collect rendered TLS proxy-link debug output
+      ansible.builtin.set_fact:
+        _rendered_tls_link_messages: >-
+          {{ _rendered_tls_link_raw.content | b64decode | from_json }}
+
+    - name: Assert role emitted every expected TLS proxy link
+      ansible.builtin.assert:
+        that:
+          - _rendered_tls_link_messages | length == _expected_links | length
+          - ("[" ~ item.user ~ "@" ~ item.endpoint ~ "] " ~ item.link) in _rendered_tls_link_messages
+        fail_msg: >-
+          Role debug output did not include expected link for
+          {{ item.user }}@{{ item.endpoint }}: {{ item.link }}.
+          Rendered messages: {{ _rendered_tls_link_messages }}
+      loop: "{{ _expected_links }}"
+      loop_control:
+        label: "{{ item.user }}@{{ item.endpoint }}"
+
+    # -- Rendered config sanity ------------------------------------------------
+
+    - name: Read rendered telemt.toml
+      ansible.builtin.slurp:
+        src: /opt/telemt/telemt.toml
+      register: _telemt_toml_raw
+
+    - name: Set telemt.toml fact
+      ansible.builtin.set_fact:
+        _telemt_toml: "{{ _telemt_toml_raw.content | b64decode }}"
+
+    - name: Assert telemt.toml contains expected entries
+      ansible.builtin.assert:
+        that:
+          - "'tls = true' in _telemt_toml"
+          - "'tls_domain = \"' ~ molecule_telemt_domain ~ '\"' in _telemt_toml"
+          - "'mask = true' in _telemt_toml"
+          - "'mask_host = \"127.0.0.1\"' in _telemt_toml"
+          - "'alice = \"' ~ molecule_telemt_users.alice ~ '\"' in _telemt_toml"
+          - "'bob = \"' ~ molecule_telemt_users.bob ~ '\"' in _telemt_toml"
+
+    # -- Prometheus metrics ---------------------------------------------------
+
+    - name: Scrape /metrics
+      containers.podman.podman_container_exec:
+        name: telemt-decoy
+        argv:
+          - curl
+          - -fsS
+          - --max-time
+          - "5"
+          - "http://127.0.0.1:{{ molecule_telemt_metrics_port }}/metrics"
+      register: _metrics
+      changed_when: false
+
+    - name: Assert telemt exports expected metric names
+      ansible.builtin.assert:
+        that:
+          - "'telemt_connections_total' in _metrics.stdout"
+          - "'telemt_build_info' in _metrics.stdout"
+        fail_msg: >-
+          /metrics did not include the expected counters. First 500
+          chars: {{ _metrics.stdout | default('<empty>') | truncate(500) }}
+
+    # -- Decoy splice via TLS --------------------------------------------------
+    # `mask = true` in telemt.toml means connections without a valid
+    # Fake-TLS secret are TCP-spliced to the decoy. A vanilla GET via
+    # `uri:` (with validate_certs: false) splices through and completes
+    # the TLS handshake against Caddy.
+    #
+    # ORDER MATTERS. Caddy's ACME issuance against Pebble is async — it
+    # fires after Caddy starts and only completes once the TLS-ALPN-01
+    # challenge passes through the splice. During the window between
+    # "bootstrap self-signed cert torn down" and "Pebble-issued cert
+    # installed", TLS handshakes against Caddy fail with
+    # TLSV1_ALERT_INTERNAL_ERROR rather than just returning the
+    # bootstrap cert with `validate_certs: false`. So we MUST poll for
+    # the Pebble-issued cert before issuing the splice GET, otherwise
+    # the GET can land mid-transition and fail spuriously.
+
+    - name: Wait for Pebble-issued cert on splice
+      community.crypto.get_certificate:
+        host: "127.0.0.1"
+        port: "{{ molecule_telemt_listen_port }}"
+        server_name: "{{ molecule_telemt_domain }}"
+      register: _splice_cert
+      # community.crypto.get_certificate returns issuer keyed by short
+      # OID names (e.g. `CN`); x509_certificate_info uses long names
+      # (`commonName`). Don't conflate the two.
+      until:
+        - _splice_cert.cert is defined
+        - "'Pebble' in (_splice_cert.issuer.CN | default(''))"
+      retries: 30
+      delay: 5
+
+    - name: Parse spliced certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ _splice_cert.cert }}"
+      register: _splice_cert_info
+
+    - name: Assert spliced cert SAN + Pebble issuer
+      ansible.builtin.assert:
+        that:
+          - molecule_telemt_domain in (_splice_cert_info.subject_alt_name | default([]) | join(','))
+          - "'Pebble' in _splice_cert_info.issuer.commonName"
+        fail_msg: >-
+          Cert through splice failed validation.
+          SANs={{ _splice_cert_info.subject_alt_name | default('<none>') }}
+          issuer={{ _splice_cert_info.issuer | default('<none>') }}
+
+    - name: GET decoy stub through TCP splice
+      ansible.builtin.uri:
+        url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: _decoy_response
+      # At this point ACME is already settled (preceding cert check
+      # passed), so the GET should succeed on the first try. The small
+      # retry budget guards against transient network blips, not the
+      # ACME transition.
+      until: _decoy_response.status == 200
+      retries: 3
+      delay: 2
+
+    - name: Assert decoy response carries built-in stub markers
+      ansible.builtin.assert:
+        that:
+          - _decoy_response.status == 200
+          - _decoy_response.content | length > 0
+        fail_msg: >-
+          Decoy splice did not return content. Got status={{ _decoy_response.status }}
+          body={{ _decoy_response.content | default('<empty>') | truncate(300) }}
+
+    # -- Bad-payload probe drives the connection counter ---------------------
+    # Send a junk TLS-ish ClientHello at the listener and assert the
+    # connections counter visibly increased. This proves the listener
+    # is parsing connections (not just bound). No native module sends
+    # arbitrary bytes over a TCP socket — `wait_for` only checks port
+    # state, `uri` is HTTP-only — so this stays as a `shell:` task.
+
+    - name: Capture connections counter before garbage probe
+      containers.podman.podman_container_exec:
+        name: telemt-decoy
+        argv:
+          - curl
+          - -fsS
+          - --max-time
+          - "5"
+          - "http://127.0.0.1:{{ molecule_telemt_metrics_port }}/metrics"
+      register: _metrics_before_garbage
+      changed_when: false
+
+    - name: Garbage connection probe (drives telemt_connections_total)
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail +e
+          printf '\x16\x03\x01\x00\x05garbage' | timeout 3 nc 127.0.0.1 {{ molecule_telemt_listen_port }} >/dev/null 2>&1
+          exit 0
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Settle window before re-scrape
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Capture connections counter after garbage probe
+      containers.podman.podman_container_exec:
+        name: telemt-decoy
+        argv:
+          - curl
+          - -fsS
+          - --max-time
+          - "5"
+          - "http://127.0.0.1:{{ molecule_telemt_metrics_port }}/metrics"
+      register: _metrics_after_decoy
+      changed_when: false
+
+    - name: Extract telemt_connections_total before/after garbage probe
+      ansible.builtin.set_fact:
+        _conn_total_before: >-
+          {{ (_metrics_before_garbage.stdout
+              | regex_findall('(?m)^telemt_connections_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)')
+              | map('float') | sum) | default(0, true) }}
+        _conn_total_after: >-
+          {{ (_metrics_after_decoy.stdout
+              | regex_findall('(?m)^telemt_connections_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)')
+              | map('float') | sum) | default(0, true) }}
+
+    - name: Assert telemt_connections_total increased after garbage probe
+      ansible.builtin.assert:
+        that:
+          - (_conn_total_after | float) > (_conn_total_before | float)
+        fail_msg: >-
+          telemt_connections_total did not advance after the decoy GET +
+          garbage probe. Before={{ _conn_total_before }}, After={{ _conn_total_after }}.
+
+    # -- Real Fake-TLS handshake via mtp_ping (opt-in) -----------------------
+    # mtp_ping runs through the proxy under test and out to Telegram's
+    # real middle proxies, so this requires egress to Telegram on 443.
+    # Default-off; set MP_RUN_MTP_PING=1 when you explicitly want this
+    # external integration probe.
+
+    - name: Real Fake-TLS handshake via mtp_ping
+      when: molecule_telemt_run_mtp_ping | bool
+      block:
+        - name: Capture per-user counter before mtp_ping
+          containers.podman.podman_container_exec:
+            name: telemt-decoy
+            argv:
+              - curl
+              - -fsS
+              - --max-time
+              - "5"
+              - "http://127.0.0.1:{{ molecule_telemt_metrics_port }}/metrics"
+          register: _metrics_pre_ping
+          changed_when: false
+
+        # `pod=telemt-pod` joins the container into the existing pod
+        # netns so 127.0.0.1:9443 resolves to telemt's listener. The
+        # container itself comes from prepare's `localhost/mtp-ping`
+        # image. `detach: false` keeps the one-shot foreground process'
+        # stdout/stderr in the registered result.
+        #
+        # `--runtime=crun --cgroups=disabled` is required because the
+        # default systemd cgroup manager fails to create a transient
+        # scope from inside the molecule instance for ad-hoc runs;
+        # crun + cgroups disabled bypasses that. (The role's pod
+        # containers stay on runc + `--cgroups=split`, which works
+        # because they're driven by systemd units that handle the
+        # scope creation.)
+        - name: Run mtp_ping with alice's Fake-TLS link
+          containers.podman.podman_container:
+            name: telemt-mtp-ping
+            image: localhost/mtp-ping:latest
+            state: started
+            recreate: true
+            detach: false
+            rm: true
+            pull: never
+            pod: telemt-pod
+            cgroups: disabled
+            cmd_args:
+              - --runtime=crun
+            command:
+              - --proto
+              - fake-tls
+              - --dc
+              - "1"
+              - --repeat
+              - "1"
+              - --timeout
+              - "15000"
+              - "tg://proxy?server=127.0.0.1&port={{ molecule_telemt_listen_port }}\
+                 &secret=ee{{ molecule_telemt_users.alice }}\
+                 {{ molecule_telemt_domain.encode('utf-8').hex() }}"
+          register: _mtp_ping
+          changed_when: false
+
+        - name: Print mtp_ping output
+          ansible.builtin.debug:
+            msg: |-
+              stdout:
+              {{ _mtp_ping.stdout | default('<empty>') }}
+              stderr:
+              {{ _mtp_ping.stderr | default('<empty>') }}
+
+        - name: Capture per-user counter after mtp_ping
+          containers.podman.podman_container_exec:
+            name: telemt-decoy
+            argv:
+              - curl
+              - -fsS
+              - --max-time
+              - "5"
+              - "http://127.0.0.1:{{ molecule_telemt_metrics_port }}/metrics"
+          register: _metrics_post_ping
+          changed_when: false
+
+        - name: Extract alice's user_connections_total before/after
+          ansible.builtin.set_fact:
+            _alice_pre: >-
+              {{ (_metrics_pre_ping.stdout
+                  | regex_findall('(?m)^telemt_user_connections_total\{[^}]*user="alice"[^}]*\}\s+(\d+(?:\.\d+)?)')
+                  | map('float') | sum) | default(0, true) }}
+            _alice_post: >-
+              {{ (_metrics_post_ping.stdout
+                  | regex_findall('(?m)^telemt_user_connections_total\{[^}]*user="alice"[^}]*\}\s+(\d+(?:\.\d+)?)')
+                  | map('float') | sum) | default(0, true) }}
+
+        - name: Assert mtp_ping registered as alice's authenticated connection
+          ansible.builtin.assert:
+            that:
+              - (_alice_post | float) > (_alice_pre | float)
+            fail_msg: >-
+              mtp_ping did not authenticate as alice. alice counter
+              before={{ _alice_pre }}, after={{ _alice_post }}.
+              Likely causes: no egress to Telegram DCs, secret mismatch,
+              or telemt rejected the handshake. mtp_ping output:
+              stdout={{ _mtp_ping.stdout | default('') | truncate(300) }}
+              stderr={{ _mtp_ping.stderr | default('') | truncate(300) }}
+      rescue:
+        - name: Print mtp_ping failure output
+          ansible.builtin.debug:
+            msg: |-
+              stdout:
+              {{ _mtp_ping.stdout | default('<empty>') }}
+              stderr:
+              {{ _mtp_ping.stderr | default('<empty>') }}
+              msg:
+              {{ _mtp_ping.msg | default('<empty>') }}
+          when: _mtp_ping is defined
+
+        - name: Capture telemt journal on mtp_ping failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: journalctl -xeu podman-telemt.service --no-pager -n 200
+          register: _telemt_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Print telemt journal
+          ansible.builtin.debug:
+            msg: "{{ _telemt_journal.stdout | default('<no journal>') }}"
+
+        - name: Re-raise mtp_ping failure
+          ansible.builtin.fail:
+            msg: mtp_ping verification failed; see diagnostics above.
+
+    # -- Reverse-proxy decoy mode (telemt_decoy_upstream_url) ----------------
+    # Re-render the Caddyfile with an upstream URL set, restart the decoy,
+    # and confirm splice-spliced traffic is reverse-proxied to the remote
+    # site with content rewriting limited to the Host header. example.com
+    # is used as a stable, IANA-controlled upstream.
+    # Runs last because it leaves the decoy in upstream-proxy mode (no
+    # local stub) for the rest of the verify.
+
+    - name: Reverse-proxy decoy mode test
+      block:
+        - name: Reconfigure decoy in reverse-proxy mode (upstream URL)
+          ansible.builtin.include_role:
+            name: kogeler.mini_pig.telemt
+          vars:
+            telemt_domain: "{{ molecule_telemt_domain }}"
+            telemt_listen_port: "{{ molecule_telemt_listen_port }}"
+            telemt_users: "{{ molecule_telemt_users }}"
+            telemt_link_endpoints: "{{ molecule_telemt_link_endpoints }}"
+            telemt_molecule_mode: true
+            telemt_api_enabled: true
+            telemt_publish_api: true
+            telemt_api_bind: "127.0.0.1"
+            telemt_api_port: "{{ molecule_telemt_api_port }}"
+            telemt_publish_metrics: true
+            telemt_metrics_bind: "127.0.0.1"
+            telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"
+            telemt_decoy_upstream_url: "https://example.com"
+
+        - name: Flush handlers to apply Caddyfile change
+          ansible.builtin.meta: flush_handlers
+
+        - name: Smoke test reverse-proxy decoy via TCP splice
+          ansible.builtin.uri:
+            url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
+            validate_certs: false
+            use_proxy: false
+            return_content: true
+          register: _decoy_upstream_response
+          until:
+            - _decoy_upstream_response.status == 200
+            - "'Example Domain' in (_decoy_upstream_response.content | default(''))"
+          retries: 12
+          delay: 5
+
+        - name: Assert decoy reverse-proxies to upstream URL
+          ansible.builtin.assert:
+            that:
+              - "'Example Domain' in _decoy_upstream_response.content"
+            fail_msg: >-
+              Expected upstream content from example.com but got:
+              {{ _decoy_upstream_response.content | default('<empty>') | truncate(300) }}
+      rescue:
+        - name: Capture decoy systemd status on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: systemctl status podman-telemt-decoy.service --no-pager -l
+          register: _decoy_upstream_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture decoy journal on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: journalctl -xeu podman-telemt-decoy.service --no-pager -n 200
+          register: _decoy_upstream_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Capture rendered Caddyfile on failure
+          ansible.builtin.slurp:
+            src: /opt/telemt/Caddyfile
+          register: _decoy_upstream_caddyfile
+          failed_when: false
+
+        - name: Print reverse-proxy decoy diagnostics
+          ansible.builtin.debug:
+            msg: |-
+              === systemctl status podman-telemt-decoy.service ===
+              {{ _decoy_upstream_status.stdout | default('<no output>') }}
+              {{ _decoy_upstream_status.stderr | default('') }}
+              === journalctl -xeu podman-telemt-decoy.service ===
+              {{ _decoy_upstream_journal.stdout | default('<no output>') }}
+              === rendered /opt/telemt/Caddyfile ===
+              {{ (_decoy_upstream_caddyfile.content | b64decode)
+                 if _decoy_upstream_caddyfile.content is defined
+                 else '<could not read Caddyfile>' }}
+
+        - name: Re-raise reverse-proxy decoy test failure
+          ansible.builtin.fail:
+            msg: >-
+              Reverse-proxy decoy mode test failed; see diagnostics above.

@@ -1,0 +1,39 @@
+---
+# Molecule scenario defaults shared by every scenario play. Defined once
+# here so converge / verify / prepare read the same source of truth.
+#
+# Domain that the masking decoy serves and that gets hex-encoded into
+# every Fake-TLS secret. Bound to 127.0.0.1 inside the molecule instance
+# via molecule.yml `etc_hosts` (podman) and prepare.yml lineinfile
+# (gha-native fallback).
+molecule_telemt_domain: "telemt.test"
+
+# Listen port for the proxy (host-side, published from the pod). 9443
+# avoids the in-pod collision with the decoy's hardcoded 8443
+# (vars/main.yml `_telemt_decoy_port`), and stays >1024 so we exercise
+# the unprivileged path (the role's `--cap-add=NET_BIND_SERVICE`
+# gating kicks in only below 1024).
+molecule_telemt_listen_port: 9443
+
+# Two endpoints for the link-generation cartesian product. Both point at
+# the same loopback so no second listener is required, but each will
+# render its own `tg://proxy?server=...` line — verify asserts both.
+# 127.0.0.1 + 127.0.0.2 are routable inside the molecule netns.
+molecule_telemt_link_endpoints:
+  primary: "127.0.0.1"
+  backup: "127.0.0.2"
+
+# Two test users, deterministic 32-hex secrets — easy to assert on.
+molecule_telemt_users:
+  alice: "0123456789abcdef0123456789abcdef"
+  bob: "fedcba9876543210fedcba9876543210"
+
+# Metrics + API ports (publish on host loopback so verify can curl).
+molecule_telemt_metrics_port: 9090
+molecule_telemt_api_port: 9091
+
+# Run mtp_ping (real Fake-TLS handshake against Telegram middle proxies)
+# in verify. Requires egress from the molecule instance to Telegram DCs
+# on 443, so it is opt-in and stays off in CI by default.
+# Set MP_RUN_MTP_PING=1 to enable.
+molecule_telemt_run_mtp_ping: "{{ lookup('env', 'MP_RUN_MTP_PING') | default('0', true) | bool }}"

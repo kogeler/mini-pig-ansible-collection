@@ -1,0 +1,53 @@
+---
+# singbox-stress scenario: podman-in-podman, Debian trixie.
+#
+# Mirrors the `default` scenario but swaps the verify playbook for the
+# sing-box Naive outbound stress reproducer. Use this scenario to
+# chase the "stream failed: http2 protocol error" / "connection upload
+# closed" failures reported by sing-box / SFA clients against a
+# deployed naive_proxy stack.
+#
+# Shared config in `molecule/shared/base.yml` (loaded via -c). The
+# sing-box build pins (`singbox_build_*`) live there under
+# `provisioner.inventory.group_vars.all`, shared with anytls-stress.
+driver:
+  name: podman
+platforms:
+  - name: molecule-naive-proxy
+    image: "docker.io/library/debian:trixie"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    security_opts:
+      - "label=disable"
+      - "unmask=/proc/*"
+      - "apparmor=unconfined"
+    capabilities:
+      - SYS_ADMIN
+      - SETUID
+      - SETGID
+      - NET_ADMIN
+    etc_hosts:
+      naive.test: "127.0.0.1"
+    devices:
+      - /dev/fuse:/dev/fuse
+      # The sing-box client container (started inside this instance) opens
+      # /dev/net/tun to create its own tun interface — see
+      # `shared/tasks/singbox-benchmark.yml`. Without the device bind,
+      # the inner container has no way to obtain a tun fd even with
+      # NET_ADMIN scoped to its own netns.
+      - /dev/net/tun:/dev/net/tun
+    command: ""
+    override_command: false
+ansible:
+  playbooks:
+    # Override base config defaults:
+    #   - converge: scenario-local. Applies kogeler.mini_pig.ssl_router
+    #     on top of the naive_proxy role to mirror the prod
+    #     ssl-router → HAProxy chain (see converge.yml).
+    #   - verify: swap shared/verify.yml (which exercises the official
+    #     naive client) for shared/singbox-verify.yml (which drives the
+    #     sing-box stress reproducer instead).
+    # prepare stays the shared default.
+    converge: converge.yml
+    verify: ../shared/singbox-verify.yml

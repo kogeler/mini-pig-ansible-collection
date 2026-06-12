@@ -1,0 +1,69 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# nftables backend. Renders /etc/nftables.conf scoped to the role-owned
+# `mpig_*` tables. Kernel apply is performed by mini-pig-firewall.service
+# via a flat `nft -f /etc/nftables.conf`; atomic delete-then-create lives
+# in-file via the `add table; delete table; table {…}` idiom (nft 1.0.6 /
+# Debian 12 safe — no `destroy table`, no shell wrapping). The global
+# ruleset is never flushed; external services are not restarted. Legacy
+# teardown is factored into migrate_to_nftables.yml.
+
+- name: iptables | nft | Render /etc/nftables.conf
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    mode: "0644"
+    owner: root
+    group: root
+    validate: '/usr/sbin/nft -c -f %s'
+  register: _iptables_nft_template
+
+# Boot hook stays enabled. We never restart/stop nftables.service (its
+# stop path flushes the global ruleset).
+- name: iptables | nft | Enable nftables.service for boot persistence
+  ansible.builtin.systemd:
+    name: nftables.service
+    enabled: true
+    daemon_reload: true
+
+# Migration gate decided from the OLD marker captured in tasks/main.yml,
+# before we overwrite it below. Triggered when the marker still says
+# "iptables-scoped" or any legacy iptables artefact is present.
+- name: iptables | nft | Decide whether migration is needed
+  ansible.builtin.set_fact:
+    _iptables_migration_needed: >-
+      {{
+        (
+          _iptables_backend_marker_stat.stat.exists | bool
+          and (_iptables_backend_marker_raw.content | b64decode).strip() == 'iptables-scoped'
+        )
+        or (_iptables_legacy_rule_file_stats.results[0].stat.exists | bool)
+        or (_iptables_legacy_rule_file_stats.results[1].stat.exists | bool)
+        or (_iptables_legacy_scoped_service_stat.stat.exists | bool)
+      }}
+
+# Marker is written BEFORE the unified service start so the dispatcher
+# knows to apply the nft path.
+- name: iptables | nft | Write firewall-backend marker
+  ansible.builtin.copy:
+    content: "nftables\n"
+    dest: /var/lib/mini-pig-firewall-backend
+    mode: "0644"
+    owner: root
+    group: root
+
+# Apply via the unified service. Dispatcher runs the delete-then-load
+# pair and loads the kernel tables from /etc/nftables.conf.
+- name: iptables | nft | Apply nftables ruleset via unified service
+  ansible.builtin.systemd:
+    name: mini-pig-firewall.service
+    state: started
+  changed_when: _iptables_nft_template.changed | bool
+
+# Tear down legacy iptables stack AFTER nft tables are live in the kernel.
+- name: iptables | nft | Tear down legacy iptables stack
+  ansible.builtin.include_tasks: migrate_to_nftables.yml
+  when: _iptables_migration_needed | bool

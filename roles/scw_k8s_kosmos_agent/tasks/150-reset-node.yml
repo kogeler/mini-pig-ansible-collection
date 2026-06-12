@@ -1,0 +1,26 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# The agent keeps the node identity in /etc/scw-k8s-userdata and the
+# installed component versions in /etc/scw-k8s-versions.json. Stopping
+# the runtime units and removing those files before the agent run
+# forces the agent to register the node from scratch under a new name,
+# even if the node is already joined and working.
+
+- name: scw_k8s_kosmos_agent | reset node | stop units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ _scw_k8s_kosmos_agent_reset_units }}"
+  when:
+    - scw_k8s_kosmos_agent_reset_node_enabled | bool
+    - item in ansible_facts.services
+
+- name: scw_k8s_kosmos_agent | reset node | remove agent state files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _scw_k8s_kosmos_agent_reset_files }}"
+  when: scw_k8s_kosmos_agent_reset_node_enabled | bool

@@ -1,0 +1,120 @@
+---
+# Role-scoped molecule base config for the naive_proxy role.
+#
+# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
+# (the Makefile and CI workflow inject the flag for every scenario).
+# Each scenario's `molecule.yml` deep-merges on top of this — anything
+# common across scenarios lives here, anything scenario-specific stays
+# in the scenario file.
+#
+# Important caveats about molecule's deep-merge:
+#   * Dicts are deep-merged; values from the scenario override base.
+#   * **Lists are REPLACED entirely** (see molecule.util.merge_dicts).
+#     That is why `driver` (a dict, can be in base) is shared from
+#     here, but `platforms` (a list) MUST stay in each scenario.
+#   * Legacy `provisioner.{config_options, playbooks, env,
+#     ansible_args}` get migrated to `ansible.{cfg, playbooks, env,
+#     executor.args.ansible_playbook}` after merge — and the migration
+#     REPLACES the destination wholesale. We therefore use the new
+#     `ansible.*` syntax everywhere so deep-merge happens in one place
+#     and the migration short-circuits with no destructive replace.
+
+dependency:
+  name: galaxy
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    # Default host_vars for the molecule-managed instance. Each
+    # scenario overrides what it needs in its own molecule.yml — deep
+    # merge keeps the rest. `mp_driver` is the single source of truth
+    # for driver-conditional behaviour (e.g. `when: mp_driver !=
+    # 'podman'` in shared prepare); MUST live in inventory
+    # (precedence 9), not in any `vars_files` (priority 14), or
+    # vars_files would silently mask scenario-specific values and
+    # break e.g. the gha scenario's `native`.
+    host_vars:
+      molecule-naive-proxy:
+        mp_driver: podman
+    # ---- sing-box build pins (singbox-stress + anytls-stress only) ----------
+    # Consumed by `molecule/shared/Dockerfile.j2` (symlinked into both stress
+    # scenarios), which compiles sing-box from source and bakes the static
+    # binary + libcronet.so into the molecule instance image. `group_vars.all`
+    # is the ONE inventory location molecule injects into BOTH the create play
+    # (renders Dockerfile.j2 against `localhost`) and the converge/verify
+    # plays — host_vars would not reach the localhost create play. Centralised
+    # here (shared base config) so the two stress scenarios never drift; the
+    # default / debian-bookworm / gha scenarios inherit these too but ignore
+    # them (their own Dockerfile.j2 does not reference them).
+    #
+    # Pins mirror SagerNet/sing-box-for-android (SFA) — the Android client —
+    # so this build reproduces the exact H2/Naive code paths real SFA users
+    # hit. After bumping any pin: `molecule destroy` + `molecule converge`
+    # (also `podman rmi localhost/molecule_local/docker.io/library/debian:trixie`
+    # if the cache hides the rebuild).
+    #
+    # WHERE TO LOOK to refresh these (DO NOT remove these URLs):
+    #   * SFA `version.properties` → VERSION_NAME (sing-box tag, add `v`) and
+    #     GO_VERSION (strip the `go` prefix):
+    #     https://github.com/SagerNet/sing-box-for-android/blob/dev/version.properties
+    #   * sing-box `release/DEFAULT_BUILD_TAGS` at that tag — the libbox.aar SFA
+    #     ships is built from these; mirror them for H2 code-path parity:
+    #     https://github.com/SagerNet/sing-box/blob/<VERSION_NAME>/release/DEFAULT_BUILD_TAGS
+    #     (`with_purego` below is OUR addition: makes cronet-go dlopen
+    #     libcronet.so at runtime so the Go binary builds CGO_ENABLED=0 static;
+    #     `badlinkname`/`tfogo_checklinkname0` are upstream Go 1.24+ linkname
+    #     workarounds, hence the `-checklinkname=0` ldflag in the Dockerfile.)
+    #   * sing-box `go.mod` cronet-go pin (`github.com/sagernet/cronet-go
+    #     v0.0.0-<DATE>-<SHORTSHA>`):
+    #     https://github.com/SagerNet/sing-box/blob/<VERSION_NAME>/go.mod
+    #   * cronet-go releases — pick the release whose chromium revision matches
+    #     the go.mod pin's commit (the prebuilt libcronet.so MUST be the same
+    #     chromium rev as the bindings sing-box compiled against, or the C ABI
+    #     drifts and libcronet.so calls segfault):
+    #     https://github.com/sagernet/cronet-go/releases
+    #
+    # LAST CHECKED 2026-06-06: pins below track SFA dev = 1.14.0-alpha.28 /
+    # go1.25.10 (current as of this date). cronet-go latest release is
+    # v148.0.7778.96-1 (chromium 148.0.7778.96); the alpha.28 go.mod cronet pin
+    # (commit b3eec8134aec, 2026-05-16) only regenerates the Go packages — no
+    # chromium bump — so that release's libcronet.so still ABI-matches. Build
+    # tags match upstream DEFAULT_BUILD_TAGS at alpha.28 (+ our `with_purego`).
+    group_vars:
+      all:
+        # SFA version.properties → VERSION_NAME (with `v`).
+        singbox_build_version: "v1.14.0-alpha.28"
+        # sing-box release/DEFAULT_BUILD_TAGS at that tag + our `with_purego`.
+        singbox_build_tags:
+          - with_gvisor
+          - with_quic
+          - with_dhcp
+          - with_wireguard
+          - with_utls
+          - with_acme
+          - with_clash_api
+          - with_tailscale
+          - with_ccm
+          - with_ocm
+          - with_cloudflared
+          - with_naive_outbound
+          - badlinkname
+          - tfogo_checklinkname0
+          - with_purego
+        # SFA version.properties → GO_VERSION (strip the `go` prefix).
+        singbox_build_go_version: "1.25.10"
+        # cronet-go release matching the sing-box go.mod cronet pin's chromium.
+        singbox_cronet_version: "v148.0.7778.96-1"
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

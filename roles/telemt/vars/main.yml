@@ -12,5 +12,18 @@ _telemt_decoy_container_name: telemt-decoy
 _telemt_decoy_systemd_unit_name: "podman-{{ _telemt_decoy_container_name }}.service"
 _telemt_decoy_domain: "{{ telemt_decoy_domain if telemt_decoy_domain else telemt_domain }}"
 _telemt_decoy_data_dir: "{{ telemt_config_dir }}/caddy-data"
+_telemt_decoy_config_dir: "{{ telemt_config_dir }}/caddy-config"
 _telemt_decoy_html_dir: "{{ telemt_config_dir }}/decoy-html"
 _telemt_decoy_port: 8443
+
+# -- Pebble (molecule mode only) ----------------------------------------------
+_telemt_pebble_name: telemt-pebble
+_telemt_pebble_systemd_unit_name: "podman-{{ _telemt_pebble_name }}.service"
+_telemt_pebble_image: ghcr.io/letsencrypt/pebble
+_telemt_pebble_image_tag: latest
+_telemt_pebble_port: 14000
+_telemt_pebble_mgmt_port: 15000
+# Caddy in the same pod-netns hits localhost — Pebble's leaf cert is for
+# `localhost`, so anything else (telemt.test, 127.0.0.1) would fail SNI.
+_telemt_pebble_acme_server: "https://localhost:{{ _telemt_pebble_port }}/dir"
+_telemt_pebble_root_cert_path: "{{ telemt_config_dir }}/pebble-root.pem"

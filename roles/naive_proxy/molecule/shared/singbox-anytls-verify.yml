@@ -1,0 +1,267 @@
+---
+# Verify playbook for the anytls-stress scenario.
+#
+# Focused on the new AnyTLS path: the sing-box server container, its rendered
+# config (deployed static cert + a separately-validated production ACME
+# config), HAProxy SNI routing to the anytls domain, the two-variant client
+# configs, and a real AnyTLS connection carrying iperf3 traffic end to end.
+# The full naive contract stays covered by shared/verify.yml in the default /
+# debian-bookworm scenarios.
+- name: Verify (anytls stress)
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+    - vars/singbox-benchmark.yml
+    - vars/singbox-anytls-benchmark.yml
+  tasks:
+    - name: Wait for verify prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    # -- Re-discover bridge gateway & pod IP (set_facts don't survive
+    #    across the separate converge / verify ansible-playbook runs) -------
+    - name: Discover inner podman default-bridge gateway
+      containers.podman.podman_network_info:
+        name: podman
+      register: _singbox_stress_net
+
+    - name: Discover naive-backend container IP (= naive-pod IP)
+      containers.podman.podman_container_info:
+        name: naive-backend
+      register: _singbox_stress_backend
+
+    - name: Pin discovered IPs as facts
+      ansible.builtin.set_fact:
+        _singbox_stress_bridge_gateway: >-
+          {{ (_singbox_stress_net.networks[0].subnets
+              | selectattr('gateway', 'defined')
+              | list | first).gateway }}
+        _singbox_stress_pod_ip: >-
+          {{ (_singbox_stress_backend.containers[0].NetworkSettings.Networks
+              | dict2items | first).value.IPAddress }}
+
+    - name: Override naive_proxy external_ip maps for verify-clients
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_external_ip: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_auto:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_manual:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+        # uTLS fingerprint this scenario converged with (set via set_fact so it
+        # beats the common.yml vars_files default; consumed by verify-clients
+        # for the rendered-config shape AND by the benchmark for the inline
+        # client + the on-the-wire Firefox ClientHello assertion).
+        _anytls_utls_fingerprint: firefox
+
+    # -- AnyTLS server container ------------------------------------------
+    - name: Assert sing-box AnyTLS container unit is active
+      ansible.builtin.systemd:
+        name: podman-naive-anytls.service
+      register: _anytls_unit
+      until: _anytls_unit.status.ActiveState == 'active'
+      retries: 20
+      delay: 3
+
+    # -- Deployed (static) server config ----------------------------------
+    - name: Read rendered AnyTLS server config
+      ansible.builtin.slurp:
+        src: /opt/naive-proxy/anytls.json
+      register: _anytls_cfg_raw
+
+    - name: Assert deployed AnyTLS config shape (Pebble ACME in this scenario)
+      vars:
+        _anytls_cfg: "{{ _anytls_cfg_raw.content | b64decode | from_json }}"
+        _anytls_in: "{{ _anytls_cfg.inbounds | selectattr('type', 'equalto', 'anytls') | list | first }}"
+      ansible.builtin.assert:
+        that:
+          - _anytls_cfg.inbounds | selectattr('type', 'equalto', 'anytls') | list | length == 1
+          - _anytls_in.users | length == molecule_naive_proxy_users | length
+          - _anytls_in.tls.enabled
+          - _anytls_in.tls.server_name == molecule_naive_proxy_anytls_domain
+          # This scenario issues from the local Pebble CA via real ACME.
+          - _anytls_in.tls.acme is defined
+          - _anytls_in.tls.acme.domain == [molecule_naive_proxy_anytls_domain]
+          - _anytls_in.tls.acme.alternative_tls_port == 8445
+          - _anytls_in.tls.certificate_path is not defined
+          # ALPN must be advertised so uTLS/browser clients can negotiate;
+          # without it the ACME path serves only acme-tls/1 (no_application_protocol).
+          - _anytls_in.tls.alpn == ['h2', 'http/1.1']
+        fail_msg: "Deployed AnyTLS config is not the expected ACME shape: {{ _anytls_cfg }}"
+
+    # -- ALPN negotiation (regression test for uTLS no_application_protocol) --
+    # The decisive check the original uTLS work missed: a browser uTLS client
+    # always offers ALPN ["h2","http/1.1"]; if the server advertises only
+    # acme-tls/1 (the ACME TLS-ALPN-01 default) it aborts with the TLS alert
+    # `no_application_protocol`. Drive the exact browser ALPN through HAProxy
+    # (SNI=anytls domain → be_anytls → sing-box) and assert the server negotiates
+    # h2 instead of rejecting — proving the AnyTLS handshake a uTLS client makes
+    # actually completes.
+    - name: Probe AnyTLS ALPN negotiation with a browser ALPN offer
+      ansible.builtin.command:
+        cmd: >-
+          openssl s_client -connect 127.0.0.1:{{ molecule_naive_proxy_listen_port }}
+          -servername {{ molecule_naive_proxy_anytls_domain }}
+          -alpn h2,http/1.1 -verify_quiet
+      register: _anytls_alpn_probe
+      changed_when: false
+      failed_when: false
+      args:
+        stdin: ""
+
+    - name: Assert the AnyTLS server negotiated h2 (not no_application_protocol)
+      ansible.builtin.assert:
+        that:
+          - "'ALPN protocol: h2' in _anytls_alpn_probe.stdout"
+          - "'no application protocol' not in _anytls_alpn_probe.stdout"
+          - "'no application protocol' not in _anytls_alpn_probe.stderr"
+        fail_msg: >-
+          The AnyTLS server did not negotiate ALPN h2 for a browser ALPN offer
+          (h2,http/1.1) — a uTLS/browser client would get
+          `no_application_protocol`. The server's tls.alpn must include
+          h2/http1.1. openssl said:
+          {{ _anytls_alpn_probe.stdout | regex_search('ALPN protocol:.*|no application protocol') | default('(no ALPN line)') }}
+          {{ _anytls_alpn_probe.stderr | default('') | truncate(200) }}
+        success_msg: >-
+          AnyTLS server negotiated ALPN h2 for a browser ALPN offer — uTLS
+          clients can complete the AnyTLS handshake.
+
+    # The flip side: advertising server ALPN must NOT break a non-uTLS client,
+    # which offers no ALPN. Go negotiates fine (empty client list → no alert),
+    # but assert it live so the server-ALPN change is proven safe both ways.
+    - name: Probe AnyTLS handshake with NO ALPN offer (non-uTLS client)
+      ansible.builtin.command:
+        cmd: >-
+          openssl s_client -connect 127.0.0.1:{{ molecule_naive_proxy_listen_port }}
+          -servername {{ molecule_naive_proxy_anytls_domain }} -verify_quiet
+      register: _anytls_noalpn_probe
+      changed_when: false
+      failed_when: false
+      args:
+        stdin: ""
+
+    - name: Assert a no-ALPN client still completes the AnyTLS TLS handshake
+      ansible.builtin.assert:
+        that:
+          - "'Cipher is' in _anytls_noalpn_probe.stdout"
+          - "'no application protocol' not in _anytls_noalpn_probe.stdout"
+          - "'no application protocol' not in _anytls_noalpn_probe.stderr"
+        fail_msg: >-
+          A client offering no ALPN failed to handshake with the AnyTLS server —
+          the server-side ALPN must stay backward-compatible with non-uTLS
+          clients. openssl stderr: {{ _anytls_noalpn_probe.stderr | default('') | truncate(200) }}
+        success_msg: >-
+          No-ALPN (non-uTLS) client completes the AnyTLS handshake — the server
+          ALPN change is backward-compatible.
+
+    # -- Production ACME server config validity ---------------------------
+    # The molecule deployment uses a static cert, so the ACME config never
+    # runs here. Validate it separately: render the production-shaped config
+    # (mirrors anytls.json.j2's ACME branch) and run `sing-box check` with
+    # the with_acme host binary to prove the working cert-issuance config is
+    # structurally valid and accepted by the build.
+    - name: Write production-shaped AnyTLS ACME config for validation
+      ansible.builtin.copy:
+        dest: /tmp/anytls-acme-check.json
+        mode: "0644"
+        content: "{{ _anytls_acme_config | to_nice_json }}"
+      vars:
+        _anytls_acme_config:
+          log: {level: info, timestamp: true}
+          inbounds:
+            - type: anytls
+              tag: anytls-in
+              listen: 127.0.0.1
+              listen_port: 8445
+              users: "{{ molecule_naive_proxy_users | dict2items(key_name='name', value_name='password') }}"
+              tls:
+                enabled: true
+                server_name: "{{ molecule_naive_proxy_anytls_domain }}"
+                acme:
+                  domain: ["{{ molecule_naive_proxy_anytls_domain }}"]
+                  data_directory: /acme-data
+                  email: ""
+                  provider: letsencrypt
+                  disable_http_challenge: true
+                  alternative_tls_port: 8445
+
+    - name: Validate production AnyTLS ACME config with sing-box check
+      ansible.builtin.command:
+        cmd: "{{ singbox_host_binary_path }} check -c /tmp/anytls-acme-check.json"
+      register: _anytls_acme_check
+      changed_when: false
+      failed_when: _anytls_acme_check.rc != 0
+
+    # -- HAProxy SNI routing for the anytls domain ------------------------
+    - name: Read rendered HAProxy config
+      ansible.builtin.slurp:
+        src: /opt/naive-proxy/haproxy.cfg
+      register: _anytls_haproxy_raw
+
+    - name: Assert HAProxy SNI-routes the anytls domain to be_anytls
+      vars:
+        _haproxy_cfg: "{{ _anytls_haproxy_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "(_haproxy_cfg | regex_search('req\\.ssl_sni -i ' ~ (molecule_naive_proxy_anytls_domain | regex_escape))) is not none"
+          - "(_haproxy_cfg | regex_search('(?m)^backend be_anytls\\s*$')) is not none"
+          - "(_haproxy_cfg | regex_search('use_backend be_anytls if sni_anytls')) is not none"
+        fail_msg: "HAProxy config is missing the AnyTLS SNI route / backend."
+
+    # -- Real ACME issuance through HAProxy --------------------------------
+    # The decisive proof: fetch the cert the AnyTLS server presents via
+    # HAProxy (SNI=anytls domain, TCP passthrough to sing-box) and confirm it
+    # was issued by the local Pebble CA — i.e. sing-box obtained a real cert
+    # over ACME and HAProxy correctly routed the TLS-ALPN-01 challenge to it.
+    - name: Fetch the certificate the AnyTLS server presents via HAProxy
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: "{{ molecule_naive_proxy_listen_port }}"
+        server_name: "{{ molecule_naive_proxy_anytls_domain }}"
+      register: _anytls_served_cert
+      retries: 10
+      delay: 3
+      until: _anytls_served_cert is not failed
+
+    - name: Parse the served AnyTLS certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ _anytls_served_cert.cert }}"
+      register: _anytls_served_info
+
+    - name: Print served AnyTLS cert issuer
+      ansible.builtin.debug:
+        var: _anytls_served_info.issuer
+
+    - name: Assert AnyTLS server obtained a real Pebble-issued cert through HAProxy
+      ansible.builtin.assert:
+        that:
+          - "'Pebble' in _anytls_served_info.issuer.commonName"
+          - _anytls_served_info.subject_alt_name | default([]) | select('search', molecule_naive_proxy_anytls_domain) | list | length > 0
+        fail_msg: >-
+          AnyTLS cert is not Pebble-issued for {{ molecule_naive_proxy_anytls_domain }}
+          (expected real ACME issuance with HAProxy routing the TLS-ALPN-01
+          challenge to sing-box). issuer={{ _anytls_served_info.issuer }}
+          SAN={{ _anytls_served_info.subject_alt_name | default('?') }}
+
+    # -- Two-variant client configs (auto + manual, Naive + AnyTLS) -------
+    - name: Verify sing-box client configs
+      ansible.builtin.import_tasks: tasks/verify-clients.yml
+      vars:
+        _verify_clients_users: "{{ molecule_naive_proxy_users }}"
+        _verify_clients_ip_map_auto: "{{ molecule_naive_proxy_external_ip_map_auto }}"
+        _verify_clients_ip_map_manual: "{{ molecule_naive_proxy_external_ip_map_manual }}"
+        _verify_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
+        _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"
+        _verify_clients_anytls_domain: "{{ molecule_naive_proxy_anytls_domain }}"
+        _verify_clients_anytls_enabled: true
+        # This scenario converged with uTLS=firefox — assert the rendered
+        # client configs carry the matching tls.utls block.
+        _verify_clients_anytls_utls_fingerprint: "{{ _anytls_utls_fingerprint }}"
+        _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+        _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+
+    # -- Real AnyTLS connection + traffic ---------------------------------
+    - name: Run sing-box AnyTLS TUN benchmark
+      ansible.builtin.import_tasks: tasks/singbox-anytls-benchmark.yml

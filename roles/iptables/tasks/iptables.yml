@@ -1,0 +1,42 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Scoped iptables backend. Owns only `MPIG-*` chains and thin jump
+# anchors; foreign chains/rules (Docker, k8s, libvirt, …) are untouched
+# on steady-state runs. Legacy teardown (iptables-persistent or
+# pre-refactor mini-pig-iptables.service) is factored into
+# migrate_to_scoped_iptables.yml — included once while artefacts remain.
+
+- name: iptables | Decide whether legacy → scoped migration is needed
+  ansible.builtin.set_fact:
+    _iptables_migration_to_scoped_needed: >-
+      {{
+        (_iptables_legacy_rule_file_stats.results[0].stat.exists | bool)
+        or (_iptables_legacy_rule_file_stats.results[1].stat.exists | bool)
+        or (_iptables_netfilter_persistent_stat.stat.exists | bool)
+        or (_iptables_legacy_scoped_service_stat.stat.exists | bool)
+      }}
+
+- name: iptables | Run legacy → scoped migration
+  ansible.builtin.include_tasks: migrate_to_scoped_iptables.yml
+  when: _iptables_migration_to_scoped_needed | bool
+
+# Marker is written before the unified service start so the apply
+# script knows which backend to render.
+- name: iptables | Write firewall-backend marker
+  ansible.builtin.copy:
+    content: "iptables-scoped\n"
+    dest: /var/lib/mini-pig-firewall-backend
+    mode: "0644"
+    owner: root
+    group: root
+
+# Apply via the unified service. The apply script's iptables body fills
+# MPIG-* chains and re-asserts the jump anchors.
+- name: iptables | Apply scoped firewall rules via unified service
+  ansible.builtin.systemd:
+    name: mini-pig-firewall.service
+    state: started
+  changed_when: _iptables_firewall_apply_script.changed | bool

@@ -28,6 +28,25 @@
     - scw_k8s_kosmos_agent_binary
     - scw-k8s-kosmos-agent-binary
     
+- name: scw_k8s_kosmos_agent | reset node
+  ansible.builtin.include_tasks:
+    file: 150-reset-node.yml
+    apply:
+      tags:
+        - scw_k8s_kosmos_agent
+        - scw-k8s-kosmos-agent
+        - scw_k8s_kosmos_agent_reset_node
+        - scw-k8s-kosmos-agent-reset-node
+        - scw_k8s_kosmos_agent_add_node
+        - scw-k8s-kosmos-agent-add-node
+  tags:
+    - scw_k8s_kosmos_agent
+    - scw-k8s-kosmos-agent
+    - scw_k8s_kosmos_agent_reset_node
+    - scw-k8s-kosmos-agent-reset-node
+    - scw_k8s_kosmos_agent_add_node
+    - scw-k8s-kosmos-agent-add-node
+
 - name: scw_k8s_kosmos_agent | add node
   ansible.builtin.include_tasks:
     file: 200-add-node.yml

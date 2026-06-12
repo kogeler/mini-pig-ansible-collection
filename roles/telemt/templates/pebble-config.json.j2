@@ -1,0 +1,10 @@
+{
+  "pebble": {
+    "listenAddress": "0.0.0.0:{{ _telemt_pebble_port }}",
+    "managementListenAddress": "0.0.0.0:{{ _telemt_pebble_mgmt_port }}",
+    "certificate": "test/certs/localhost/cert.pem",
+    "privateKey": "test/certs/localhost/key.pem",
+    "httpPort": 5002,
+    "tlsPort": {{ telemt_listen_port }}
+  }
+}

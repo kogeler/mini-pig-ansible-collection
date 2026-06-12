@@ -1,7 +1,7 @@
 ---
-# Non-podman drivers only — podman injects the same mapping via
-# molecule.yml etc_hosts, and /etc/hosts in the container is a bind-mount
-# that lineinfile's atomic-rename can't replace.
+# gha (mp_driver=native) only — the podman scenarios inject the same
+# mapping via molecule.yml `etc_hosts`, and /etc/hosts in the container
+# is a bind-mount that lineinfile's atomic-rename can't replace.
 - name: Ensure naive.test resolves to loopback
   ansible.builtin.lineinfile:
     path: /etc/hosts
@@ -18,8 +18,48 @@
       - xz-utils
       - procps
       - proxychains4
+      # The molecule trixie base image does not pre-install dbus; it
+      # gets pulled in later as an `apt-get install podman` recommend,
+      # but we need it earlier so the next task can start dbus.socket
+      # before podman touches anything.
+      - dbus
     update_cache: true
     state: present
+
+- name: Ensure dbus.socket is running inside the molecule instance
+  # Podman uses the systemd cgroup driver by default in rootful mode, which
+  # makes crun (the OCI runtime) talk to systemd through D-Bus. On the
+  # docker.io/library/debian:trixie base image the dbus package is
+  # installed but dbus.socket is `static` (no [Install] section), so it
+  # is not auto-started during the container's systemd bring-up the way
+  # it would be on a normal boot — crun then fails with
+  # `cannot open sd-bus: No such file or directory` when the first pod
+  # tries to start. Starting dbus.socket here makes the subsequent pod
+  # creation deterministic across scenarios.
+  ansible.builtin.systemd:
+    name: dbus.socket
+    state: started
+  when: mp_driver == 'podman'
+
+# The client-config QR codes are generated AND decoded on the CONTROLLER (the
+# role + verify delegate the file work to localhost), entirely with the
+# kogeler.mini_pig.qr_code / qr_decode modules — no external tools. So the dep
+# is qrcode + Pillow on the controller's Python. Only the `default` scenario
+# exercises QR (molecule_naive_proxy_client_qr_enabled), so ensure it only
+# there. delegate_to: localhost installs it for the same interpreter the
+# modules run under; a no-op when it is already present (e.g. a dev venv).
+- name: Ensure qrcode + Pillow on the controller (QR scenario only)
+  ansible.builtin.pip:
+    name:
+      - qrcode
+      - pillow
+    state: present
+    # The runner's python may be PEP 668 externally-managed; a no-op in a venv.
+    break_system_packages: true
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: molecule_naive_proxy_client_qr_enabled | default(false) | bool
 
 - name: Download naive client
   ansible.builtin.get_url:

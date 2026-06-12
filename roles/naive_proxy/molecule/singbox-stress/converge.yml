@@ -1,0 +1,82 @@
+---
+# Converge for singbox-stress.
+#
+# Mirrors the production topology more closely than shared/converge.yml:
+# real deployments put `kogeler.mini_pig.ssl_router` (nginx with
+# `ssl_preread`) in front of HAProxy on :443 and SNI-route by hostname
+# to the HAProxy frontend. We replicate that here so the sing-box
+# stress reproducer exercises the full chain — sing-box → ssl-router
+# (TCP/SNI) → HAProxy (TLS terminate, naive auth) → naive backend.
+#
+# The per-mode server maps are overridden to a real bridge-routable IP
+# (the inner podman default-bridge gateway) instead of the loopback maps
+# common.yml uses for the SOCKS5-mode scenarios. Reason: the sing-box client
+# here runs in its OWN podman
+# netns (not `--network=host`) so it can hold tun + NET_ADMIN safely
+# scoped to that namespace — loopback IPs would point at the
+# sing-box container's own loopback (empty), not at ssl-router on the
+# molecule host. The bridge gateway IP routes to the molecule host (where
+# ssl-router listens with `--network=host` on `0.0.0.0:443`) from any
+# container on that bridge. The pod IP discovered in
+# `singbox-benchmark.yml` is used as the iperf3 destination — also
+# bridge-routable, also resolved to itself inside the pod netns.
+- name: Converge
+  hosts: all
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    - name: Ensure podman is installed (needed before the role's own install.yml)
+      # The bridge-gateway discovery below uses containers.podman.podman_network_info
+      # which shells out to `podman`. The molecule trixie base image doesn't
+      # ship podman; the naive_proxy role's install.yml apt-installs it, but
+      # that runs AFTER us, so we apt-install here. Idempotent — the role's
+      # later install.yml is a no-op once the package is present.
+      ansible.builtin.apt:
+        name: podman
+        state: present
+        update_cache: true
+
+    - name: Discover inner podman default-bridge gateway
+      containers.podman.podman_network_info:
+        name: podman
+      register: _singbox_stress_net
+
+    - name: Set bridge gateway IP fact
+      ansible.builtin.set_fact:
+        _singbox_stress_bridge_gateway: >-
+          {{ (_singbox_stress_net.networks[0].subnets
+              | selectattr('gateway', 'defined')
+              | list | first).gateway }}
+
+    - name: Override naive_proxy external_ip maps to the bridge gateway (TUN mode)
+      # set_fact (precedence 19) wins over the common.yml vars_files
+      # (precedence 14), so converge-naive-proxy.yml picks these up when it
+      # passes them to `naive_proxy_external_ip_auto` / `_manual`.
+      # singbox-verify.yml repeats the same discovery + set_fact so its
+      # verify-clients assertions agree with what the role just rendered.
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_external_ip: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_auto:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_manual:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+
+    - name: Apply naive_proxy
+      ansible.builtin.import_tasks: ../shared/tasks/converge-naive-proxy.yml
+
+    - name: Apply ssl_router in front of HAProxy on :443
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.ssl_router
+      vars:
+        # Public-facing port the sing-box client hits — same as a real
+        # deployment, where ssl-router is the only thing on :443.
+        ssl_router_https_port: 443
+        # Single SNI route: naive.test → HAProxy listen port. The match
+        # is anchored (^...$ in the template) so we use a regex that
+        # accepts the bare host plus optional :port suffix some clients
+        # send through SNI.
+        ssl_router_upstream_map:
+          naive:
+            regex: '.*{{ molecule_naive_proxy_domain | regex_escape }}'
+            host: "127.0.0.1"
+            port: "{{ molecule_naive_proxy_listen_port }}"

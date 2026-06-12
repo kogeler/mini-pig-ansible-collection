@@ -17,6 +17,14 @@
         ]
         +
         (
+          naive_proxy_anytls_enabled | bool
+          | ternary(
+              [{'unit': _naive_proxy_anytls_unit}],
+              []
+            )
+        )
+        +
+        (
           naive_proxy_molecule_mode | bool
           | ternary(
               [{'unit': _naive_proxy_pebble_unit}],

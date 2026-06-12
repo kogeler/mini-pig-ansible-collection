@@ -1,4 +1,11 @@
 .idea
 .ansible
+.claude
 
-roles/naive_proxy/molecule/shared/naive-proxy-json-configs
+naive-proxy-json-configs
+
+/temp/
+
+# Python bytecode (e.g. from running py_compile / ansible-lint over plugins)
+__pycache__/
+*.pyc

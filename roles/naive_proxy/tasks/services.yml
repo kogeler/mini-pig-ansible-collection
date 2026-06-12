@@ -38,3 +38,12 @@
     enabled: true
     daemon_reload: true
   ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | services | start anytls service
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_anytls_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: naive_proxy_anytls_enabled
+  ignore_errors: "{{ ansible_check_mode }}"

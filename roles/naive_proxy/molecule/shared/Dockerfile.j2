@@ -1,0 +1,67 @@
+FROM {{ item.image }}
+
+# `singbox_build_*` vars come from molecule.yml `provisioner.inventory.
+# group_vars.all` — pinned to match SagerNet/sing-box-for-android (SFA)
+# `version.properties` (VERSION_NAME + GO_VERSION). Building the same
+# sing-box source with the same Go toolchain that SFA ships is the
+# reason this scenario can reproduce the H2 protocol error Android
+# users hit. The standard SagerNet linux release is built without
+# `with_naive_outbound`, so we compile from source with the tag enabled and bake
+# the static binary into the molecule instance image at
+# /usr/local/bin/sing-box.
+ARG SINGBOX_VERSION={{ singbox_build_version }}
+ARG SINGBOX_TAGS={{ singbox_build_tags | join(',') }}
+ARG GO_VERSION={{ singbox_build_go_version }}
+ARG CRONET_VERSION={{ singbox_cronet_version }}
+
+RUN set -eux; \
+    apt-get update -qq; \
+    apt-get install -y -qq --no-install-recommends \
+        systemd systemd-sysv python3 ca-certificates curl fuse-overlayfs; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) go_arch=amd64 ;; \
+        arm64) go_arch=arm64 ;; \
+        *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" \
+        | tar -xz -C /usr/local; \
+    # sing-box ≥ 1.14 with `with_naive_outbound` pulls in
+    # github.com/sagernet/cronet-go. The `with_purego` tag tells
+    # cronet-go to dlopen libcronet.so at runtime via purego, instead
+    # of statically linking the LFS-tracked libcronet.a (which would
+    # require the Chromium toolchain at build time). With both tags +
+    # CGO_ENABLED=0 we get a static Go binary; libcronet.so is
+    # downloaded from the cronet-go GitHub release and placed in
+    # /usr/local/lib so cronet-go's loader_unix.findLibrary() picks it
+    # up automatically.
+    #
+    # `-checklinkname=0` is required because the `badlinkname` build
+    # tag (mirrored from sing-box DEFAULT_BUILD_TAGS) makes sing-box's
+    # internal `common/badtls` package use `go:linkname` to reach
+    # crypto/tls.(*Conn).handlePostHandshakeMessage. Go 1.22+ rejects
+    # those links unless the linker is told to skip the check. SFA's
+    # libbox build sets the same flag in cmd/internal/build_libbox.
+    PATH=/usr/local/go/bin:$PATH \
+    CGO_ENABLED=0 \
+    GOFLAGS=-mod=mod \
+        go install -trimpath \
+        -ldflags='-s -w -checklinkname=0' \
+        -tags="${SINGBOX_TAGS}" \
+        "github.com/sagernet/sing-box/cmd/sing-box@${SINGBOX_VERSION}"; \
+    install -m 0755 /root/go/bin/sing-box /usr/local/bin/sing-box; \
+    install -d /usr/local/lib; \
+    curl -fsSL \
+        "https://github.com/sagernet/cronet-go/releases/download/${CRONET_VERSION}/libcronet-linux-${go_arch}.so" \
+        -o /usr/local/lib/libcronet.so; \
+    chmod 0644 /usr/local/lib/libcronet.so; \
+    /usr/local/bin/sing-box version; \
+    rm -rf /usr/local/go /root/go /root/.cache; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*; \
+    systemctl mask getty@tty1.service; \
+    echo "root:100000:65536" > /etc/subuid; \
+    echo "root:100000:65536" > /etc/subgid
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

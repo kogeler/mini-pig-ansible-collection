@@ -1,0 +1,53 @@
+---
+# Sing-box AnyTLS TUN-mode benchmark vars.
+#
+# Drives a real AnyTLS connection through the sing-box server the role
+# deploys in the pod: a Linux sing-box client opens an `anytls` outbound
+# through a `tun` inbound, reaching anytls.test:443 -> ssl-router (SNI) ->
+# HAProxy (SNI passthrough) -> sing-box anytls inbound. iperf3 shares the
+# client's netns so its traffic enters the tun device and flows over AnyTLS.
+#
+# Shares the iperf3 knobs and client image with the naive benchmark
+# (`vars/benchmark.yml`) so the two stay comparable; only the AnyTLS-specific
+# bits live here.
+
+# ---- sing-box client container -----------------------------------------
+singbox_anytls_client_unit: "podman-singbox-anytls-molecule-client.service"
+singbox_anytls_client_container_name: "singbox-anytls-molecule-client"
+singbox_anytls_client_config_path: "/tmp/sing-box-anytls-client.json"
+# Public-facing port the client targets: ssl-router on :443 SNI-routes
+# anytls.test to HAProxy, which passes it through to the anytls inbound.
+singbox_anytls_server_port: 443
+# CA the client trusts for the AnyTLS server cert. This scenario issues the
+# server cert from the local Pebble CA via real ACME, so the client trusts
+# Pebble's root (downloaded from the Pebble management API in the benchmark) —
+# the molecule equivalent of a publicly-trusted Let's Encrypt chain.
+singbox_anytls_server_cert_host_path: "/etc/ssl/certs/anytls-pebble-ca.crt"
+
+# ---- ClientHello capture (uTLS Firefox verification) -------------------
+# tcpdump records the AnyTLS ClientHello on the molecule host's loopback while
+# the sing-box client connects; tshark then asserts the captured handshake
+# carries Firefox-specific TLS markers. Run as a transient systemd unit so it
+# is easy to start before and stop after the warm-up window.
+singbox_anytls_capture_unit: "anytls-clienthello-capture"
+singbox_anytls_capture_pcap: "/tmp/anytls-clienthello.pcap"
+
+# ---- throughput floor --------------------------------------------------
+# Intentionally low: the point is to prove AnyTLS carries real traffic end
+# to end, not to assert a peak Mbps.
+singbox_anytls_iperf_min_bps: 1000000
+
+# ---- log poisoning markers ---------------------------------------------
+# Substrings whose presence in the sing-box client journal fails the run.
+singbox_anytls_log_failure_markers:
+  - "unexpected EOF"
+  - "connection reset by peer"
+  - "tls: handshake failure"
+  - "x509:"
+  - "authentication failed"
+  # ALPN mismatch: a uTLS/browser client offers h2,http/1.1 and an AnyTLS server
+  # advertising only acme-tls/1 aborts the session. The client logs these at
+  # debug; without them the scan stayed silent while AnyTLS was fully broken.
+  - "no application protocol"
+  - "failed to create session"
+  - "unavailable: failed"

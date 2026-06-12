@@ -1,0 +1,89 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Migration: tear down the iptables backend (legacy iptables-persistent
+# layout OR a prior scoped apply) on the way to nftables. Guarded at the
+# include site in tasks/nftables.yml. The caller already loaded the nft
+# tables, so the kernel firewall is live in nft form before this runs.
+#
+# Atomic iptables/ip6tables-restore replaces ip filter, ip nat and ip6
+# filter with empty containers in a single transaction — clearing
+# MPIG-*, any legacy iptables-persistent direct rules AND foreign
+# chains (KUBE-*, DOCKER-*) in one shot. This is intentionally
+# destructive once during migration; foreign managers
+# (kube-proxy, dockerd, libvirt) reconcile their own chains on their
+# next pass. See "Migration" in README.
+
+- name: iptables | migrate | Disable legacy scoped iptables service
+  ansible.builtin.systemd:
+    name: mini-pig-iptables.service
+    enabled: false
+    state: stopped
+  when: _iptables_legacy_scoped_service_stat.stat.exists | bool
+
+- name: iptables | migrate | Remove scoped iptables apply script and legacy service file
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mini-pig-iptables.service
+    - /usr/local/sbin/mini-pig-iptables-apply
+  notify: reload systemd daemon
+
+- name: iptables | migrate | Disable netfilter-persistent service
+  ansible.builtin.systemd:
+    name: netfilter-persistent.service
+    enabled: false
+  when: _iptables_netfilter_persistent_stat.stat.exists | bool
+
+# `mangle` is excluded — the role never wrote to it.
+- name: iptables | migrate | Atomic legacy wipe (one-shot)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      /usr/sbin/iptables-restore <<'IPT_EOF'
+      *filter
+      :INPUT ACCEPT [0:0]
+      :FORWARD ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      COMMIT
+      *nat
+      :PREROUTING ACCEPT [0:0]
+      :INPUT ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      :POSTROUTING ACCEPT [0:0]
+      COMMIT
+      IPT_EOF
+      /usr/sbin/ip6tables-restore <<'IP6T_EOF'
+      *filter
+      :INPUT ACCEPT [0:0]
+      :FORWARD ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      COMMIT
+      IP6T_EOF
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+# Remove the rule files so a stray re-enable of netfilter-persistent or
+# manual `iptables-restore < rules.v4` cannot revive the legacy ruleset.
+- name: iptables | migrate | Remove legacy iptables rule files
+  ansible.builtin.file:
+    path: "/etc/iptables/{{ item }}"
+    state: absent
+  loop:
+    - "rules.v4"
+    - "rules.v6"
+  loop_control:
+    label: "{{ item }}"
+
+- name: iptables | migrate | Remove legacy iptables-persistent packages
+  ansible.builtin.apt:
+    name:
+      - iptables-persistent
+      - netfilter-persistent
+    state: absent
+    purge: false
+    autoremove: false

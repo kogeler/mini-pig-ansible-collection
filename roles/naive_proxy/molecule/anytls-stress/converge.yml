@@ -1,0 +1,102 @@
+---
+# Converge for anytls-stress.
+#
+# Same shape as singbox-stress/converge.yml: ssl-router (nginx ssl_preread)
+# sits on :443 and SNI-routes to HAProxy, mirroring production. The only
+# difference is that ssl-router routes BOTH the naive domain and the AnyTLS
+# domain to the same HAProxy frontend, which then SNI-routes the AnyTLS
+# domain to the sing-box anytls inbound (TCP passthrough) and everything
+# else to the naive TLS termination path.
+#
+# The per-mode server maps are overridden to the inner podman default-bridge
+# gateway so the sing-box client (running in its OWN netns) can reach
+# ssl-router on the molecule host — see singbox-stress/converge.yml for the
+# full rationale.
+- name: Converge
+  hosts: all
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    - name: Ensure podman is installed (needed before the role's own install.yml)
+      ansible.builtin.apt:
+        name: podman
+        state: present
+        update_cache: true
+
+    - name: Discover inner podman default-bridge gateway
+      containers.podman.podman_network_info:
+        name: podman
+      register: _singbox_stress_net
+
+    - name: Set bridge gateway IP fact
+      ansible.builtin.set_fact:
+        _singbox_stress_bridge_gateway: >-
+          {{ (_singbox_stress_net.networks[0].subnets
+              | selectattr('gateway', 'defined')
+              | list | first).gateway }}
+
+    - name: Override naive_proxy external_ip to bridge gateway for TUN mode
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_external_ip: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_auto:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_manual:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+
+    # -- Real ACME issuance for AnyTLS via the local Pebble CA ---------------
+    # Extract Pebble's minica (the CA that signs its directory's TLS cert)
+    # straight from the image — scratch-based, so `podman cp` from a created
+    # container, no shell needed. sing-box has no `--insecure`, so it must
+    # trust this CA (via SSL_CERT_FILE) to talk to the Pebble directory.
+    - name: Check whether the Pebble minica is already extracted
+      ansible.builtin.stat:
+        path: /etc/ssl/certs/pebble-minica.pem
+      register: _anytls_minica_stat
+
+    - name: Extract Pebble minica CA for the sing-box ACME directory trust
+      # Gated on the stat (not `creates:`) so it is idempotent: with
+      # `changed_when: true` a `creates:`-skipped run would still report
+      # changed and fail idempotence. `when` skips it cleanly on re-runs.
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          podman create --replace --name pebble-minica-extract \
+            ghcr.io/letsencrypt/pebble:latest >/dev/null
+          podman cp pebble-minica-extract:/test/certs/pebble.minica.pem \
+            /etc/ssl/certs/pebble-minica.pem
+          podman rm -f pebble-minica-extract >/dev/null
+      when: not _anytls_minica_stat.stat.exists
+      changed_when: true
+
+    - name: Enable AnyTLS ACME + Firefox uTLS against Pebble for this scenario
+      # set_fact (precedence 19) feeds converge-naive-proxy.yml, which passes
+      # these to the role. Only this scenario sets them, so default /
+      # debian-bookworm / gha keep the static self-signed AnyTLS cert and leave
+      # uTLS off. firefox makes the rendered client configs carry a tls.utls
+      # block; the verify play asserts the real ClientHello matches Firefox.
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_anytls_acme_in_molecule: true
+        molecule_naive_proxy_anytls_acme_directory_ca: /etc/ssl/certs/pebble-minica.pem
+        molecule_naive_proxy_anytls_utls_fingerprint: firefox
+
+    - name: Apply naive_proxy
+      ansible.builtin.import_tasks: ../shared/tasks/converge-naive-proxy.yml
+
+    - name: Apply ssl_router in front of HAProxy on :443
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.ssl_router
+      vars:
+        ssl_router_https_port: 443
+        # Two SNI routes to the same HAProxy frontend: naive.test (naive TLS
+        # termination) and anytls.test (HAProxy then SNI-passes through to the
+        # sing-box anytls inbound). Anchored ^...$ in the template; regex
+        # accepts an optional :port suffix some clients put in SNI.
+        ssl_router_upstream_map:
+          naive:
+            regex: '.*{{ molecule_naive_proxy_domain | regex_escape }}'
+            host: "127.0.0.1"
+            port: "{{ molecule_naive_proxy_listen_port }}"
+          anytls:
+            regex: '.*{{ molecule_naive_proxy_anytls_domain | regex_escape }}'
+            host: "127.0.0.1"
+            port: "{{ molecule_naive_proxy_listen_port }}"

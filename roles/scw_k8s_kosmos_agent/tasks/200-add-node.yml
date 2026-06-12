@@ -3,23 +3,211 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: scw_k8s_kosmos_agent | add node | ensure /usr/local/sbin exists
+- name: scw_k8s_kosmos_agent | add node | check installed legacy apt packages
+  ansible.builtin.shell: |
+    set -eu
+    dpkg-query -W -f='${Package}\t${db:Status-Abbrev}\n' {{ scw_k8s_kosmos_agent_legacy_apt_packages | map('quote') | join(' ') }} \
+      | awk '$2 ~ /^.i/ {print $1}'
+  args:
+    executable: /bin/bash
+  register: _scw_k8s_kosmos_agent_legacy_apt_packages_register
+  changed_when: false
+  failed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | set legacy apt packages
+  ansible.builtin.set_fact:
+    _scw_k8s_kosmos_agent_legacy_apt_packages_installed: "{{ _scw_k8s_kosmos_agent_legacy_apt_packages_register.stdout_lines | default([]) }}"
+  changed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | set legacy apt cleanup state
+  ansible.builtin.set_fact:
+    _scw_k8s_kosmos_agent_legacy_apt_cleanup_required: >-
+      {{
+        scw_k8s_kosmos_agent_legacy_apt_cleanup_enabled | bool
+        and (_scw_k8s_kosmos_agent_legacy_apt_packages_installed | length > 0)
+      }}
+  changed_when: false
+
+- name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation
+  when: _scw_k8s_kosmos_agent_legacy_apt_cleanup_required | bool
+  block:
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | print plan
+      ansible.builtin.debug:
+        msg:
+          - "cleanup required: {{ _scw_k8s_kosmos_agent_legacy_apt_cleanup_required | bool }}"
+          - "legacy packages: {{ _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+          - "will reboot after package cleanup"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | unhold packages
+      ansible.builtin.command:
+        argv: "{{ ['apt-mark', 'unhold'] + _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+      register: _scw_k8s_kosmos_agent_legacy_apt_unhold_register
+      changed_when: "'Canceled hold' in _scw_k8s_kosmos_agent_legacy_apt_unhold_register.stdout"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | remove packages
+      ansible.builtin.apt:
+        name: "{{ _scw_k8s_kosmos_agent_legacy_apt_packages_installed }}"
+        state: absent
+        purge: true
+        autoremove: true
+        allow_change_held_packages: true
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | remove repository files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ scw_k8s_kosmos_agent_legacy_apt_files }}"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | reboot
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ scw_k8s_kosmos_agent_legacy_apt_reboot_timeout }}"
+        msg: "Rebooting after Scaleway legacy apt k8s packages cleanup"
+
+    - name: scw_k8s_kosmos_agent | add node | cleanup legacy apt installation | refresh service facts
+      ansible.builtin.service_facts:
+
+- name: scw_k8s_kosmos_agent | add node | ensure runtime binary directories exist
   ansible.builtin.file:
-    path: /usr/local/sbin
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - /usr/local/bin
+    - /usr/local/sbin
 
-- name: scw_k8s_kosmos_agent | add node | run agent
-  ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -kosmos"
-  environment:
-    POOL_REGION: "{{ scw_k8s_kosmos_agent_pool_region }}"
-    POOL_ID: "{{ scw_k8s_kosmos_agent_pool_id }}"
-    SCW_SECRET_KEY: "{{ scw_k8s_kosmos_agent_secret_key }}"
-  register: _scw_k8s_kosmos_agent_add_node_register
+# The kosmos agent's outbound calls (Scaleway API, cluster join) need a
+# deterministic source IP. On hosts where `roles/iptables` installed the
+# randomized-SNAT module (`iptables_randomized_ext_ips` non-empty), the
+# `mpig_randomized_snat` table at `priority srcnat - 10` rewrites every
+# new connection to a random pool IP — Scaleway can't link the
+# registration to the node and the join fails or registers under the
+# wrong identity.
+#
+# Pause for the agent run, but ONLY if the chain is actually loaded in
+# the kernel right now (probed via `nft list table`, not by stat'ing
+# the unit file — the unit can be present while the table isn't, or
+# vice versa). If loaded: stop the drift-check timer so it can't re-arm
+# us, drop the table, HARD-verify it's gone, run the agent. Resume
+# lives in `always:` (start the timer + fire the service + HARD-verify
+# the table is back) so a failed agent run still restores the chain —
+# never a one-way trip to "SNAT permanently off".
+#
+# When the probe shows no table (empty pool, manually wiped, iptables
+# role never applied), pause/resume tasks short-circuit and the agent
+# runs straight through. The pause-API contract this block consumes is
+# documented in roles/iptables/AGENTS.md "SNAT model > Randomized SNAT"
+# and README "Randomized SNAT pool".
+- name: scw_k8s_kosmos_agent | add node | run agent (with randomized SNAT paused when chain is currently loaded)
+  when: scw_k8s_kosmos_agent_run_agent | bool
+  block:
 
-- name: scw_k8s_kosmos_agent | add node | run agent (print output)
-  ansible.builtin.debug:
-    msg: "{{ _scw_k8s_kosmos_agent_add_node_register.stdout.split('\n') }}"
-  when: _scw_k8s_kosmos_agent_add_node_register.stdout is defined
+    # Source of truth: the kernel table. `rc == 0` ⇔ chain currently
+    # rewrites outgoing connections — pause it for the agent run.
+    # `rc != 0` ⇔ no chain right now, agent runs without any pause.
+    # `failed_when: false` so a missing nft binary or a missing table
+    # both surface as `rc != 0` without failing the play.
+    - name: scw_k8s_kosmos_agent | add node | snat | probe mpig_randomized_snat table
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft list table ip mpig_randomized_snat
+      register: _scw_k8s_kosmos_agent_snat_probe
+      changed_when: false
+      failed_when: false
+
+    # Stop the timer FIRST so it can't re-arm the chain between the
+    # delete and the agent run; then drop the table; then HARD-verify
+    # it's gone (`nft list table` returning rc=0 means the table is
+    # still there → fail before running the agent).
+    - name: scw_k8s_kosmos_agent | add node | snat | pause — stop drift-check timer
+      ansible.builtin.systemd:
+        name: mpig-randomized-snat.timer
+        state: stopped
+      when: _scw_k8s_kosmos_agent_snat_probe.rc == 0
+
+    - name: scw_k8s_kosmos_agent | add node | snat | pause — drop mpig_randomized_snat kernel table
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft delete table ip mpig_randomized_snat
+      register: _scw_k8s_kosmos_agent_snat_drop
+      changed_when: _scw_k8s_kosmos_agent_snat_drop.rc == 0
+      failed_when:
+        - _scw_k8s_kosmos_agent_snat_drop.rc != 0
+        - "'No such file or directory' not in _scw_k8s_kosmos_agent_snat_drop.stderr"
+      when: _scw_k8s_kosmos_agent_snat_probe.rc == 0
+
+    - name: scw_k8s_kosmos_agent | add node | snat | pause — verify table is absent
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft list table ip mpig_randomized_snat
+      register: _scw_k8s_kosmos_agent_snat_verify_paused
+      changed_when: false
+      failed_when: _scw_k8s_kosmos_agent_snat_verify_paused.rc == 0
+      when: _scw_k8s_kosmos_agent_snat_probe.rc == 0
+
+    - name: scw_k8s_kosmos_agent | add node | run agent
+      ansible.builtin.command: "{{ _scw_k8s_kosmos_agent_binary_path }} -kosmos"
+      environment:
+        POOL_REGION: "{{ scw_k8s_kosmos_agent_pool_region }}"
+        POOL_ID: "{{ scw_k8s_kosmos_agent_pool_id }}"
+        SCW_SECRET_KEY: "{{ scw_k8s_kosmos_agent_secret_key }}"
+      register: _scw_k8s_kosmos_agent_add_node_register
+      changed_when: _scw_k8s_kosmos_agent_add_node_register.rc == 0
+
+  always:
+
+    # Resume runs unconditionally even if pause-or-agent failed above,
+    # but only when the probe at the top of the block saw the chain
+    # loaded — otherwise we never paused and have nothing to resume.
+    # `default(1)` defends against the unlikely case the block aborted
+    # before the probe task ran (probe is task #1, but exec-level
+    # failures could still leave `_probe` undefined).
+    #
+    # Start the timer FIRST so it's armed regardless of whether the
+    # explicit service start succeeds; fire the service to get the
+    # chain back into the kernel immediately (don't wait ~10min for
+    # the next timer tick); HARD-verify the table is present. A
+    # resume-side failure surfaces loudly — randomization may still
+    # be off and the operator needs to know.
+    - name: scw_k8s_kosmos_agent | add node | snat | resume — start drift-check timer
+      ansible.builtin.systemd:
+        name: mpig-randomized-snat.timer
+        state: started
+      when: (_scw_k8s_kosmos_agent_snat_probe.rc | default(1)) == 0
+
+    - name: scw_k8s_kosmos_agent | add node | snat | resume — fire service to re-apply chain
+      ansible.builtin.systemd:
+        name: mpig-randomized-snat.service
+        state: started
+      when: (_scw_k8s_kosmos_agent_snat_probe.rc | default(1)) == 0
+
+    - name: scw_k8s_kosmos_agent | add node | snat | resume — verify table is back
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft list table ip mpig_randomized_snat
+      register: _scw_k8s_kosmos_agent_snat_verify_resumed
+      changed_when: false
+      failed_when: _scw_k8s_kosmos_agent_snat_verify_resumed.rc != 0
+      when: (_scw_k8s_kosmos_agent_snat_probe.rc | default(1)) == 0
+
+    # Print the agent's output even on failure — useful for diagnosing
+    # registration errors. Inside `always:` so it survives a failed
+    # agent run; gated on the register being defined and non-empty so
+    # it's a no-op when the agent task itself never ran.
+    - name: scw_k8s_kosmos_agent | add node | run agent (print output)
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            (
+              _scw_k8s_kosmos_agent_add_node_register.stdout_lines | default([])
+            ) + (
+              _scw_k8s_kosmos_agent_add_node_register.stderr_lines | default([])
+            )
+          }}
+      when:
+        - _scw_k8s_kosmos_agent_add_node_register is defined
+        - >-
+          (
+            _scw_k8s_kosmos_agent_add_node_register.stdout_lines | default([])
+          ) | length > 0
+          or (
+            _scw_k8s_kosmos_agent_add_node_register.stderr_lines | default([])
+          ) | length > 0

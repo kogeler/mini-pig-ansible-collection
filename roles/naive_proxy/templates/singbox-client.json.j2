@@ -1,22 +1,100 @@
+{#- Sing-box client config rendered by `tasks/clients.yml`. The role
+  renders TWO files per user — one with automatic server/protocol
+  selection (`urltest`) and one with manual selection (`selector`) —
+  picked by `_naive_proxy_singbox_mode` ('auto' | 'manual').
+
+  Servers come from `_naive_proxy_singbox_ip_map` (the mode's map:
+  `naive_proxy_external_ip_auto` for auto, `naive_proxy_external_ip_manual`
+  for manual), a `<name>: <ip>` map where the KEY is a human-readable server
+  name and the value is the connect address. For each entry the file gets up
+  to two outbounds:
+
+    * `<name> - Naive`  — naive outbound, TLS SNI = naive_proxy_domain
+    * `<name> - AnyTLS` — anytls outbound, TLS SNI = naive_proxy_anytls_domain
+      (only when naive_proxy_anytls_enabled)
+
+  Both protocols reach the SAME `<ip>:<external_port>` and are told apart
+  by HAProxy via SNI. The displayed name of every option is built from the
+  map key plus the protocol — never from the IP. A top `proxy` outbound
+  (urltest in auto mode, selector in manual mode) lists every option; the
+  route default and DNS detour both target it.
+
+  Routing notes:
+    * `reject ip_cidr 2000::/3` — block IPv6 globals, avoid v6 leaks.
+    * `hijack-dns` — pull DNS to the sing-box DNS module
+      (only `dns-remote-cloudflare`, DoH detoured through `proxy`).
+    * `reject port 853` — kill DoT so DNS *cannot* escape via UDP/853 or
+      TCP/853; everything funnels back to dns-remote-cloudflare.
+    * `reject network=udp port=443` — kill QUIC / HTTP-3. Apps using
+      Chromium / OkHttp / wget2 / etc. immediately fall back to HTTP/2
+      over TCP, which gets carried through the selected outbound. Without
+      this rule QUIC packets hit the next rule (`route udp → direct`)
+      and bypass the proxy entirely, defeating the VPN.
+    * `route network=udp outbound=direct` — non-443 UDP bypasses the
+      proxy outbounds (which are TCP-only). DNS already handled above.
+-#}
+{%- set _proxy_tag = 'proxy' -%}
+{%- set _user = _naive_proxy_singbox_user -%}
+{%- set _pass = _naive_proxy_singbox_pass -%}
+{%- set _option_outbounds = [] -%}
+{%- set _option_tags = [] -%}
+{%- for _name, _ip in (_naive_proxy_singbox_ip_map | dictsort) -%}
+  {%- set _naive_tag = _name ~ ' - Naive' -%}
+  {%- set _ = _option_tags.append(_naive_tag) -%}
+  {%- set _ = _option_outbounds.append({
+    'type': 'naive',
+    'tag': _naive_tag,
+    'server': _ip,
+    'server_port': naive_proxy_external_port | int,
+    'username': _user,
+    'password': _pass,
+    'tls': {'enabled': true, 'server_name': naive_proxy_domain}
+  }) -%}
+  {%- if naive_proxy_anytls_enabled -%}
+    {%- set _anytls_tag = _name ~ ' - AnyTLS' -%}
+    {%- set _ = _option_tags.append(_anytls_tag) -%}
+    {%- set _anytls_tls = {'enabled': true, 'server_name': naive_proxy_anytls_domain} -%}
+    {%- if naive_proxy_anytls_utls_fingerprint | length > 0 -%}
+      {%- set _anytls_tls = _anytls_tls | combine({'utls': {'enabled': true, 'fingerprint': naive_proxy_anytls_utls_fingerprint}}) -%}
+    {%- endif -%}
+    {%- set _ = _option_outbounds.append({
+      'type': 'anytls',
+      'tag': _anytls_tag,
+      'server': _ip,
+      'server_port': naive_proxy_external_port | int,
+      'password': _pass,
+      'tls': _anytls_tls
+    }) -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- if _naive_proxy_singbox_mode == 'manual' -%}
+  {%- set _proxy_outbound = {
+    'type': 'selector',
+    'tag': _proxy_tag,
+    'outbounds': _option_tags,
+    'default': _option_tags[0]
+  } -%}
+{%- else -%}
+  {%- set _proxy_outbound = {
+    'type': 'urltest',
+    'tag': _proxy_tag,
+    'outbounds': _option_tags,
+    'url': naive_proxy_singbox_urltest_url,
+    'interval': naive_proxy_singbox_urltest_interval
+  } -%}
+{%- endif -%}
 {{ {
   'log': {'level': 'info'},
   'dns': {
     'servers': [
       {'type': 'https', 'tag': 'dns-remote-cloudflare',
        'server': '1.1.1.1', 'server_port': 443,
-       'detour': 'naive-' ~ _naive_proxy_singbox_user,
+       'detour': _proxy_tag,
        'tls': {'enabled': true,
-               'server_name': 'cloudflare-dns.com'}},
-      {'type': 'tcp', 'tag': 'dns-bootstrap',
-       'server': '1.1.1.1', 'server_port': 53}
-    ],
-    'rules': [
-      {'domain': [naive_proxy_domain],
-       'action': 'route', 'server': 'dns-bootstrap'}
+               'server_name': 'cloudflare-dns.com'}}
     ],
     'final': 'dns-remote-cloudflare',
-    'strategy': 'ipv4_only',
-    'independent_cache': true
+    'strategy': 'ipv4_only'
   },
   'inbounds': [
     {'type': 'tun', 'tag': 'tun-in',
@@ -25,21 +103,15 @@
      'stack': 'mixed',
      'exclude_package': ['com.android.captiveportallogin']}
   ],
-  'outbounds': [
-    {'type': 'naive', 'tag': 'naive-' ~ _naive_proxy_singbox_user,
-     'server': naive_proxy_domain,
-     'server_port': naive_proxy_external_port | int,
-     'username': _naive_proxy_singbox_user,
-     'password': _naive_proxy_singbox_pass,
-     'domain_resolver': {'server': 'dns-bootstrap'},
-     'tls': {'enabled': true, 'server_name': naive_proxy_domain}},
+  'outbounds': _option_outbounds + [
+    _proxy_outbound,
     {'type': 'direct', 'tag': 'direct'}
   ],
   'route': {
     'auto_detect_interface': true,
-    'default_domain_resolver': {'server': 'dns-bootstrap'},
     'rules': [
       {'action': 'sniff'},
+      {'action': 'reject', 'ip_cidr': ['2000::/3']},
       {'type': 'logical', 'mode': 'or',
        'rules': [
          {'protocol': 'dns'},
@@ -47,9 +119,10 @@
        ],
        'action': 'hijack-dns'},
       {'action': 'reject', 'port': [853]},
+      {'action': 'reject', 'network': ['udp'], 'port': [443]},
       {'action': 'route', 'outbound': 'direct',
        'network': ['udp']}
     ],
-    'final': 'naive-' ~ _naive_proxy_singbox_user
+    'final': _proxy_tag
   }
 } | to_nice_json }}

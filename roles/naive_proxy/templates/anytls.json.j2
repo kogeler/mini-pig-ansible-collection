@@ -1,0 +1,74 @@
+{#- sing-box AnyTLS server config, rendered by `tasks/config.yml`.
+
+  One AnyTLS inbound on an internal loopback port. HAProxy passes the
+  AnyTLS domain's TLS straight through (mode tcp, SNI match), so sing-box
+  terminates TLS itself. Authentication reuses `naive_proxy_users`; the
+  password doubles as the AnyTLS shared secret. Secrets come from role
+  variables — never hardcode them here.
+
+  TLS / certificate:
+    * ACME (production, `_naive_proxy_anytls_acme`): sing-box obtains and
+      renews its own Let's Encrypt certificate via built-in CertMagic.
+      `disable_http_challenge` is set because only :443 is routed to the
+      pod (no :80), so issuance uses TLS-ALPN-01. `alternative_tls_port`
+      is the internal listener port: sing-box runs ManageSync BEFORE the
+      AnyTLS listener binds, so during the FIRST issuance CertMagic must
+      bind this port itself to answer the challenge (HAProxy forwards the
+      acme-tls/1 + SNI handshake here). On renewals the listener already
+      holds the port, CertMagic's bind attempt backs off, and the
+      challenge is answered inline on the same listener. Leaving this at
+      the default (443) would make CertMagic collide with HAProxy and the
+      challenge would never be answered.
+    * Static (`molecule_mode` / ACME disabled): a certificate prepared at
+      `/anytls-certs/{fullchain,key}.pem` is used directly, so tests never
+      depend on public Let's Encrypt issuance.
+-#}
+{%- set _users = [] -%}
+{%- for _name, _pass in naive_proxy_users.items() -%}
+  {%- set _ = _users.append({'name': _name, 'password': _pass}) -%}
+{%- endfor -%}
+{%- if _naive_proxy_anytls_acme | bool -%}
+  {%- set _acme_provider = (naive_proxy_molecule_mode | bool)
+        | ternary(_naive_proxy_pebble_acme_server, naive_proxy_anytls_acme_provider) -%}
+  {%- set _tls = {
+    'enabled': true,
+    'server_name': naive_proxy_anytls_domain,
+    'acme': {
+      'domain': [naive_proxy_anytls_domain],
+      'data_directory': '/acme-data',
+      'email': naive_proxy_anytls_acme_email,
+      'provider': _acme_provider,
+      'disable_http_challenge': true,
+      'alternative_tls_port': _naive_proxy_anytls_port | int
+    }
+  } -%}
+{%- else -%}
+  {%- set _tls = {
+    'enabled': true,
+    'server_name': naive_proxy_anytls_domain,
+    'certificate_path': '/anytls-certs/fullchain.pem',
+    'key_path': '/anytls-certs/key.pem'
+  } -%}
+{%- endif -%}
+{#- ALPN must be advertised so uTLS/browser clients (which send h2,http/1.1)
+    can negotiate; on the ACME path sing-box prepends it ahead of acme-tls/1.
+    `_naive_proxy_anytls_alpn` is empty unless uTLS is enabled (see vars/main.yml). -#}
+{%- if _naive_proxy_anytls_alpn -%}
+  {%- set _tls = _tls | combine({'alpn': _naive_proxy_anytls_alpn}) -%}
+{%- endif -%}
+{{ {
+  'log': {'level': naive_proxy_anytls_log_level, 'timestamp': true},
+  'inbounds': [
+    {
+      'type': 'anytls',
+      'tag': 'anytls-in',
+      'listen': '127.0.0.1',
+      'listen_port': _naive_proxy_anytls_port | int,
+      'users': _users,
+      'tls': _tls
+    }
+  ],
+  'outbounds': [
+    {'type': 'direct', 'tag': 'direct'}
+  ]
+} | to_nice_json }}

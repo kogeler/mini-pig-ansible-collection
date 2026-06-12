@@ -1,0 +1,108 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Migration: tear down the legacy iptables-persistent layout and/or any
+# pre-refactor `mini-pig-iptables.service` on the way to the unified
+# scoped backend. Guarded at the include site in tasks/iptables.yml and
+# runs only while legacy artefacts are still on disk.
+
+# Atomic wipe runs only when an iptables-persistent footprint is
+# present. Flush + chain create + anchor install per table in a single
+# transaction so the host is never observed without firewall coverage.
+- name: iptables | migrate | Atomic legacy wipe + scoped bootstrap (one-shot)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      /usr/sbin/iptables-restore <<'IPT_EOF'
+      *filter
+      :INPUT ACCEPT [0:0]
+      :FORWARD ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      :MPIG-INPUT - [0:0]
+      :MPIG-FORWARD - [0:0]
+      :MPIG-OUTPUT - [0:0]
+      -A INPUT -m comment --comment "mini-pig firewall: INPUT" -j MPIG-INPUT
+      -A FORWARD -m comment --comment "mini-pig firewall: FORWARD" -j MPIG-FORWARD
+      -A OUTPUT -m comment --comment "mini-pig firewall: OUTPUT" -j MPIG-OUTPUT
+      COMMIT
+      *nat
+      :PREROUTING ACCEPT [0:0]
+      :INPUT ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      :POSTROUTING ACCEPT [0:0]
+      :MPIG-PREROUTING - [0:0]
+      :MPIG-POSTROUTING - [0:0]
+      -A PREROUTING -m comment --comment "mini-pig firewall: PREROUTING" -j MPIG-PREROUTING
+      -A POSTROUTING -m comment --comment "mini-pig firewall: POSTROUTING" -j MPIG-POSTROUTING
+      COMMIT
+      IPT_EOF
+      /usr/sbin/ip6tables-restore <<'IP6T_EOF'
+      *filter
+      :INPUT ACCEPT [0:0]
+      :FORWARD ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      :MPIG-INPUT - [0:0]
+      :MPIG-FORWARD - [0:0]
+      :MPIG-OUTPUT - [0:0]
+      -A INPUT -m comment --comment "mini-pig firewall: INPUT" -j MPIG-INPUT
+      -A FORWARD -m comment --comment "mini-pig firewall: FORWARD" -j MPIG-FORWARD
+      -A OUTPUT -m comment --comment "mini-pig firewall: OUTPUT" -j MPIG-OUTPUT
+      COMMIT
+      IP6T_EOF
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: >-
+    (_iptables_legacy_rule_file_stats.results[0].stat.exists | bool)
+    or (_iptables_legacy_rule_file_stats.results[1].stat.exists | bool)
+    or (_iptables_netfilter_persistent_stat.stat.exists | bool)
+
+# Pre-refactor mini-pig-iptables.service is the legacy ancestor of the
+# unified mini-pig-firewall.service; drop the unit and its rendered
+# apply script.
+- name: iptables | migrate | Disable legacy mini-pig-iptables.service
+  ansible.builtin.systemd:
+    name: mini-pig-iptables.service
+    enabled: false
+    state: stopped
+  when: _iptables_legacy_scoped_service_stat.stat.exists | bool
+
+- name: iptables | migrate | Remove legacy mini-pig-iptables artefacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mini-pig-iptables.service
+    - /usr/local/sbin/mini-pig-iptables-apply
+  notify: reload systemd daemon
+
+# Disable before removing rule files so an interrupted run cannot revive
+# the legacy boot-time restore.
+- name: iptables | migrate | Disable netfilter-persistent service
+  ansible.builtin.systemd:
+    name: netfilter-persistent.service
+    enabled: false
+  when: _iptables_netfilter_persistent_stat.stat.exists | bool
+
+- name: iptables | migrate | Remove legacy iptables-persistent rule files
+  ansible.builtin.file:
+    path: "/etc/iptables/{{ item }}"
+    state: absent
+  loop:
+    - "rules.v4"
+    - "rules.v6"
+  loop_control:
+    label: "{{ item }}"
+
+# Package removal only kills the boot-time hook; the live ruleset is
+# unaffected.
+- name: iptables | migrate | Remove legacy iptables-persistent packages
+  ansible.builtin.apt:
+    name:
+      - iptables-persistent
+      - netfilter-persistent
+    state: absent
+    purge: false
+    autoremove: false

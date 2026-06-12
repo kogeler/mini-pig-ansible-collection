@@ -8,11 +8,16 @@
     enabled: true
     daemon_reload: true
     state: restarted
+  register: _naive_proxy_restart_pod
+  until: _naive_proxy_restart_pod is succeeded
+  retries: 6
+  delay: 5
   ignore_errors: "{{ ansible_check_mode }}"
   notify:
     - naive-proxy | handlers | restart naive-decoy
     - naive-proxy | handlers | restart naive-haproxy
     - naive-proxy | handlers | restart naive-backend
+    - naive-proxy | handlers | restart naive-anytls
 
 - name: naive-proxy | handlers | restart naive-decoy
   ansible.builtin.systemd:
@@ -20,6 +25,10 @@
     enabled: true
     daemon_reload: true
     state: restarted
+  register: _naive_proxy_restart_decoy
+  until: _naive_proxy_restart_decoy is succeeded
+  retries: 6
+  delay: 5
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: naive-proxy | handlers | restart naive-haproxy
@@ -28,6 +37,10 @@
     enabled: true
     daemon_reload: true
     state: restarted
+  register: _naive_proxy_restart_haproxy
+  until: _naive_proxy_restart_haproxy is succeeded
+  retries: 6
+  delay: 5
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: naive-proxy | handlers | restart naive-backend
@@ -36,4 +49,21 @@
     enabled: true
     daemon_reload: true
     state: restarted
+  register: _naive_proxy_restart_backend
+  until: _naive_proxy_restart_backend is succeeded
+  retries: 6
+  delay: 5
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | restart naive-anytls
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_anytls_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: restarted
+  register: _naive_proxy_restart_anytls
+  until: _naive_proxy_restart_anytls is succeeded
+  retries: 6
+  delay: 5
+  when: naive_proxy_anytls_enabled
   ignore_errors: "{{ ansible_check_mode }}"

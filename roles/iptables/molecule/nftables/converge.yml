@@ -1,0 +1,743 @@
+---
+# nftables scenario converge.
+#
+# Walks the SUT through every state transition the role's nftables
+# feature has to handle:
+#   * Stage 1 — Apply the role in legacy iptables mode with the full
+#               feature set. This is the "pre-migration" baseline:
+#               the scoped iptables service is installed, the MPIG chains are
+#               rendered, and the rules are live in the kernel via iptables-nft.
+#   * Stage 2 — Apply the role with `iptables_use_nftables: true`. The
+#               role applies only its own nft tables and tears down the
+#               iptables-persistent stack — this is the in-place migration
+#               step. Snapshots of /etc/nftables.conf and `nft list ruleset`
+#               are taken for verify.
+#   * Stage 3 — Re-apply the role in nft mode. Verify uses the post-
+#               migration state to assert this third apply is a no-op
+#               (no file rewrites, no rule changes, no service churn).
+#   * Stage 4 — Apply a changed nft ruleset on the already-migrated host,
+#               proving a later rules update also preserves foreign nft
+#               tables owned by other managers.
+#   * Stage 5 — Attempt to apply the role with `iptables_use_nftables:
+#               false`. Wrapped in block/rescue: the role's
+#               reverse-migration guard should hard-fail. We record the
+#               outcome in a file so verify can assert it.
+- name: Converge
+  hosts: all
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    - name: Record host's default IPv4 interface for verify
+      ansible.builtin.copy:
+        content: "{{ ansible_facts['default_ipv4']['interface'] }}\n"
+        dest: /tmp/molecule-iptables-default-iface.txt
+        mode: "0644"
+
+    # -- Stage 1: legacy iptables backend (pre-migration baseline) ------------
+    - name: Stage 1 — Apply role in legacy iptables mode
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_use_nftables: false
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+        iptables_external_ping_enable: true
+
+    - name: Stage 1 — Snapshot rendered scoped iptables script (pre-migration)
+      ansible.builtin.copy:
+        src: /usr/local/sbin/mini-pig-firewall-apply
+        dest: /tmp/molecule-iptables-pre-migration-rules.v4
+        remote_src: true
+        mode: "0644"
+
+    - name: Stage 1 — Capture iptables-save output before migration
+      ansible.builtin.command:
+        cmd: iptables-save
+      register: _iptables_save_pre
+      changed_when: false
+
+    - name: Stage 1 — Persist iptables-save (pre-migration)
+      ansible.builtin.copy:
+        content: "{{ _iptables_save_pre.stdout }}\n"
+        dest: /tmp/molecule-iptables-pre-migration-iptables-save.txt
+        mode: "0644"
+
+    # Probe through the firewall once in legacy mode to prove the
+    # baseline ruleset is actually filtering traffic. The full traffic
+    # matrix is exercised AFTER migration; this is just the "iptables
+    # was working before we touched anything" anchor.
+    #
+    # async=60 is intentional: the listener only needs to live long enough
+    # for the probe directly below. Later verify stages start their OWN
+    # listeners — depending on this one to survive a multi-minute converge
+    # was a brittle assumption.
+    - name: Stage 1 — Start nc listener on allowed port (legacy probe)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}"
+      async: 60
+      poll: 0
+      changed_when: false
+
+    - name: Stage 1 — Wait for listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_allowed_port }}"
+        timeout: 10
+
+    - name: Stage 1 — Probe allowed port through extns_a (legacy, must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_allowed_port }}
+      register: _legacy_probe
+      changed_when: false
+      failed_when: _legacy_probe.rc != 0
+
+    - name: Stage 1 — Kill Stage 1 nc listener so verify can rebind cleanly
+      ansible.builtin.command:
+        cmd: pkill -f "nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}"
+      register: _legacy_listener_kill
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 1 — Create foreign nft table that migration must preserve
+      ansible.builtin.command:
+        cmd: nft -f -
+        stdin: |
+          table ip molecule_foreign_keep {
+            chain keepalive {
+              counter
+            }
+          }
+      changed_when: false
+
+    # Foreign iptables-nft state that the migration WILL wipe along with
+    # our own MPIG-*. Verify asserts these chains are gone after Stage 2 —
+    # the documented one-time migration cost. Real-world foreign managers
+    # (kube-proxy, dockerd) reconcile on their next pass.
+    - name: Stage 1 — Create foreign iptables-nft state (wiped by migration)
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - iptables -w -t filter -N KUBE-FORWARD
+        - iptables -w -t filter -A FORWARD -j KUBE-FORWARD
+        - iptables -w -t filter -A KUBE-FORWARD -m comment --comment molecule-foreign-filter -j RETURN
+        - iptables -w -t nat -N KUBE-POSTROUTING
+        - iptables -w -t nat -A POSTROUTING -j KUBE-POSTROUTING
+        - iptables -w -t nat -A KUBE-POSTROUTING -m comment --comment molecule-foreign-nat -j RETURN
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 1 — Recreate legacy iptables-persistent directory
+      ansible.builtin.file:
+        path: /etc/iptables
+        state: directory
+        mode: "0755"
+
+    - name: Stage 1 — Recreate a stale role-owned iptables-persistent rules file
+      ansible.builtin.copy:
+        dest: /etc/iptables/rules.v4
+        mode: "0640"
+        content: |
+          *filter
+          -A INPUT -p tcp -m tcp --dport {{ molecule_iptables_stale_direct_port }} -j ACCEPT
+          COMMIT
+
+    - name: Stage 1 — Apply stale direct iptables rule from the old file
+      ansible.builtin.command:
+        cmd: "iptables -w -t filter -A INPUT -p tcp -m tcp --dport {{ molecule_iptables_stale_direct_port }} -j ACCEPT"
+      changed_when: false
+
+    # -- Stage 2: migrate to the nftables backend ----------------------------
+    - name: Stage 2 — Apply role with iptables_use_nftables=true (migration)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_use_nftables: true
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+        iptables_external_ping_enable: true
+
+    - name: Stage 2 — Snapshot rendered /etc/nftables.conf
+      ansible.builtin.copy:
+        src: /etc/nftables.conf
+        dest: /tmp/molecule-iptables-post-migration-nftables.conf
+        remote_src: true
+        mode: "0644"
+
+    - name: Stage 2 — Capture nft list ruleset output
+      ansible.builtin.command:
+        cmd: nft list ruleset
+      register: _nft_list_post
+      changed_when: false
+
+    - name: Stage 2 — Persist nft list ruleset
+      ansible.builtin.copy:
+        content: "{{ _nft_list_post.stdout }}\n"
+        dest: /tmp/molecule-iptables-post-migration-nft-list.txt
+        mode: "0644"
+
+    - name: Stage 2 — Stat legacy iptables rule files (must be absent)
+      ansible.builtin.stat:
+        path: "/etc/iptables/{{ item }}"
+      register: _legacy_rule_stats
+      loop:
+        - "rules.v4"
+        - "rules.v6"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Stage 2 — Persist legacy-rule-file existence dump
+      ansible.builtin.copy:
+        content: |
+          rules.v4_exists={{ _legacy_rule_stats.results[0].stat.exists }}
+          rules.v6_exists={{ _legacy_rule_stats.results[1].stat.exists }}
+        dest: /tmp/molecule-iptables-post-migration-legacy-files.env
+        mode: "0644"
+
+    - name: Stage 2 — Capture netfilter-persistent is-enabled state
+      ansible.builtin.command:
+        cmd: systemctl is-enabled netfilter-persistent.service
+      register: _nfp_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 2 — Capture nftables.service is-enabled state
+      ansible.builtin.command:
+        cmd: systemctl is-enabled nftables.service
+      register: _nft_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 2 — Persist service-state dump
+      ansible.builtin.copy:
+        content: |
+          netfilter_persistent_enabled={{ _nfp_enabled.stdout | default('') | trim }}
+          netfilter_persistent_rc={{ _nfp_enabled.rc }}
+          nftables_enabled={{ _nft_enabled.stdout | default('') | trim }}
+          nftables_rc={{ _nft_enabled.rc }}
+        dest: /tmp/molecule-iptables-post-migration-services.env
+        mode: "0644"
+
+    # Both `iptables` and `nftables` packages are installed unconditionally
+    # by the shared bootstrap. Capture dpkg status to prove it.
+    - name: Stage 2 — Capture dpkg status of iptables and nftables
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f=${db:Status-Abbrev} {{ item }}"
+      register: _post_migration_packages
+      changed_when: false
+      failed_when: false
+      loop:
+        - iptables
+        - nftables
+
+    - name: Stage 2 — Persist package-status dump
+      ansible.builtin.copy:
+        dest: /tmp/molecule-iptables-post-migration-packages.env
+        mode: "0644"
+        content: |
+          iptables_status={{ _post_migration_packages.results[0].stdout | default('') | trim }}
+          iptables_rc={{ _post_migration_packages.results[0].rc }}
+          nftables_status={{ _post_migration_packages.results[1].stdout | default('') | trim }}
+          nftables_rc={{ _post_migration_packages.results[1].rc }}
+
+    # -- Stage 3: idempotence on the steady-state nft host -------------------
+    # Re-apply the role with the SAME inputs. The role should be a
+    # no-op: the templates don't re-render (content unchanged),
+    # nftables.service is already enabled for boot, the migration block
+    # detects the legacy artefacts are already gone, the marker is
+    # already in place.
+    - name: Stage 3 — Capture managed-file checksums before re-apply
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: true
+      register: _stage3_pre_stats
+      loop:
+        - /etc/nftables.conf
+        - /usr/local/sbin/mini-pig-firewall-apply
+        - /etc/systemd/system/mini-pig-firewall.service
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Stage 3 — Re-apply role in nft mode (idempotence)
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_use_nftables: true
+        iptables_inf_ext:
+          - "{{ molecule_iptables_inf_a }}"
+          - "{{ molecule_iptables_inf_b }}"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+        iptables_external_ping_enable: true
+
+    - name: Stage 3 — Capture managed-file checksums after re-apply
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: true
+      register: _stage3_post_stats
+      loop:
+        - /etc/nftables.conf
+        - /usr/local/sbin/mini-pig-firewall-apply
+        - /etc/systemd/system/mini-pig-firewall.service
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Stage 3 — Persist idempotence dump
+      ansible.builtin.copy:
+        dest: /tmp/molecule-iptables-stage3-idempotence.env
+        mode: "0644"
+        content: |
+          nftables_conf_unchanged={{
+            _stage3_pre_stats.results[0].stat.checksum
+            == _stage3_post_stats.results[0].stat.checksum }}
+          firewall_apply_unchanged={{
+            _stage3_pre_stats.results[1].stat.checksum
+            == _stage3_post_stats.results[1].stat.checksum }}
+          firewall_service_unchanged={{
+            _stage3_pre_stats.results[2].stat.checksum
+            == _stage3_post_stats.results[2].stat.checksum }}
+
+    # -- Stage 4: changed nft rules must preserve foreign tables -------------
+    # This is distinct from the migration check above: the host is already on
+    # nft, a foreign table still exists, and the role now renders a different
+    # managed ruleset. Reloading that new ruleset must not remove foreign
+    # tables owned by Docker/libvirt/Podman/local operators.
+    #
+    # Stage 4 also turns on the two SNAT mechanisms in nft mode so verify
+    # can prove that:
+    #   * iptables_snat_rules renders into `table ip mpig_nat / chain
+    #     postrouting` (the role's own scoped nft table).
+    #   * iptables_randomized_ext_ips still installs the comment-tagged
+    #     rules into the kernel iptables-nft `nat POSTROUTING` via the
+    #     systemd timer — backend-independent module.
+    # iptables_inf_ext is the nft wildcard `ext*` (matches ext0+ext1), so every
+    # verify probe exercises it: if `ext*` matched nothing, allows would miss
+    # (port dropped) and the catch-all drop would miss (blocked port accepted).
+    # `nft -f` accepts `ext*` silently, so traffic is the only real test of it.
+    - name: Stage 4 — Apply updated nft rules while foreign table exists
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.iptables
+      vars:
+        iptables_use_nftables: true
+        iptables_inf_ext: "ext*"
+        iptables_ports:
+          - port: "{{ molecule_iptables_allowed_port }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_src_restricted_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_subnet_a }}"
+          - port: "{{ molecule_iptables_nft_update_extra_port }}"
+            protocol: tcp
+          # nft dialect: set `{ a, b }` + dash port range + multiport set.
+          - port: "{{ molecule_iptables_multi_src_port }}"
+            protocol: tcp
+            src_v4: "{{ molecule_iptables_multi_src_v4_nft }}"
+          - port: "{{ molecule_iptables_range_spec_nft }}"
+            protocol: tcp
+          - port: "{{ molecule_iptables_mport_spec_nft }}"
+            protocol: tcp
+        iptables_forwarded_ports:
+          - forwarded_inf: "{{ molecule_iptables_inf_a }}"
+            forwarded_port: "{{ molecule_iptables_dnat_external_port }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_allowed_port }}"
+            dst_address: "{{ molecule_iptables_peer_ip_b }}"
+        iptables_ipv4_forward_enable: true
+        iptables_ext_inf_masquerade: true
+        iptables_external_ping_enable: true
+        # Static SNAT — cover all four template branches. Narrow matches
+        # so the rules don't intercept other Stage 4/5 probes.
+        iptables_snat_rules:
+          # protocol + dst_port (the Kilo WireGuard pinning case): no
+          # output_inf, no daddr.
+          - to_source: "{{ molecule_iptables_snat_kilo_src }}"
+            protocol: udp
+            dst_port: "{{ molecule_iptables_snat_kilo_dst_port }}"
+          # protocol + dst_port + explicit output_inf: rendered with oifname.
+          - to_source: "{{ molecule_iptables_snat_pinned_inf_src }}"
+            protocol: tcp
+            dst_port: "{{ molecule_iptables_snat_pinned_inf_dst_port }}"
+            output_inf: "{{ molecule_iptables_inf_b }}"
+          # protocol + src_port + dst_address: exercises the daddr + sport
+          # branch of the nft template.
+          - to_source: "{{ molecule_iptables_snat_dst_src }}"
+            protocol: tcp
+            src_port: "{{ molecule_iptables_snat_dst_sport }}"
+            dst_address: "{{ molecule_iptables_snat_dst_addr }}"
+          # No protocol, dst_address only: exercises the "no L4 match"
+          # branch (`ip daddr X snat to Y` with no `tcp/udp` clause).
+          - to_source: "{{ molecule_iptables_snat_no_proto_src }}"
+            dst_address: "{{ molecule_iptables_snat_no_proto_addr }}"
+        # Randomized SNAT pool — backend-independent module. Lives in the
+        # role's OWN nft table `mpig_randomized_snat` at
+        # `priority srcnat - 10`, preempting iptables-nft at `srcnat` by
+        # kernel hook priority (no timer involved).
+        iptables_randomized_ext_ips:
+          - "{{ molecule_iptables_snat_randomized_ip_a }}"
+          - "{{ molecule_iptables_snat_randomized_ip_b }}"
+
+    - name: Stage 4 — Snapshot rendered /etc/nftables.conf after update
+      ansible.builtin.copy:
+        src: /etc/nftables.conf
+        dest: /tmp/molecule-iptables-post-update-nftables.conf
+        remote_src: true
+        mode: "0644"
+
+    - name: Stage 4 — Capture nft list ruleset after update
+      ansible.builtin.command:
+        cmd: nft list ruleset
+      register: _nft_list_post_update
+      changed_when: false
+
+    - name: Stage 4 — Persist nft list ruleset after update
+      ansible.builtin.copy:
+        content: "{{ _nft_list_post_update.stdout }}\n"
+        dest: /tmp/molecule-iptables-post-update-nft-list.txt
+        mode: "0644"
+
+    # Capture the live randomized SNAT nft table after Stage 4.
+    - name: Stage 4 — Capture mpig_randomized_snat nft table after update
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _snat_nft_table_post_update
+      changed_when: false
+
+    - name: Stage 4 — Persist mpig_randomized_snat nft table
+      ansible.builtin.copy:
+        content: "{{ _snat_nft_table_post_update.stdout }}\n"
+        dest: /tmp/molecule-iptables-post-update-snat-nft-table.txt
+        mode: "0644"
+
+    - name: Stage 4 — Read /etc/nftables.d/mpig-randomized-snat.conf for verify
+      ansible.builtin.slurp:
+        src: /etc/nftables.d/mpig-randomized-snat.conf
+      register: _snat_conf_post_update_raw
+
+    - name: Stage 4 — Persist mpig-randomized-snat.conf snapshot
+      ansible.builtin.copy:
+        content: "{{ _snat_conf_post_update_raw.content | b64decode }}"
+        dest: /tmp/molecule-iptables-post-update-snat-conf.txt
+        mode: "0644"
+
+    # -- Stage 4a: decoupled SNAT lifecycle + nftables.conf re-applyability -
+    #
+    # CONTRACT — DO NOT WEAKEN OR REPLACE WITH STATIC SNAPSHOTS.
+    #
+    # Two independent contracts exercised here:
+    #
+    # 1. Decoupled drift recovery. mpig-randomized-snat.service has no
+    #    PartOf=/ReloadPropagatedFrom= coupling to nftables.service; it
+    #    is Type=oneshot (no RemainAfterExit) and re-applies via its own
+    #    mpig-randomized-snat.timer. We simulate kernel drift by deleting
+    #    the table by hand, then trigger the service (proxy for what the
+    #    timer fires) and assert the chain is back. This is what makes
+    #    the new design STRUCTURALLY VERIFIABLE — if anyone re-introduces
+    #    `meter NAME { ... }` (pitfall P1) or otherwise makes ExecStart
+    #    write-once, the second start over a leftover table fails.
+    #
+    # 2. Re-applyability of /etc/nftables.conf via Debian's stock
+    #    `ExecReload=/usr/sbin/nft -f /etc/nftables.conf`. The conf
+    #    file carries the in-file `add table; delete table; table {…}`
+    #    idiom (see pitfall P4), so every `nft -f` is one atomic
+    #    kernel transaction — delete-then-create in a single commit.
+    #    Four back-to-back reloads exercise that path on the same
+    #    kernel state; if any regression breaks atomicity (e.g.,
+    #    someone reverts to bare `table {…}` without the add/delete
+    #    prefix, or re-introduces `meter NAME { … }` shorthand — see
+    #    pitfall P1 — that fails on re-declaration), the 2nd, 3rd,
+    #    4th reload fail with EBUSY. As a side effect this also proves
+    #    the SNAT chain is independent of nftables.service: 4 reloads
+    #    of the parent must leave mpig_randomized_snat untouched (it
+    #    lives in /etc/nftables.d/, not /etc/nftables.conf —
+    #    nftables.service's ExecReload does not reference it).
+    #
+    # The verify-side journal assertion (">= 2 'Reloaded nftables'
+    # entries") is what makes contract #2 STRUCTURALLY UN-FAKEABLE:
+    # replacing the live reload with a static file diff produces no
+    # journal entries and the test fails. See AGENTS.md pitfalls
+    # P1, P3, P4.
+    #
+    # If this block ever turns red, the right fix is in the role
+    # (template, unit, apply order) — NEVER in the test.
+
+    # -- Stage 4a.1: drift recovery ----------------------------------------
+    - name: Stage 4a — Capture mpig_randomized_snat table before drift
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _stage4a_snat_before_drift
+      changed_when: false
+
+    - name: Stage 4a — Simulate kernel drift by deleting the SNAT table
+      ansible.builtin.command:
+        cmd: nft delete table ip mpig_randomized_snat
+      changed_when: true
+
+    - name: Stage 4a — Confirm SNAT table is gone after drift simulation
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _stage4a_snat_during_drift
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 4a — Fire mpig-randomized-snat.service to recover from drift
+      ansible.builtin.systemd:
+        name: mpig-randomized-snat.service
+        state: started
+
+    - name: Stage 4a — Capture mpig_randomized_snat table after recovery
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _stage4a_snat_after_recovery
+      changed_when: false
+
+    - name: Stage 4a — Persist drift-recovery snapshots
+      ansible.builtin.copy:
+        content: |
+          === before drift ===
+          {{ _stage4a_snat_before_drift.stdout }}
+          === during drift (rc={{ _stage4a_snat_during_drift.rc }}) ===
+          stdout={{ _stage4a_snat_during_drift.stdout | default('') }}
+          stderr={{ _stage4a_snat_during_drift.stderr | default('') }}
+          === after recovery ===
+          {{ _stage4a_snat_after_recovery.stdout }}
+        dest: /tmp/molecule-iptables-snat-drift-recovery.txt
+        mode: "0644"
+
+    # -- Stage 4a.2: nftables.service reload independence ------------------
+    - name: Stage 4a — Mark journal cursor before reload sequence
+      ansible.builtin.command:
+        cmd: date --utc +%s
+      register: _stage4a_t0
+      changed_when: false
+
+    - name: Stage 4a — Reload nftables.service four times back-to-back
+      ansible.builtin.systemd:
+        name: nftables.service
+        state: reloaded
+      loop: [1, 2, 3, 4]
+      loop_control:
+        label: "reload #{{ item }}"
+
+    - name: Stage 4a — Capture mpig_randomized_snat table after reload sequence
+      ansible.builtin.command:
+        cmd: nft list table ip mpig_randomized_snat
+      register: _snat_nft_table_after_reload
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 4a — Persist mpig_randomized_snat table after reload
+      ansible.builtin.copy:
+        content: |
+          rc={{ _snat_nft_table_after_reload.rc }}
+          table_after_reload=
+          {{ _snat_nft_table_after_reload.stdout | default('') }}
+        dest: /tmp/molecule-iptables-after-nft-reload.txt
+        mode: "0644"
+
+    # Force journald to flush in-flight entries before capture — otherwise
+    # the last "Reloaded" message may not yet be visible by the time we
+    # read the slice (race between systemd's reply to systemctl and
+    # journald's commit). Without this the count check below is racy.
+    - name: Stage 4a — Sync journald before capture
+      ansible.builtin.command:
+        cmd: /usr/bin/journalctl --sync
+      changed_when: false
+
+    # Journalctl slice covering the reload loop. The verify-side assert
+    # demands at least 2 "Reloaded …nftables" entries; that is the
+    # un-stubbable proof a real systemd reload happened.
+    #
+    # Note we don't require exactly 4 entries (one per Ansible call):
+    # systemd merges queued reload jobs on `Type=oneshot
+    # RemainAfterExit=yes` units when several `systemctl reload` calls
+    # land while ExecReload is still running, so 4 calls can legitimately
+    # collapse into 2-3 journal events. See:
+    #   https://www.freedesktop.org/wiki/Software/systemd/
+    #   (Job model — reload jobs of the same type are merged.)
+    # The contract is "live reload happened, multiple times" — not "the
+    # exact loop count is visible in the journal."
+    - name: Stage 4a — Capture journal slice for nftables.service since t0
+      ansible.builtin.command:
+        cmd: >-
+          journalctl -u nftables.service
+          --since=@{{ _stage4a_t0.stdout | trim }}
+          --no-pager --output=short
+      register: _stage4a_journal
+      changed_when: false
+
+    - name: Stage 4a — Persist journal slice for verify
+      ansible.builtin.copy:
+        content: "{{ _stage4a_journal.stdout }}\n"
+        dest: /tmp/molecule-iptables-stage4a-journal.txt
+        mode: "0644"
+
+    # Independent functional sanity for the rendered config: `nft -c -f`
+    # against the on-disk file must succeed against current kernel
+    # state. If the template ever ends up using write-once syntax
+    # (e.g. `meter NAME { … }`) and the `validate:` hook on the render
+    # task was dropped to silence it (see AGENTS.md pitfall P3), this
+    # standalone check would still flag it.
+    - name: Stage 4a — Standalone nft dry-run validation of rendered config
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft -c -f /etc/nftables.conf
+      register: _stage4a_nft_check
+      changed_when: false
+
+    - name: Stage 4a — Persist nft dry-run result
+      ansible.builtin.copy:
+        content: |
+          rc={{ _stage4a_nft_check.rc }}
+          stderr={{ _stage4a_nft_check.stderr | default('') }}
+        dest: /tmp/molecule-iptables-stage4a-nft-check.txt
+        mode: "0644"
+
+    # -- Stage 4b: unified firewall service live exercise ------------------
+    - name: Stage 4b — Assert firewall timer is enabled and active
+      ansible.builtin.command:
+        cmd: "systemctl is-active mini-pig-firewall.timer"
+      register: _drift_active
+      changed_when: false
+
+    - name: Stage 4b — Run unified firewall service once to verify success
+      ansible.builtin.systemd:
+        name: mini-pig-firewall.service
+        state: started
+
+    - name: Stage 4b — Capture service exit status
+      ansible.builtin.command:
+        cmd: "systemctl show mini-pig-firewall.service --property=ExecMainStatus --value"
+      register: _drift_status
+      changed_when: false
+
+    - name: Stage 4b — Persist drift service status
+      ansible.builtin.copy:
+        content: |
+          timer_active={{ _drift_active.stdout }}
+          exec_main_status={{ _drift_status.stdout | trim }}
+        dest: /tmp/molecule-iptables-drift-status.txt
+        mode: "0644"
+
+    # -- Stage 4c: ICMP echo-request rate-limit (AGENTS.md P12, nft) ----------
+    # Mirror of the default-scenario probe but against the nft backend.
+    # Each `ping -c 1` spawns a fresh ICMP id → fresh conntrack tuple → no
+    # ESTABLISHED shortcut. With the correct nft ordering the rate-limit
+    # accepts in-burst and drops over-burst, so the peer sees real loss.
+    - name: Stage 4c — Remove stale ICMP rate-limit result file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-icmp-results.txt
+        state: absent
+
+    - name: Stage 4c — Fire N=20 parallel pings from extns_a, record each result
+      ansible.builtin.shell: |
+        : > /tmp/molecule-iptables-icmp-results.txt
+        for _ in $(seq 1 20); do
+          (nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }} \
+             ping -c 1 -W 2 {{ molecule_iptables_host_ip_a }} >/dev/null 2>&1 \
+             && echo OK >> /tmp/molecule-iptables-icmp-results.txt \
+             || echo FAIL >> /tmp/molecule-iptables-icmp-results.txt) &
+        done
+        wait
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # -- Stage 5: reverse-migration must hard-fail at the guard ------------
+    # The guard reads /var/lib/mini-pig-firewall-backend; if it sees
+    # "nftables" and `iptables_use_nftables` is false, the assertion in
+    # tasks/main.yml fires. Wrap the include in block/rescue and record
+    # the outcome so verify can assert the rejection happened.
+    - name: Stage 5 — Reverse-migration attempt (expected to fail)
+      block:
+        - name: Stage 5 — Apply role with iptables_use_nftables=false (must fail)
+          ansible.builtin.include_role:
+            name: kogeler.mini_pig.iptables
+          vars:
+            iptables_use_nftables: false
+            iptables_inf_ext:
+              - "{{ molecule_iptables_inf_a }}"
+              - "{{ molecule_iptables_inf_b }}"
+            iptables_ports:
+              - port: "{{ molecule_iptables_allowed_port }}"
+                protocol: tcp
+
+        - name: Stage 5 — Record unexpected success
+          ansible.builtin.copy:
+            content: "UNEXPECTED_SUCCESS\n"
+            dest: /tmp/molecule-iptables-reverse-migration-result.txt
+            mode: "0644"
+      rescue:
+        - name: Stage 5 — Record reverse-migration was rejected
+          ansible.builtin.copy:
+            content: "REJECTED\n"
+            dest: /tmp/molecule-iptables-reverse-migration-result.txt
+            mode: "0644"
+
+    # -- Stage 6: nft-dialect mismatches must be rejected by validate.yml —
+    # especially the iface wildcard `+`, which `nft -f` accepts then silently
+    # matches nothing. Validation aborts first, so Stage 4's ruleset stands.
+    - name: Stage 6 — Reset negative-case outcome file
+      ansible.builtin.file:
+        path: /tmp/molecule-iptables-negcases.txt
+        state: absent
+
+    - name: Stage 6 — Run nft-dialect negative cases (each must be rejected)
+      ansible.builtin.include_tasks: ../shared/tasks/negative_case.yml
+      loop:
+        - name: "nft-colon-range"
+          nft: true
+          ports: [{port: "{{ molecule_iptables_range_spec_ipt }}", protocol: tcp}]
+        - name: "nft-plus-iface"
+          nft: true
+          inf: "ext+"
+        - name: "nft-bare-comma"
+          nft: true
+          ports: [{port: 443, protocol: tcp, src_v4: "{{ molecule_iptables_multi_src_v4_ipt }}"}]
+        - name: "nft-comma-port"
+          nft: true
+          ports: [{port: "80,443", protocol: tcp}]
+      loop_control:
+        loop_var: neg_case
+        label: "{{ neg_case.name }}"

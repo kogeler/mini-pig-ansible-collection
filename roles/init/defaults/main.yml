@@ -4,29 +4,20 @@
 
 init_flow_control_dns: true
 init_flow_control_apt: true
+init_flow_control_grub: true
 init_flow_control_users: true
 init_flow_control_time: true
 init_flow_control_kernel: true
+init_flow_control_sysctl: true
 init_flow_control_hosts: true
 init_flow_control_ssh: true
 init_flow_control_mount: true
 init_flow_control_s3: true
 init_flow_control_logs: true
 
-init_packages:
-  - "htop"
-  - "iotop"
-  - "net-tools"
-  - "nano"
-  - "tmux"
-  - "mosh"
-  - "rsync"
-  - "curl"
-  - "btrfs-compsize"
-  - "wget"
-  - "netcat-openbsd"
-
 init_packages_extra: []
+
+init_packages_remove_extra: []
 
 # to create password hash
 # apt install whois
@@ -51,6 +42,10 @@ init_aws_secret_access_key: ""
 init_apt_upgrade: false
 init_apt_reboot_if_required: false
 
+# Manual override of grub-pc/install_devices. Empty = autodetect from lsblk
+# (BIOS hosts only; UEFI and hosts without grub-pc are skipped).
+init_grub_install_devices: []
+
 init_apt_xanmod_kernel_enable: false
 init_apt_xanmod_kernel: "linux-xanmod-lts-x64v3"
 init_apt_xanmod_kernel_apt_gpg_url: "https://dl.xanmod.org/archive.key"
@@ -58,6 +53,9 @@ init_apt_xanmod_kernel_apt_gpg_url: "https://dl.xanmod.org/archive.key"
 init_apt_google_cloud_sdk_enable: false
 
 init_cmdline_linux: ""
+
+init_sysctl_conf_filename: "99-zz-init-role.conf"
+init_sysctl_parameters: {}
 
 init_journald_system_max_use: "5G"
 init_journald_system_keep_free: "1G"

@@ -3,4 +3,10 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-_scw_k8s_kosmos_agent_binary_path: "/usr/local/bin/scw-k8s-node-agent"
+_scw_k8s_kosmos_agent_binary_path: "{{ scw_k8s_kosmos_agent_base_dir }}/kosmos_agent_{{ scw_k8s_kosmos_agent_version }}"
+_scw_k8s_kosmos_agent_reset_units:
+  - containerd.service
+  - kubelet.service
+_scw_k8s_kosmos_agent_reset_files:
+  - /etc/scw-k8s-userdata
+  - /etc/scw-k8s-versions.json

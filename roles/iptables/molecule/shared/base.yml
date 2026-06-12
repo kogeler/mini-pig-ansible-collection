@@ -1,0 +1,32 @@
+---
+# Role-scoped molecule base config for the iptables role.
+#
+# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
+# (the Makefile injects the flag for every scenario). Each scenario's
+# `molecule.yml` deep-merges on top of this — anything common across
+# scenarios lives here, anything scenario-specific stays in the
+# scenario file.
+
+dependency:
+  name: galaxy
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    host_vars:
+      molecule-iptables:
+        mp_driver: podman
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

@@ -27,6 +27,48 @@ _naive_proxy_decoy_name: naive-decoy
 _naive_proxy_decoy_unit: "podman-{{ _naive_proxy_decoy_name }}.service"
 _naive_proxy_decoy_port: 8081
 
+# -- AnyTLS container (sing-box) -----------------------------------------------
+
+_naive_proxy_anytls_name: naive-anytls
+_naive_proxy_anytls_unit: "podman-{{ _naive_proxy_anytls_name }}.service"
+# Internal listener port HAProxy forwards the AnyTLS SNI to (TCP passthrough).
+_naive_proxy_anytls_port: 8445
+# True when the server should run its own ACME. Production: on. In
+# molecule_mode it is off (static self-signed cert) UNLESS
+# naive_proxy_anytls_acme_in_molecule is set, in which case the server issues
+# from the local Pebble test CA so the TLS-ALPN-01 routing is exercised.
+_naive_proxy_anytls_acme: >-
+  {{ (naive_proxy_anytls_acme_enabled | bool)
+     and (not (naive_proxy_molecule_mode | bool)
+          or (naive_proxy_anytls_acme_in_molecule | bool)) }}
+
+# ALPN the AnyTLS server advertises (rendered into anytls.json `tls.alpn`).
+# DERIVED, not operator-facing: there is no valid reason to set it by hand, and
+# a wrong value would silently break uTLS clients. A browser uTLS ClientHello
+# always offers ["h2","http/1.1"]; the server's ACME path (TLS-ALPN-01) would
+# otherwise advertise only "acme-tls/1" → no overlap → every session aborts with
+# `no_application_protocol`. So when uTLS is enabled we advertise h2,http/1.1
+# (sing-box prepends it ahead of acme-tls/1, so ACME issuance keeps working);
+# when uTLS is off we advertise nothing and the server behaves exactly as
+# before (a client offering no ALPN always negotiates fine). The whole
+# relationship is keyed off the single operator knob naive_proxy_anytls_utls_fingerprint.
+_naive_proxy_anytls_alpn: "{{ ['h2', 'http/1.1'] if (naive_proxy_anytls_utls_fingerprint | length > 0) else [] }}"
+
+# Accepted sing-box uTLS fingerprints for naive_proxy_anytls_utls_fingerprint.
+# Mirrors the keys sing-box accepts (common/tls/utls_client.go); preflight uses
+# this list to reject typos. Empty string (the default) disables uTLS entirely.
+_naive_proxy_anytls_utls_fingerprints:
+  - chrome
+  - firefox
+  - edge
+  - safari
+  - "360"
+  - qq
+  - ios
+  - android
+  - random
+  - randomized
+
 # -- ACME ----------------------------------------------------------------------
 
 _naive_proxy_acme_alpn_port: 10443
@@ -50,21 +92,6 @@ _naive_proxy_certs_dir: "{{ naive_proxy_config_dir }}/certs"
 _naive_proxy_acme_data_dir: "{{ naive_proxy_config_dir }}/acme-data"
 _naive_proxy_decoy_html_dir: "{{ naive_proxy_config_dir }}/decoy-html"
 _naive_proxy_decoy_data_dir: "{{ naive_proxy_config_dir }}/caddy-data"
-
-# -- Derived tuning values -----------------------------------------------------
-# BDP-based auto-sizing for the frontend H2 receive buffer. HAProxy documents
-# the default 1600k as roughly enough for 130 Mbps over 100 ms RTT, so we use
-# the same bandwidth-delay product with a floor at the upstream default.
-
-_naive_proxy_haproxy_h2_frontend_rxbuf_auto: >-
-  {% set bandwidth = naive_proxy_haproxy_expected_bandwidth_mbps | float %}
-  {% set rtt_ms = naive_proxy_haproxy_expected_rtt_ms | float %}
-  {% if bandwidth > 0 and rtt_ms > 0 %}
-  {{ [1638400, (bandwidth * rtt_ms * 125) | round(0, 'ceil') | int] | max }}
-  {% else %}
-  {{ "" }}
-  {% endif %}
-
-_naive_proxy_haproxy_h2_frontend_rxbuf_effective: >-
-  {{ naive_proxy_haproxy_h2_frontend_rxbuf | default('', true)
-     or _naive_proxy_haproxy_h2_frontend_rxbuf_auto }}
+# AnyTLS: persistent CertMagic storage (ACME mode) and static cert dir.
+_naive_proxy_anytls_acme_data_dir: "{{ naive_proxy_config_dir }}/anytls-acme-data"
+_naive_proxy_anytls_certs_dir: "{{ naive_proxy_config_dir }}/anytls-certs"

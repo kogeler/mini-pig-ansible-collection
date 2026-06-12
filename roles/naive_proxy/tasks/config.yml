@@ -33,6 +33,18 @@
     mode: "0644"
   notify: naive-proxy | handlers | restart naive-haproxy
 
+# -- AnyTLS (sing-box) config --------------------------------------------------
+
+- name: naive-proxy | config | render sing-box AnyTLS config
+  ansible.builtin.template:
+    src: anytls.json.j2
+    dest: "{{ naive_proxy_config_dir }}/anytls.json"
+    owner: root
+    group: root
+    mode: "0640"
+  when: naive_proxy_anytls_enabled
+  notify: naive-proxy | handlers | restart naive-anytls
+
 # -- Bootstrap certificate (first deploy only) ---------------------------------
 # HAProxy needs a cert file to start. On first deploy, generate a temporary
 # self-signed cert. acme.sh systemd unit replaces it after services are up.
@@ -68,6 +80,52 @@
     selfsigned_not_after: "+30d"
     mode: "0644"
   when: not _naive_proxy_cert_stat.stat.exists
+
+# -- AnyTLS static certificate (molecule / ACME disabled) ----------------------
+# When the sing-box server is NOT running its own ACME, it serves a static
+# certificate from `_naive_proxy_anytls_certs_dir`. Generate a self-signed one
+# for the AnyTLS domain (same idiom as the naive bootstrap cert above) so tests
+# need no public Let's Encrypt issuance. Operators wanting their own static
+# cert in production drop fullchain.pem/key.pem here and keep this a no-op.
+
+- name: naive-proxy | config | check if anytls static cert exists
+  ansible.builtin.stat:
+    path: "{{ _naive_proxy_anytls_certs_dir }}/fullchain.pem"
+  register: _naive_proxy_anytls_cert_stat
+  when:
+    - naive_proxy_anytls_enabled
+    - not (_naive_proxy_anytls_acme | bool)
+
+- name: naive-proxy | config | generate anytls static key + cert
+  when:
+    - naive_proxy_anytls_enabled
+    - not (_naive_proxy_anytls_acme | bool)
+    - not _naive_proxy_anytls_cert_stat.stat.exists
+  block:
+    - name: naive-proxy | config | generate anytls private key
+      community.crypto.openssl_privatekey:
+        path: "{{ _naive_proxy_anytls_certs_dir }}/key.pem"
+        type: ECC
+        curve: secp256r1
+        mode: "0644"
+
+    - name: naive-proxy | config | generate anytls CSR
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ _naive_proxy_anytls_certs_dir }}/key.pem"
+        common_name: "{{ naive_proxy_anytls_domain }}"
+        subject_alt_name:
+          - "DNS:{{ naive_proxy_anytls_domain }}"
+      register: _naive_proxy_anytls_csr
+
+    - name: naive-proxy | config | generate anytls self-signed cert
+      community.crypto.x509_certificate:
+        path: "{{ _naive_proxy_anytls_certs_dir }}/fullchain.pem"
+        privatekey_path: "{{ _naive_proxy_anytls_certs_dir }}/key.pem"
+        csr_content: "{{ _naive_proxy_anytls_csr.csr }}"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+        mode: "0644"
+      notify: naive-proxy | handlers | restart naive-anytls
 
 # -- Systemd units -------------------------------------------------------------
 # Keep the copy order aligned with runtime dependencies. Handler execution is
@@ -108,6 +166,16 @@
     group: root
     mode: "0600"
   notify: naive-proxy | handlers | restart naive-backend
+
+- name: naive-proxy | config | copy anytls systemd unit
+  ansible.builtin.template:
+    src: anytls.service.j2
+    dest: "/etc/systemd/system/{{ _naive_proxy_anytls_unit }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: naive_proxy_anytls_enabled
+  notify: naive-proxy | handlers | restart naive-anytls
 
 - name: naive-proxy | config | copy acme service unit
   ansible.builtin.template:

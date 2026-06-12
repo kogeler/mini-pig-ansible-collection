@@ -1,0 +1,51 @@
+---
+# anytls-stress scenario: podman-in-podman, Debian trixie.
+#
+# Mirrors singbox-stress but drives the AnyTLS path instead of naive: a
+# sing-box client opens an `anytls` outbound through a real `tun` inbound,
+# reaching the sing-box AnyTLS server that the role deploys in the pod —
+# via ssl-router (SNI) -> HAProxy (SNI passthrough on the anytls domain) ->
+# sing-box anytls inbound. The same sing-box binary the singbox-stress
+# Dockerfile builds is reused (AnyTLS is core, no extra build tag); the
+# naive/cronet code paths simply stay dormant for an anytls-only config.
+#
+# Shared config in `molecule/shared/base.yml` (loaded via -c). The
+# sing-box build pins (`singbox_build_*`) live there under
+# `provisioner.inventory.group_vars.all`, shared with singbox-stress.
+driver:
+  name: podman
+platforms:
+  - name: molecule-naive-proxy
+    image: "docker.io/library/debian:trixie"
+    pre_build_image: false
+    systemd: always
+    network: "${MP_NETWORK:-slirp4netns}"
+    security_opts:
+      - "label=disable"
+      - "unmask=/proc/*"
+      - "apparmor=unconfined"
+    capabilities:
+      - SYS_ADMIN
+      - SETUID
+      - SETGID
+      - NET_ADMIN
+      # NET_RAW lets the verify run tcpdump on the instance to capture the
+      # AnyTLS ClientHello and assert it carries the Firefox uTLS fingerprint.
+      - NET_RAW
+    etc_hosts:
+      naive.test: "127.0.0.1"
+      anytls.test: "127.0.0.1"
+    devices:
+      - /dev/fuse:/dev/fuse
+      # The sing-box client container opens /dev/net/tun to create its own
+      # tun interface — same as singbox-stress.
+      - /dev/net/tun:/dev/net/tun
+    command: ""
+    override_command: false
+ansible:
+  playbooks:
+    # converge: scenario-local (ssl_router fronts HAProxy and SNI-routes
+    # both naive.test and anytls.test). verify: the AnyTLS stress + server
+    # checks. prepare stays the shared default.
+    converge: converge.yml
+    verify: ../shared/singbox-anytls-verify.yml

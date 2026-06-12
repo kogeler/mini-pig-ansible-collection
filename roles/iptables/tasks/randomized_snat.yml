@@ -1,0 +1,320 @@
+---
+
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Randomized SNAT module. Backend-independent: loads a native nft chain
+# into `table ip mpig_randomized_snat` at `priority srcnat - 10`, which
+# the kernel evaluates ahead of every iptables-nft chain at `srcnat`.
+# Pool non-empty → render + enable service + its own drift-check timer.
+# Empty pool → tear down (timer + service + kernel table + files).
+# Legacy timer/service/script and any leftover SNAT lines in base nat
+# POSTROUTING are removed unconditionally. The mini-pig-firewall.timer
+# at the bottom re-asserts the active backend's MPIG state on the same
+# configurable interval (`iptables_drift_check_interval`).
+
+# On path: render conf + service unit, enable, load.
+
+- name: iptables | snat | Ensure /etc/nftables.d exists
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  when: iptables_randomized_ext_ips | length > 0
+
+- name: iptables | snat | Render nft chain
+  ansible.builtin.template:
+    src: mpig-randomized-snat.conf.j2
+    dest: /etc/nftables.d/mpig-randomized-snat.conf
+    mode: "0644"
+    owner: root
+    group: root
+    validate: "/usr/sbin/nft -c -f %s"
+  register: _iptables_snat_conf
+  when: iptables_randomized_ext_ips | length > 0
+
+- name: iptables | snat | Render service unit
+  ansible.builtin.template:
+    src: mpig-randomized-snat.service.j2
+    dest: /etc/systemd/system/mpig-randomized-snat.service
+    mode: "0644"
+    owner: root
+    group: root
+  register: _iptables_snat_service
+  when: iptables_randomized_ext_ips | length > 0
+
+- name: iptables | snat | Render timer unit
+  ansible.builtin.template:
+    src: mpig-randomized-snat.timer.j2
+    dest: /etc/systemd/system/mpig-randomized-snat.timer
+    mode: "0644"
+    owner: root
+    group: root
+  register: _iptables_snat_timer
+  when:
+    - iptables_randomized_ext_ips | length > 0
+    - iptables_drift_check_interval | int > 0
+
+- name: iptables | snat | Enable nft service for boot
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.service
+    enabled: true
+    daemon_reload: true
+  when: iptables_randomized_ext_ips | length > 0
+
+# Mirrors the mini-pig-firewall apply pattern. The unit is Type=oneshot
+# without RemainAfterExit, so every `state: started` re-fires ExecStart,
+# which is a flat `nft -f` on the rendered conf — atomicity comes from
+# the in-file `add table; delete table; table {…}` idiom, not from any
+# shell wrapping (see AGENTS.md pitfall P4). `changed_when` keeps
+# Ansible reporting clean — we report changed only when something the
+# role owns actually changed.
+- name: iptables | snat | Apply nft chain via service
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.service
+    state: started
+  register: _iptables_snat_apply
+  changed_when:
+    - _iptables_snat_apply is not skipped
+    - (_iptables_snat_conf.changed | bool) or (_iptables_snat_service.changed | bool)
+  when: iptables_randomized_ext_ips | length > 0
+
+- name: iptables | snat | Enable and start drift-check timer
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.timer
+    enabled: true
+    state: started
+  when:
+    - iptables_randomized_ext_ips | length > 0
+    - iptables_drift_check_interval | int > 0
+
+# Off path within on-path: pool active but drift-check disabled → tear
+# down only the timer, leave the service running.
+- name: iptables | snat | Stat timer unit when drift-check disabled
+  ansible.builtin.stat:
+    path: /etc/systemd/system/mpig-randomized-snat.timer
+  register: _iptables_snat_timer_stat
+  when:
+    - iptables_randomized_ext_ips | length > 0
+    - iptables_drift_check_interval | int == 0
+
+- name: iptables | snat | Stop and disable timer when drift-check disabled
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.timer
+    enabled: false
+    state: stopped
+  when:
+    - iptables_randomized_ext_ips | length > 0
+    - iptables_drift_check_interval | int == 0
+    - _iptables_snat_timer_stat.stat.exists | bool
+
+- name: iptables | snat | Remove timer when drift-check disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/mpig-randomized-snat.timer
+    state: absent
+  notify: reload systemd daemon
+  when:
+    - iptables_randomized_ext_ips | length > 0
+    - iptables_drift_check_interval | int == 0
+
+# Off path: stop the timer and service, drop the kernel chain, remove files.
+
+- name: iptables | snat | Stat new service unit (off path)
+  ansible.builtin.stat:
+    path: /etc/systemd/system/mpig-randomized-snat.service
+  register: _iptables_snat_unit_stat
+  when: iptables_randomized_ext_ips | length == 0
+
+- name: iptables | snat | Stat new timer unit (off path)
+  ansible.builtin.stat:
+    path: /etc/systemd/system/mpig-randomized-snat.timer
+  register: _iptables_snat_timer_off_stat
+  when: iptables_randomized_ext_ips | length == 0
+
+- name: iptables | snat | Stop and disable drift-check timer (off path)
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.timer
+    enabled: false
+    state: stopped
+  when:
+    - iptables_randomized_ext_ips | length == 0
+    - _iptables_snat_timer_off_stat.stat.exists | bool
+
+- name: iptables | snat | Disable nft service (off path)
+  ansible.builtin.systemd:
+    name: mpig-randomized-snat.service
+    enabled: false
+  when:
+    - iptables_randomized_ext_ips | length == 0
+    - _iptables_snat_unit_stat.stat.exists | bool
+
+# ExecStop is no longer defined on the unit; drop the kernel chain
+# explicitly. Probe first so we don't have to parse nft's error strings.
+- name: iptables | snat | Probe for kernel mpig_randomized_snat table (off path)
+  ansible.builtin.command:
+    cmd: /usr/sbin/nft list table ip mpig_randomized_snat
+  register: _iptables_snat_probe_table
+  changed_when: false
+  failed_when: false
+  when: iptables_randomized_ext_ips | length == 0
+
+- name: iptables | snat | Drop mpig_randomized_snat table from kernel (off path)
+  ansible.builtin.command:
+    cmd: /usr/sbin/nft delete table ip mpig_randomized_snat
+  changed_when: true
+  when:
+    - iptables_randomized_ext_ips | length == 0
+    - _iptables_snat_probe_table.rc | default(1) == 0
+
+- name: iptables | snat | Remove nft service/timer files (off path)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mpig-randomized-snat.timer
+    - /etc/systemd/system/mpig-randomized-snat.service
+    - /etc/nftables.d/mpig-randomized-snat.conf
+  notify: reload systemd daemon
+  when: iptables_randomized_ext_ips | length == 0
+
+# Unconditional teardown of the legacy timer/service/script stack.
+
+- name: iptables | snat | Stat legacy timer unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/iptables-custom-rules.timer
+  register: _iptables_legacy_timer_stat
+
+- name: iptables | snat | Stop and disable legacy timer
+  ansible.builtin.systemd:
+    name: iptables-custom-rules.timer
+    enabled: false
+    state: stopped
+  when: _iptables_legacy_timer_stat.stat.exists | bool
+
+- name: iptables | snat | Stat legacy service unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/iptables-custom-rules.service
+  register: _iptables_legacy_service_stat
+
+- name: iptables | snat | Stop legacy service
+  ansible.builtin.systemd:
+    name: iptables-custom-rules.service
+    state: stopped
+  when: _iptables_legacy_service_stat.stat.exists | bool
+
+- name: iptables | snat | Remove legacy timer/service/script files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/iptables-custom-rules.timer
+    - /etc/systemd/system/iptables-custom-rules.service
+    - /usr/local/bin/reload_iptables_custom_rules.sh
+  notify: reload systemd daemon
+
+# Strip leftover SNAT rules with the legacy multiport-80,443 + ctstate-NEW
+# shape from base nat POSTROUTING. Narrow predicates avoid touching
+# foreign SNAT.
+- name: iptables | snat | Stat iptables binary
+  ansible.builtin.stat:
+    path: /usr/sbin/iptables
+  register: _iptables_bin_stat
+
+- name: iptables | snat | Strip legacy SNAT rules from base nat POSTROUTING
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      while true; do
+          nums=$(iptables -w -t nat -L POSTROUTING -n --line-numbers 2>/dev/null \
+              | awk 'NR > 2 \
+                  && $2 == "SNAT" \
+                  && /tcp dpts:80,443/ \
+                  && /ctstate NEW/ \
+                  {print $1}' \
+              | sort -rn)
+          [ -z "$nums" ] && break
+          for n in $nums; do
+              iptables -w -t nat -D POSTROUTING "$n" 2>/dev/null || true
+          done
+      done
+      echo OK
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: _iptables_bin_stat.stat.exists | bool
+
+# Re-assertion timer. Fires the unified mini-pig-firewall.service on a
+# configurable interval; set `iptables_drift_check_interval: 0` to
+# disable.
+
+- name: iptables | timer | Render firewall re-assertion timer
+  ansible.builtin.template:
+    src: mini-pig-firewall.timer.j2
+    dest: /etc/systemd/system/mini-pig-firewall.timer
+    mode: "0644"
+    owner: root
+    group: root
+  when: iptables_drift_check_interval | int > 0
+
+- name: iptables | timer | Enable and start firewall timer
+  ansible.builtin.systemd:
+    name: mini-pig-firewall.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: iptables_drift_check_interval | int > 0
+
+# Off path: interval set to 0 → tear down the timer.
+- name: iptables | timer | Stat firewall timer (off path)
+  ansible.builtin.stat:
+    path: /etc/systemd/system/mini-pig-firewall.timer
+  register: _iptables_firewall_timer_stat
+  when: iptables_drift_check_interval | int == 0
+
+- name: iptables | timer | Stop and disable firewall timer (off path)
+  ansible.builtin.systemd:
+    name: mini-pig-firewall.timer
+    enabled: false
+    state: stopped
+  when:
+    - iptables_drift_check_interval | int == 0
+    - _iptables_firewall_timer_stat.stat.exists | bool
+
+- name: iptables | timer | Remove firewall timer (off path)
+  ansible.builtin.file:
+    path: /etc/systemd/system/mini-pig-firewall.timer
+    state: absent
+  notify: reload systemd daemon
+  when: iptables_drift_check_interval | int == 0
+
+# Cleanup of old drift-check artefacts left behind by older role
+# versions. Always runs.
+- name: iptables | cleanup | Stat legacy drift-check artefacts
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: _iptables_legacy_drift_stats
+  loop:
+    - /etc/systemd/system/mini-pig-firewall-drift.timer
+    - /etc/systemd/system/mini-pig-firewall-drift.service
+    - /usr/local/sbin/mini-pig-firewall-drift-check
+  loop_control:
+    label: "{{ item }}"
+
+- name: iptables | cleanup | Stop and disable legacy drift timer
+  ansible.builtin.systemd:
+    name: mini-pig-firewall-drift.timer
+    enabled: false
+    state: stopped
+  when: _iptables_legacy_drift_stats.results[0].stat.exists | bool
+
+- name: iptables | cleanup | Remove legacy drift artefacts
+  ansible.builtin.file:
+    path: "{{ item.item }}"
+    state: absent
+  loop: "{{ _iptables_legacy_drift_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  notify: reload systemd daemon
+  when: item.stat.exists | bool

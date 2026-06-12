@@ -1,0 +1,33 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+
+Native nft chain for randomized SNAT over `iptables_randomized_ext_ips`.
+Lives at `priority srcnat - 10` (= 90) so the kernel evaluates it ahead of
+every iptables-nft chain at `srcnat` (kube-proxy, Kilo CNI, our own
+mpig_nat masquerade, iptables-persistent leftovers). Each new connection
+matching the pool is SNATed via a numgen-random map and terminated here.
+
+Atomic delete-then-create lives INSIDE this file via the
+`add table … ; delete table … ; table … { … }` idiom, all submitted as
+one `nft -f` batch — a single kernel transaction, no race window.
+`add table` is idempotent (creates an empty table if missing, no-op if
+present) so the `delete table` that follows never errors on first apply.
+Works on nft 1.0.6 (Debian 12), unlike `destroy table` which 1.0.6 rejects
+(see AGENTS.md pitfall P4). No shell wrapper around `nft -f` is needed.
+-#}
+#!/usr/sbin/nft -f
+
+add table ip mpig_randomized_snat
+delete table ip mpig_randomized_snat
+
+table ip mpig_randomized_snat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat - 10; policy accept;
+{% if iptables_randomized_ext_ips | length > 0 %}
+{% for inf in _iptables_inf_ext_list %}
+        oifname "{{ inf }}" tcp dport { 80, 443 } ct state new snat to numgen random mod {{ iptables_randomized_ext_ips | length }} map { {% for ip in iptables_randomized_ext_ips %}{{ loop.index0 }} : {{ ip }}{% if not loop.last %}, {% endif %}{% endfor %} }
+{% endfor %}
+{% endif %}
+    }
+}

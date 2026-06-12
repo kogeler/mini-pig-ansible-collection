@@ -1,0 +1,18 @@
+FROM {{ item.image }}
+# iptables + iptables-persistent: stage 1 starts from a host that has the old
+# persistence package installed, and the role must remove it after installing
+# its scoped boot service.
+# nftables: stage 2 migrates to the nft backend; baking the package in
+# (instead of letting the role apt-install it) keeps converge fast.
+# iproute2 brings `ip` for the veth/netns dance; netcat-openbsd is the
+# small TCP probe used by verify.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        systemd systemd-sysv python3 ca-certificates \
+        iptables iptables-persistent nftables iproute2 netcat-openbsd procps \
+        iputils-ping && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    systemctl mask getty@tty1.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

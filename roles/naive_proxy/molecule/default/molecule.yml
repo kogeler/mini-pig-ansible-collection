@@ -1,47 +1,27 @@
 ---
-# Driver is selected at runtime via MP_DRIVER (default: podman).
-# Supported values: podman, vagrant.
-# Env vars for vagrant driver:
-#   MP_DRIVER=vagrant
-#   MP_VAGRANT_PROVIDER=libvirt (default)
-#   MP_BOX=debian/trixie64 (default)
-#   MP_VM_MEMORY=2048
-#   MP_VM_CPUS=2
-# NOTE: env vars must NOT start with "MOLECULE_" — molecule keeps those
-# names as literals (see MOLECULE_KEEP_STRING in molecule.config).
-# The single platforms block carries keys for both drivers; each driver
-# reads only the keys it understands and ignores the rest.
-dependency:
-  name: galaxy
+# Default scenario: podman-in-podman, Debian trixie.
+# Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
+# default playbooks) lives in `.config/molecule/config.yml` at the repo
+# root and is auto-loaded by molecule. Only scenario-specific bits live
+# here.
 driver:
-  name: "${MP_DRIVER:-podman}"
-  # vagrant-only; podman ignores it
-  provider:
-    name: "${MP_VAGRANT_PROVIDER:-libvirt}"
+  name: podman
 platforms:
   - name: molecule-naive-proxy
-    # ---- podman driver keys ----
     image: "docker.io/library/debian:trixie"
     pre_build_image: false
     systemd: always
-    # Rootless podman network mode for the Molecule instance.
-    # Supported values:
-    #   host        — share the host network namespace, no port mapping needed
-    #   slirp4netns — userspace TCP/IP stack via slirp4netns (rootless default)
-    #   bridge      — CNI/netavark bridge with veth pairs
-    #   pasta       — replacement for slirp4netns using passt (podman >= 5.0)
-    # "host" avoids the extra NAT layer so container ports are reachable
-    # directly; this simplifies testing services that bind to :443.
-    # NOTE: the molecule-podman create playbook reads "network", not
-    # "network_mode" — using the wrong key silently falls back to the default.
+    # Rootless podman network mode for the molecule instance.
+    # Supported values: host, slirp4netns (rootless default), bridge,
+    # pasta (podman >= 5.0). NOTE: the molecule-podman create play
+    # reads "network", not "network_mode" — using the wrong key
+    # silently falls back to the default.
     network: "${MP_NETWORK:-slirp4netns}"
     # podman-in-podman: unmask /proc for newuidmap, caps for nested userns
     security_opts:
       - "label=disable"
       - "unmask=/proc/*"
-      # for ubuntu
       - "apparmor=unconfined"
-      # - "seccomp=unconfined"
     capabilities:
       - SYS_ADMIN
       - SETUID
@@ -51,31 +31,15 @@ platforms:
       naive.test: "127.0.0.1"
     devices:
       - /dev/fuse:/dev/fuse
-      # for pasta network
-      # - /dev/net/tun:/dev/net/tun
     command: ""
     override_command: false
-    # ---- vagrant driver keys ----
-    box: "${MP_BOX:-debian/trixie64}"
-    memory: "${MP_VM_MEMORY:-2048}"
-    cpus: "${MP_VM_CPUS:-2}"
 provisioner:
-  name: ansible
-  options:
-    D: true
-  playbooks:
-    prepare: prepare.yml
-    converge: ../shared/converge.yml
-    verify: ../shared/verify.yml
   inventory:
-    # ansible_become follows mp_driver (defined in shared/vars/common.yml).
-    # host_vars (not group_vars.all) so localhost — used by the vagrant
-    # create/destroy playbooks — does not inherit become.
     host_vars:
       molecule-naive-proxy:
-        ansible_become: '{{ (lookup("env", "MP_DRIVER") | default("podman", true)) != "podman" }}'
-  config_options:
-    defaults:
-      callbacks_enabled: ansible.posix.profile_tasks
-verifier:
-  name: ansible
+        # Generate the client-config QR PNGs and decode-round-trip them only in
+        # this scenario — keeps the controller-side qrcode/Pillow dependency
+        # scoped to one place. Inventory host_var (deep-merged with the base's
+        # mp_driver) so vars_files can't mask it. prepare ensures the dep on the
+        # controller; verify-clients decodes each PNG with kogeler.mini_pig.qr_decode.
+        molecule_naive_proxy_client_qr_enabled: true

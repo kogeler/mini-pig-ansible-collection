@@ -1,0 +1,77 @@
+---
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: init | grub | gather installed package facts
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: init | grub | detect boot mode
+  ansible.builtin.stat:
+    path: /sys/firmware/efi
+  register: _init_grub_efi
+
+- name: init | grub | autodetect block
+  when:
+    - not _init_grub_efi.stat.exists
+    - "'grub-pc' in ansible_facts.packages"
+  block:
+
+    - name: init | grub | inspect block device topology
+      ansible.builtin.command:
+        cmd: lsblk --json --output NAME,TYPE,PTTYPE,PARTTYPE
+      register: _init_grub_lsblk
+      changed_when: false
+      check_mode: false
+
+    - name: init | grub | enumerate physical disks
+      ansible.builtin.set_fact:
+        _init_grub_disks: >-
+          {{ (_init_grub_lsblk.stdout | from_json).blockdevices
+             | selectattr('type', 'equalto', 'disk')
+             | rejectattr('name', 'match', '^(loop|sr|md|dm-|zram)')
+             | list }}
+
+    - name: init | grub | select BIOS-bootable disks
+      ansible.builtin.set_fact:
+        _init_grub_install_devices_auto: >-
+          {{ _init_grub_install_devices_auto | default([]) + ['/dev/' + item.name] }}
+      loop: "{{ _init_grub_disks }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.pttype | default('-') }})"
+      vars:
+        _pttype: "{{ item.pttype | default('') }}"
+        _has_bios_grub: >-
+          {{ (item.children | default([])
+              | selectattr('parttype', 'defined')
+              | selectattr('parttype', 'equalto', _init_grub_bios_boot_part_guid)
+              | list | length) > 0 }}
+      when: _pttype == 'dos' or (_pttype == 'gpt' and _has_bios_grub)
+
+    - name: init | grub | resolve install_devices target list
+      ansible.builtin.set_fact:
+        _init_grub_install_devices: >-
+          {{ init_grub_install_devices
+             if (init_grub_install_devices | length > 0)
+             else (_init_grub_install_devices_auto | default([])) }}
+
+    - name: init | grub | abort if no BIOS-bootable disk detected
+      ansible.builtin.fail:
+        msg: >-
+          No BIOS-bootable disk detected
+          (MBR disk, or GPT with a bios_grub partition).
+          lsblk: {{ _init_grub_lsblk.stdout }}
+      when: _init_grub_install_devices | length == 0
+
+    - name: init | grub | preset grub-pc/install_devices
+      ansible.builtin.debconf:
+        name: grub-pc
+        question: grub-pc/install_devices
+        vtype: multiselect
+        value: "{{ _init_grub_install_devices | join(', ') }}"
+
+    - name: init | grub | recover broken dpkg state if any
+      ansible.builtin.apt:
+        state: fixed
+        update_cache: false
+      ignore_errors: "{{ ansible_check_mode }}"

@@ -1,0 +1,473 @@
+---
+# Sing-box AnyTLS TUN-mode benchmark.
+#
+# The AnyTLS analogue of singbox-benchmark.yml: a Linux sing-box client runs
+# in its OWN podman netns with a real `tun` inbound and an `anytls` outbound.
+# iperf3 shares that netns (`--network=container:<client>`) so its traffic
+# enters the tun device and reaches the iperf3 server (in the naive-pod netns)
+# only through the full chain:
+#
+#   sing-box (anytls outbound) -> ssl-router (:443 SNI) -> HAProxy (SNI
+#   passthrough on anytls.test) -> sing-box anytls inbound -> route to dest.
+#
+# The transport-level pieces (iperf3 image, iperf3 server unit, parallel
+# streams) are shared with the naive benchmarks via vars/benchmark.yml +
+# iperf-server.yml so the setups stay aligned. AnyTLS-specific deviations:
+#   * `anytls` outbound instead of `naive` (password only, no username, no
+#     cronet — libcronet.so is NOT mounted; the binary never dlopens it
+#     without a naive outbound).
+#   * `tls.certificate_path` points at the role's self-signed AnyTLS server
+#     cert (molecule_mode), the equivalent of trusting a public LE chain.
+#   * `log.level=debug` so any handshake/auth error surfaces in the journal.
+
+- name: anytls-bench | probe sing-box version banner
+  ansible.builtin.command:
+    cmd: "{{ singbox_host_binary_path }} version"
+  register: _anytls_version_probe
+  changed_when: false
+  failed_when: _anytls_version_probe.rc != 0
+
+- name: anytls-bench | print sing-box version banner
+  ansible.builtin.debug:
+    var: _anytls_version_probe.stdout_lines
+
+# -- ClientHello capture tooling (uTLS Firefox verification) ------------
+# Installed only when a fingerprint is configured. tshark prompts a debconf
+# question about non-root capture; the apt module runs non-interactively so it
+# is auto-answered (we capture as root anyway).
+- name: anytls-bench | install ClientHello capture tools (tcpdump + tshark)
+  ansible.builtin.apt:
+    name:
+      - tcpdump
+      - tshark
+    state: present
+    update_cache: true
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+# -- CA the client trusts for the AnyTLS server cert --------------------
+# The server cert is issued by the local Pebble CA via real ACME, so the
+# client trusts Pebble's root (same pattern the naive benchmark uses).
+- name: anytls-bench | download Pebble root CA for the AnyTLS client
+  ansible.builtin.get_url:
+    url: "{{ molecule_naive_proxy_pebble_root_url }}"
+    dest: "{{ singbox_anytls_server_cert_host_path }}"
+    validate_certs: false
+    mode: "0644"
+  register: _anytls_pebble_ca
+  retries: 10
+  delay: 3
+  until: _anytls_pebble_ca is not failed
+
+# -- Sing-box client config (TUN + anytls outbound) ---------------------
+# The client outbound mirrors the role var the scenario converged with: when a
+# uTLS fingerprint is set (firefox here), the anytls outbound's tls block gains
+# the same utls block the role renders into production client configs — so the
+# captured ClientHello below is the one real clients would emit.
+- name: anytls-bench | compute the client uTLS fragment (browser fingerprint)
+  ansible.builtin.set_fact:
+    _anytls_client_utls: >-
+      {{ {'utls': {'enabled': true, 'fingerprint': _anytls_utls_fingerprint}}
+         if (_anytls_utls_fingerprint | default('') | length > 0) else {} }}
+
+- name: anytls-bench | build per-IP anytls outbounds for the selector
+  ansible.builtin.set_fact:
+    _anytls_outbounds: >-
+      {{ _anytls_outbounds | default([]) + [{
+           'type': 'anytls',
+           'tag': 'anytls-' ~ item.key,
+           'server': item.value,
+           'server_port': singbox_anytls_server_port | int,
+           'password': (molecule_naive_proxy_users | dict2items)[0].value,
+           'tls': {
+             'enabled': true,
+             'server_name': molecule_naive_proxy_anytls_domain,
+             'certificate_path': '/etc/ssl/certs/anytls-server.crt'
+           } | combine(_anytls_client_utls)
+         }] }}
+  loop: "{{ molecule_naive_proxy_external_ip_map_auto | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: anytls-bench | render sing-box client config (TUN mode)
+  ansible.builtin.copy:
+    dest: "{{ singbox_anytls_client_config_path }}"
+    mode: "0644"
+    content: "{{ _anytls_client_config | to_nice_json }}"
+  vars:
+    _anytls_tags: >-
+      {{ _anytls_outbounds | map(attribute='tag') | list }}
+    _anytls_selector:
+      type: urltest
+      tag: anytls-test
+      outbounds: "{{ _anytls_tags }}"
+      url: "http://{{ _singbox_stress_pod_ip }}:{{ _naive_proxy_decoy_port | default(8081) }}/"
+      interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+    _anytls_client_config:
+      log:
+        level: debug
+      inbounds:
+        - type: tun
+          tag: tun-in
+          interface_name: "{{ singbox_client_tun_interface }}"
+          address: ["172.19.0.1/30"]
+          auto_route: true
+          strict_route: true
+          stack: mixed
+          # Force the iperf target (pod IP) through the tun with a /32 route
+          # that beats the bridge's connected /16, so the stress traffic can't
+          # take a direct off-tunnel route. The proxy server (bridge gateway) is
+          # a different IP and stays direct, so no routing loop.
+          route_address: ["{{ _singbox_stress_pod_ip }}/32"]
+      outbounds: "{{ _anytls_outbounds + [_anytls_selector, {'type': 'direct', 'tag': 'direct'}] }}"
+      route:
+        auto_detect_interface: true
+        rules:
+          - action: sniff
+          - action: reject
+            ip_cidr: ["2000::/3"]
+          - action: reject
+            port: [853]
+          - action: reject
+            network: ["udp"]
+            port: [443]
+          - action: route
+            outbound: direct
+            network: ["udp"]
+        final: anytls-test
+
+# -- Start the ClientHello capture before the client connects -----------
+# ssl-router (ssl_preread) and HAProxy (be_anytls, mode tcp) pass the AnyTLS
+# TLS stream through byte-for-byte, so the client's ClientHello reaches the
+# molecule host's loopback on the public listen port. Capture there, on `any`,
+# starting before the client comes up so the very first handshake is recorded.
+# The earlier verify get_certificate probe (a Go ClientHello) has already run,
+# so only the sing-box client's handshakes fall inside this window.
+- name: anytls-bench | pick a per-run capture unit name (avoid name collisions)
+  # A fixed transient unit name clashes with a leftover from a prior verify on
+  # the same instance ("Unit ... was already loaded"); a per-run suffix is
+  # collision-free without needing to reset stale units.
+  ansible.builtin.set_fact:
+    _anytls_capture_unit_run: "{{ singbox_anytls_capture_unit }}-{{ 99999999 | random }}"
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | remove any stale capture pcap
+  # Otherwise the readiness wait below would pass on a previous run's file even
+  # if this capture never started.
+  ansible.builtin.file:
+    path: "{{ singbox_anytls_capture_pcap }}"
+    state: absent
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | start ClientHello capture (transient tcpdump unit)
+  ansible.builtin.command:
+    cmd: >-
+      systemd-run --unit={{ _anytls_capture_unit_run }} --collect
+      tcpdump -i any -U -w {{ singbox_anytls_capture_pcap }}
+      tcp port {{ molecule_naive_proxy_listen_port }}
+  changed_when: true
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | wait for the capture file to appear (tcpdump is live)
+  # tcpdump creates the savefile as soon as it opens the device, so the file's
+  # existence proves the capture is running before any handshake — and surfaces
+  # a capture failure (e.g. missing NET_RAW) here instead of at parse time.
+  ansible.builtin.wait_for:
+    path: "{{ singbox_anytls_capture_pcap }}"
+    timeout: 20
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+# -- Sing-box client systemd unit (own netns, /dev/net/tun) -------------
+- name: anytls-bench | install sing-box client systemd unit
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ singbox_anytls_client_unit }}"
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=NaiveProxy molecule sing-box AnyTLS TUN client
+      RequiresMountsFor=%t/containers
+
+      [Service]
+      Environment=PODMAN_SYSTEMD_UNIT=%n
+      Type=notify
+      NotifyAccess=all
+      Restart=on-failure
+      RestartSec=5
+      TimeoutStartSec=300
+      TimeoutStopSec=70
+      Delegate=yes
+      KillMode=mixed
+      ExecStartPre=/bin/rm \
+              -f %t/%n.ctr-id
+      ExecStart=/usr/bin/podman container run \
+              --cidfile=%t/%n.ctr-id \
+              --cgroups=split \
+              --log-driver=passthrough \
+              --sdnotify=conmon \
+              --replace \
+              --name {{ singbox_anytls_client_container_name }} \
+              --pull=missing \
+              --read-only=false \
+              --security-opt=no-new-privileges \
+              --security-opt=apparmor=unconfined \
+              --cap-drop=ALL \
+              --cap-add=NET_ADMIN \
+              --device=/dev/net/tun \
+              --volume {{ singbox_host_binary_path }}:/usr/local/bin/sing-box:ro \
+              --volume {{ singbox_anytls_client_config_path }}:/etc/sing-box/config.json:ro \
+              --volume {{ singbox_anytls_server_cert_host_path }}:/etc/ssl/certs/anytls-server.crt:ro \
+              {{ singbox_client_image }}:{{ singbox_client_image_tag }} \
+              sing-box run -c /etc/sing-box/config.json
+
+      ExecStop=/usr/bin/podman stop \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+      ExecStopPost=/usr/bin/podman rm \
+              -f \
+              --ignore -t 10 \
+              --cidfile=%t/%n.ctr-id
+
+- name: anytls-bench | start sing-box client container
+  ansible.builtin.systemd:
+    name: "{{ singbox_anytls_client_unit }}"
+    state: restarted
+    daemon_reload: true
+
+- name: anytls-bench | wait for sing-box client container to report active
+  ansible.builtin.systemd:
+    name: "{{ singbox_anytls_client_unit }}"
+  register: _anytls_client_state
+  retries: 20
+  delay: 2
+  until: _anytls_client_state.status.ActiveState == 'active'
+
+- name: anytls-bench | wait for sing-box to finish initialising its tun inbound
+  # Scope to THIS run's invocation: the client unit is restarted every verify,
+  # so a plain `-u <unit>` read also returns prior runs' lines and would match
+  # (or scan) stale output.
+  ansible.builtin.command:
+    cmd: >
+      journalctl _SYSTEMD_INVOCATION_ID={{ _anytls_client_state.status.InvocationID }} --no-pager
+  register: _anytls_tun_journal
+  retries: 15
+  delay: 2
+  until: ('started at ' ~ singbox_client_tun_interface) in _anytls_tun_journal.stdout
+  changed_when: false
+
+# -- iperf3 server + warm-up + stress run through the AnyTLS tunnel -----
+- name: anytls-bench | start iperf3 server inside naive pod
+  ansible.builtin.import_tasks: iperf-server.yml
+
+- name: anytls-bench | warm-up iperf3 probe through sing-box TUN (AnyTLS)
+  # `--cgroups=disabled`: see singbox-benchmark.yml for the nested-podman
+  # rationale. The retry loop doubles as a readiness wait for the anytls
+  # session to come up. Target = pod IP, forced through the tun by the tun's
+  # route_address /32, so a dead tunnel makes this fail instead of bypassing.
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm
+      --cgroups=disabled
+      --network=container:{{ singbox_anytls_client_container_name }}
+      --pull=missing
+      {{ iperf_image }}
+      -c {{ _singbox_stress_pod_ip }} -p {{ iperf_port }}
+      --connect-timeout 5000
+      -t 1 -P 1 -J
+  changed_when: false
+  register: _anytls_warmup
+  retries: 10
+  delay: 3
+  until: _anytls_warmup.rc == 0
+
+# -- Verify the captured ClientHello really mimics Firefox (uTLS) -------
+# The warm-up above forced at least one AnyTLS handshake. Stop the capture and
+# inspect it with tshark. Firefox's ClientHello is set apart from Chrome and
+# Go's crypto/tls by two stable markers that uTLS' firefox parrot reproduces:
+#   * supported_groups carries the FFDHE groups — ffdhe2048 == 0x0100
+#   * it sends the record_size_limit extension (type 28)
+# Neither Chrome nor Go's default hello sends both, so requiring both on every
+# captured anytls.test ClientHello proves the handshake is Firefox-shaped — a
+# real on-the-wire check, not a config grep.
+- name: anytls-bench | stop the ClientHello capture
+  ansible.builtin.systemd:
+    name: "{{ _anytls_capture_unit_run }}"
+    state: stopped
+  failed_when: false
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | count all captured AnyTLS ClientHellos
+  ansible.builtin.command:
+    cmd: >-
+      tshark -r {{ singbox_anytls_capture_pcap }}
+      -d tcp.port=={{ molecule_naive_proxy_listen_port }},tls
+      -Y 'tls.handshake.type==1 and tls.handshake.extensions_server_name=="{{ molecule_naive_proxy_anytls_domain }}"'
+      -T fields -e frame.number
+  register: _anytls_ch_all
+  changed_when: false
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | count Firefox-fingerprinted AnyTLS ClientHellos
+  ansible.builtin.command:
+    cmd: >-
+      tshark -r {{ singbox_anytls_capture_pcap }}
+      -d tcp.port=={{ molecule_naive_proxy_listen_port }},tls
+      -Y 'tls.handshake.type==1 and tls.handshake.extensions_server_name=="{{ molecule_naive_proxy_anytls_domain }}"
+      and tls.handshake.extensions_supported_group==0x0100 and tls.handshake.extension.type==28'
+      -T fields -e frame.number
+  register: _anytls_ch_firefox
+  changed_when: false
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | assert every captured AnyTLS ClientHello matches Firefox
+  vars:
+    _ch_total: "{{ _anytls_ch_all.stdout_lines | select | list | length }}"
+    _ch_firefox: "{{ _anytls_ch_firefox.stdout_lines | select | list | length }}"
+  ansible.builtin.assert:
+    that:
+      - _ch_total | int > 0
+      - _ch_firefox | int == _ch_total | int
+    fail_msg: >-
+      AnyTLS ClientHello did not match the Firefox uTLS fingerprint:
+      {{ _ch_firefox }}/{{ _ch_total }} captured ClientHello(s) for
+      {{ molecule_naive_proxy_anytls_domain }} carried the Firefox markers
+      (ffdhe2048 supported-group + record_size_limit extension). Expected all of
+      them — the sing-box client's anytls outbound is configured with
+      utls.fingerprint={{ _anytls_utls_fingerprint }}.
+    success_msg: >-
+      All {{ _ch_total }} captured AnyTLS ClientHello(s) carry the Firefox uTLS
+      markers (ffdhe2048 + record_size_limit) — the handshake mimics Firefox.
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | run iperf3 through the AnyTLS tunnel
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm
+      --cgroups=disabled
+      --network=container:{{ singbox_anytls_client_container_name }}
+      --pull=missing
+      {{ iperf_image }}
+      -c {{ _singbox_stress_pod_ip }} -p {{ iperf_port }}
+      -t {{ iperf_duration }}
+      -P {{ iperf_parallel }}
+      -J
+  register: _anytls_iperf_raw
+  changed_when: false
+  failed_when: false
+
+# Read the client's tun byte counter AFTER the run to PROVE the traffic crossed
+# the tunnel (not a direct bridge route — the false green that hid the ALPN
+# break). The tun is fresh per client restart, so its counter ≈ the bytes that
+# actually went through it. /proc/net/dev is netns-scoped, so a helper sharing
+# the client's netns reads its tun stats. This is the future-proof guard: drop
+# the route_address above and this assertion fails even though iperf still runs.
+- name: anytls-bench | read tun byte counter after the stress run
+  ansible.builtin.command:
+    cmd: >-
+      podman run --rm --cgroups=disabled
+      --network=container:{{ singbox_anytls_client_container_name }}
+      --pull=missing {{ iperf_helper_image }}
+      awk '/{{ singbox_client_tun_interface }}:/ {print $2 + $10}' /proc/net/dev
+  register: _anytls_tun_after
+  changed_when: false
+
+- name: anytls-bench | assert iperf3 produced JSON output through AnyTLS
+  ansible.builtin.assert:
+    that:
+      - _anytls_iperf_raw.rc == 0
+      - (_anytls_iperf_raw.stdout | trim) | length > 0
+    fail_msg: >-
+      iperf3 through the AnyTLS tunnel did not return JSON.
+      rc={{ _anytls_iperf_raw.rc }}
+      stdout={{ _anytls_iperf_raw.stdout | default('') | truncate(400) }}
+      stderr={{ _anytls_iperf_raw.stderr | default('') | truncate(400) }}
+
+- name: anytls-bench | parse iperf3 result
+  ansible.builtin.set_fact:
+    _anytls_iperf_json: "{{ _anytls_iperf_raw.stdout | from_json }}"
+    _anytls_iperf_bps: >-
+      {{ (_anytls_iperf_raw.stdout | from_json).end.sum_received.bits_per_second
+         | default((_anytls_iperf_raw.stdout | from_json).end.sum_sent.bits_per_second, true)
+         | float }}
+
+- name: anytls-bench | assert iperf3 reported no top-level error
+  ansible.builtin.assert:
+    that:
+      - _anytls_iperf_json.error is not defined
+    fail_msg: >-
+      iperf3 reported a top-level error: {{ _anytls_iperf_json.error | default('?') }}
+
+- name: anytls-bench | assert the stress traffic actually crossed the AnyTLS tunnel
+  # The bytes iperf moved must show up on the client's tun device. If the target
+  # were reachable off-tunnel (the old bridge-IP bypass), the tun counter would
+  # be ~0 while iperf still reported throughput — exactly the false green that
+  # hid the ALPN break. 0.5x leaves slack for header vs payload accounting.
+  vars:
+    _tun_bytes: "{{ _anytls_tun_after.stdout | int }}"
+    _iperf_bytes: "{{ _anytls_iperf_json.end.sum_sent.bytes | int }}"
+  ansible.builtin.assert:
+    that:
+      - _iperf_bytes | int > 0
+      - (_tun_bytes | int) > (_iperf_bytes | int) * 0.5
+    fail_msg: >-
+      Only {{ _tun_bytes }} bytes crossed the tun device ({{ singbox_client_tun_interface }}),
+      but iperf moved {{ _iperf_bytes }} bytes — the stress traffic BYPASSED the
+      AnyTLS tunnel (a direct route to the target instead of the tun's route_address).
+    success_msg: >-
+      {{ _tun_bytes }} bytes crossed the tun (iperf moved {{ _iperf_bytes }}) —
+      the stress traffic really went through the AnyTLS tunnel.
+
+- name: anytls-bench | print iperf3 throughput through AnyTLS
+  ansible.builtin.debug:
+    msg: >-
+      iperf3 -P {{ iperf_parallel }} through sing-box TUN-mode AnyTLS outbound:
+      {{ (_anytls_iperf_bps / 1000000) | round(2) }} Mbps
+
+- name: anytls-bench | assert iperf3 met the minimum throughput through AnyTLS
+  ansible.builtin.assert:
+    that:
+      - _anytls_iperf_bps | float > singbox_anytls_iperf_min_bps | float
+    fail_msg: >-
+      iperf3 through the AnyTLS tunnel was too low:
+      {{ (_anytls_iperf_bps / 1000000) | round(2) }} Mbps
+      (floor: {{ (singbox_anytls_iperf_min_bps | float / 1000000) | round(2) }} Mbps)
+
+# -- AnyTLS-specific journal scan --------------------------------------
+# Scope to THIS run's invocation id: the client unit is restarted every verify,
+# so `-u <unit>` would also return prior runs' lines and the failure-marker scan
+# would trip on stale errors from a pre-fix run on the same instance.
+- name: anytls-bench | capture sing-box client journal
+  ansible.builtin.command:
+    cmd: "journalctl _SYSTEMD_INVOCATION_ID={{ _anytls_client_state.status.InvocationID }} --no-pager"
+  register: _anytls_log_raw
+  changed_when: false
+
+- name: anytls-bench | print sing-box client journal
+  ansible.builtin.debug:
+    var: _anytls_log_raw.stdout
+
+- name: anytls-bench | locate failure markers in sing-box journal
+  ansible.builtin.set_fact:
+    _anytls_log_hits: >-
+      {{ singbox_anytls_log_failure_markers
+         | select('in', _anytls_log_raw.stdout)
+         | list }}
+
+- name: anytls-bench | assert sing-box journal has no AnyTLS handshake/auth errors
+  ansible.builtin.assert:
+    that:
+      - _anytls_log_hits | length == 0
+    fail_msg: >-
+      sing-box client journal contains AnyTLS failure markers:
+      {{ _anytls_log_hits | join(', ') }}. See the journal printed above.
+
+# -- Cleanup -----------------------------------------------------------
+- name: anytls-bench | stop iperf3 benchmark server
+  ansible.builtin.systemd:
+    name: "{{ iperf_unit }}"
+    state: stopped
+  failed_when: false
+
+- name: anytls-bench | stop sing-box client container
+  ansible.builtin.systemd:
+    name: "{{ singbox_anytls_client_unit }}"
+    state: stopped
+  failed_when: false

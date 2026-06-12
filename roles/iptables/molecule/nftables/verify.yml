@@ -1,0 +1,1099 @@
+---
+# nftables scenario verify.
+#
+# Walks the snapshots converge.yml produced, then drives live traffic
+# through the nft ruleset to prove the kernel actually filters as the
+# role's variables intended.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - ../shared/vars/common.yml
+  tasks:
+    # -- Read converge artefacts --------------------------------------------
+
+    - name: Read default-interface fact
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-default-iface.txt
+      register: _default_iface_raw
+
+    - name: Set default-interface fact
+      ansible.builtin.set_fact:
+        _default_iface: "{{ (_default_iface_raw.content | b64decode).strip() }}"
+
+    - name: Read pre-migration rules.v4 snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-pre-migration-rules.v4
+      register: _pre_rules_v4_raw
+
+    - name: Read pre-migration iptables-save snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-pre-migration-iptables-save.txt
+      register: _pre_iptables_save_raw
+
+    - name: Read post-migration nftables.conf snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-migration-nftables.conf
+      register: _post_nft_conf_raw
+
+    - name: Read post-migration nft list ruleset snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-migration-nft-list.txt
+      register: _post_nft_list_raw
+
+    - name: Read post-update nftables.conf snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-update-nftables.conf
+      register: _post_update_nft_conf_raw
+
+    - name: Read post-update nft list ruleset snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-update-nft-list.txt
+      register: _post_update_nft_list_raw
+
+    - name: Read post-update mpig_randomized_snat nft table snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-update-snat-nft-table.txt
+      register: _post_update_snat_table_raw
+
+    - name: Read post-update mpig-randomized-snat.conf snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-update-snat-conf.txt
+      register: _post_update_snat_conf_raw
+
+    - name: Read post-reload mpig_randomized_snat snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-after-nft-reload.txt
+      register: _after_nft_reload_raw
+
+    - name: Read SNAT drift-recovery snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-snat-drift-recovery.txt
+      register: _snat_drift_recovery_raw
+
+    - name: Read Stage 4a journal slice for nftables.service
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-stage4a-journal.txt
+      register: _stage4a_journal_raw
+
+    - name: Read Stage 4a nft dry-run check result
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-stage4a-nft-check.txt
+      register: _stage4a_nft_check_raw
+
+    - name: Read drift-check status snapshot
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-drift-status.txt
+      register: _drift_status_raw
+
+    - name: Read Stage 3 idempotence dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-stage3-idempotence.env
+      register: _stage3_idempotence_raw
+
+    - name: Read post-migration legacy-files dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-migration-legacy-files.env
+      register: _legacy_files_raw
+
+    - name: Read post-migration service-state dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-migration-services.env
+      register: _services_raw
+
+    - name: Read post-migration package-status dump
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-post-migration-packages.env
+      register: _packages_raw
+
+    - name: Read reverse-migration result
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-reverse-migration-result.txt
+      register: _reverse_result_raw
+
+    - name: Read firewall-backend marker
+      ansible.builtin.slurp:
+        src: /var/lib/mini-pig-firewall-backend
+      register: _marker_raw
+
+    - name: Decode snapshots into facts
+      ansible.builtin.set_fact:
+        _pre_rules_v4: "{{ _pre_rules_v4_raw.content | b64decode }}"
+        _pre_iptables_save: "{{ _pre_iptables_save_raw.content | b64decode }}"
+        _post_nft_conf: "{{ _post_nft_conf_raw.content | b64decode }}"
+        _post_nft_list: "{{ _post_nft_list_raw.content | b64decode }}"
+        _post_update_nft_conf: "{{ _post_update_nft_conf_raw.content | b64decode }}"
+        _post_update_nft_list: "{{ _post_update_nft_list_raw.content | b64decode }}"
+        _post_update_snat_table: "{{ _post_update_snat_table_raw.content | b64decode }}"
+        _post_update_snat_conf: "{{ _post_update_snat_conf_raw.content | b64decode }}"
+        _after_nft_reload: "{{ _after_nft_reload_raw.content | b64decode }}"
+        _snat_drift_recovery: "{{ _snat_drift_recovery_raw.content | b64decode }}"
+        _stage4a_journal: "{{ _stage4a_journal_raw.content | b64decode }}"
+        _stage4a_nft_check: "{{ _stage4a_nft_check_raw.content | b64decode }}"
+        _drift_status: "{{ _drift_status_raw.content | b64decode }}"
+        _stage3_idempotence: "{{ _stage3_idempotence_raw.content | b64decode }}"
+        _legacy_files_env: "{{ _legacy_files_raw.content | b64decode }}"
+        _services_env: "{{ _services_raw.content | b64decode }}"
+        _packages_env: "{{ _packages_raw.content | b64decode }}"
+        _reverse_result: "{{ (_reverse_result_raw.content | b64decode).strip() }}"
+        _marker_content: "{{ (_marker_raw.content | b64decode).strip() }}"
+
+    # -- Pre-migration baseline: iptables was actually live ----------------
+
+    - name: Assert pre-migration scoped iptables script contained the role's rules
+      ansible.builtin.assert:
+        that:
+          - "'-A MPIG-INPUT -s 0.0.0.0/0 -i ' ~ molecule_iptables_inf_a
+              ~ ' -p tcp -m tcp --dport ' ~ molecule_iptables_allowed_port
+              ~ ' -m state --state NEW -j ACCEPT'
+              in _pre_rules_v4"
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a
+              ~ ' -m state --state NEW -j DROP' in _pre_rules_v4"
+        fail_msg: |
+          scoped iptables script rendered in stage 1 is missing the expected rules.
+          Snapshot:
+          {{ _pre_rules_v4 }}
+
+    - name: Assert pre-migration kernel iptables-save reflected the rules
+      ansible.builtin.assert:
+        that:
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_a in _pre_iptables_save"
+          - "'-A MPIG-INPUT -i ' ~ molecule_iptables_inf_b in _pre_iptables_save"
+        fail_msg: |
+          iptables-save snapshot from stage 1 does not show the role's
+          rules loaded into the kernel:
+          {{ _pre_iptables_save }}
+
+    # -- Post-migration template: rendered exactly the structures expected --
+
+    - name: Assert /etc/nftables.conf uses scoped table ownership
+      ansible.builtin.assert:
+        that:
+          - "'flush ruleset' not in _post_nft_conf"
+          # `destroy table` is rejected by nft 1.0.6 (Debian 12); atomic
+          # delete-then-create lives in-file via `add table; delete table;
+          # table {…}` instead (see AGENTS.md pitfall P4).
+          - "'destroy table' not in _post_nft_conf"
+          # In-file atomic-replace idiom: each managed table is prefixed
+          # with `add table … ; delete table …` so the whole `nft -f` batch
+          # is one kernel transaction. Catches a regression that drops
+          # either side of the pair.
+          - "'add table ip mpig_filter' in _post_nft_conf"
+          - "'delete table ip mpig_filter' in _post_nft_conf"
+          - "'add table ip6 mpig_filter' in _post_nft_conf"
+          - "'delete table ip6 mpig_filter' in _post_nft_conf"
+          - "'add table ip mpig_nat' in _post_nft_conf"
+          - "'delete table ip mpig_nat' in _post_nft_conf"
+        fail_msg: |
+          /etc/nftables.conf either flushes the global ruleset, uses
+          `destroy table` (incompatible with nft 1.0.6 / Debian 12), or
+          dropped the in-file `add table … ; delete table …` prefix that
+          gives the apply atomic delete-then-create semantics. Snapshot:
+          {{ _post_nft_conf }}
+
+    - name: Assert /etc/nftables.conf rendered both filter tables and nat
+      ansible.builtin.assert:
+        that:
+          - "'table ip mpig_filter' in _post_nft_conf"
+          - "'table ip6 mpig_filter' in _post_nft_conf"
+          - "'table ip mpig_nat' in _post_nft_conf"
+        fail_msg: |
+          Expected mpig_filter (ip + ip6) and mpig_nat tables in
+          /etc/nftables.conf; got:
+          {{ _post_nft_conf }}
+
+    # Spot-check that the per-variable rules made it into the rendered
+    # config — same pattern as the default scenario's snapshot grep, but
+    # in nft syntax.
+    - name: Assert per-port ACCEPT, src_v4 restriction, and DNAT rendered
+      ansible.builtin.assert:
+        that:
+          - "'iifname \"' ~ molecule_iptables_inf_a
+              ~ '\" ip saddr 0.0.0.0/0 tcp dport '
+              ~ molecule_iptables_allowed_port
+              ~ ' ct state new accept' in _post_nft_conf"
+          - "'iifname \"' ~ molecule_iptables_inf_a
+              ~ '\" ip saddr ' ~ molecule_iptables_subnet_a
+              ~ ' tcp dport ' ~ molecule_iptables_src_restricted_port
+              ~ ' ct state new accept' in _post_nft_conf"
+          - "'iifname \"' ~ molecule_iptables_inf_a
+              ~ '\" tcp dport ' ~ molecule_iptables_dnat_external_port
+              ~ ' dnat to ' ~ molecule_iptables_peer_ip_b ~ ':'
+              ~ molecule_iptables_allowed_port in _post_nft_conf"
+          - "'oifname \"' ~ molecule_iptables_inf_a ~ '\" masquerade'
+              in _post_nft_conf"
+          - "'oifname \"' ~ molecule_iptables_inf_b ~ '\" masquerade'
+              in _post_nft_conf"
+        fail_msg: |
+          Per-variable nft rules did not render as expected. Config:
+          {{ _post_nft_conf }}
+
+    - name: Assert per-interface drop and ICMP rate-limit rendered
+      ansible.builtin.assert:
+        that:
+          - "'iifname \"' ~ molecule_iptables_inf_a
+              ~ '\" ct state new drop' in _post_nft_conf"
+          - "'iifname \"' ~ molecule_iptables_inf_b
+              ~ '\" ct state new drop' in _post_nft_conf"
+          # ICMP rate-limit must use explicit `set NAME { flags dynamic }`
+          # declared at table level and referenced via `update @set` from
+          # every external-interface rule. The trailing space in each
+          # match is deliberate — it anchors to `set <name> {…}` and
+          # `update @<name> { ip saddr limit rate …}`, which prevents a
+          # future suffix like `set icmp_echo_v4_ext0 { … }` from
+          # passing a substring-only check (pitfall P2: per-interface
+          # suffix breaks parity with iptables `--hashlimit-name`).
+          #
+          # See AGENTS.md pitfalls P1 and P2:
+          #   * `meter NAME { … }` (deprecated shorthand) breaks re-apply
+          #     with EBUSY — use explicit `set` / `update @set`.
+          #   * iptables `-m hashlimit --hashlimit-name icmp-{req,rep}`
+          #     and `icmpv6-{req,rep}` are global buckets counting per
+          #     saddr across all external interfaces; the nft port mirrors
+          #     that with ONE shared set per (family, direction), NOT one
+          #     set per interface.
+          - "'set icmp_echo_v4 {' in _post_nft_conf"
+          - "'set icmp_reply_v4 {' in _post_nft_conf"
+          - "'set icmpv6_echo {' in _post_nft_conf"
+          - "'set icmpv6_reply {' in _post_nft_conf"
+          - "'update @icmp_echo_v4 {' in _post_nft_conf"
+          - "'update @icmp_reply_v4 {' in _post_nft_conf"
+          - "'update @icmpv6_echo {' in _post_nft_conf"
+          - "'update @icmpv6_reply {' in _post_nft_conf"
+          # Suffix guard — DO NOT WEAKEN. If any of these strings starts
+          # appearing in the template, somebody re-introduced the
+          # per-interface suffix that silently bypasses the iptables
+          # hashlimit semantics. See pitfall P2 in AGENTS.md.
+          - "'@icmp_echo_v4_' not in _post_nft_conf"
+          - "'@icmp_reply_v4_' not in _post_nft_conf"
+          - "'@icmpv6_echo_' not in _post_nft_conf"
+          - "'@icmpv6_reply_' not in _post_nft_conf"
+          - "'meter ' not in _post_nft_conf"
+
+    # IPv6 NDP + MLD allow on any interface (RFC 4890). Without these the
+    # local IPv6 stack loses neighbor and router discovery — SLAAC breaks
+    # the moment the final `meta l4proto ipv6-icmp drop` matches.
+    - name: Assert NDP and MLD allow rendered in v6 input chain
+      ansible.builtin.assert:
+        that:
+          - "'nd-router-solicit' in _post_nft_conf"
+          - "'nd-router-advert' in _post_nft_conf"
+          - "'nd-neighbor-solicit' in _post_nft_conf"
+          - "'nd-neighbor-advert' in _post_nft_conf"
+          - "'nd-redirect' in _post_nft_conf"
+          - "'mld-listener-query' in _post_nft_conf"
+          - "'mld-listener-report' in _post_nft_conf"
+          - "'mld-listener-done' in _post_nft_conf"
+          - "'mld2-listener-report' in _post_nft_conf"
+
+    # v6 forward must carry the conntrack shortcut symmetric to v4 forward.
+    # Slice out exactly `table ip6 mpig_filter / chain forward { ... }` so
+    # the assert can't accidentally hit v4 forward (same chain name).
+    - name: Slice v6 forward chain block out of /etc/nftables.conf
+      ansible.builtin.set_fact:
+        _v6_forward_block: >-
+          {{ (((_post_nft_conf.split('table ip6 mpig_filter') | last)
+                .split('chain forward {') | last)
+                .split('}') | first) }}
+
+    - name: Assert v6 forward chain carries ct state related,established accept
+      ansible.builtin.assert:
+        that:
+          - "'ct state related,established accept' in _v6_forward_block"
+          - "'ct state invalid drop' in _v6_forward_block"
+        fail_msg: |
+          The ct state RELATED,ESTABLISHED accept shortcut is missing from
+          `table ip6 mpig_filter / chain forward`. Without it transit IPv6
+          ESTABLISHED falls through to the chain's default policy. Block:
+          {{ _v6_forward_block }}
+
+    # -- Post-migration kernel state: nft tables actually loaded ------------
+
+    - name: Assert kernel nft ruleset contains the role's tables
+      ansible.builtin.assert:
+        that:
+          - "'table ip mpig_filter' in _post_nft_list"
+          - "'table ip6 mpig_filter' in _post_nft_list"
+          - "'table ip mpig_nat' in _post_nft_list"
+          - "'dport ' ~ molecule_iptables_allowed_port in _post_nft_list"
+          - "'table ip molecule_foreign_keep' in _post_nft_list"
+        fail_msg: |
+          nft list ruleset snapshot does not show the migrated tables or
+          the foreign table that should have survived the scoped apply.
+          Output:
+          {{ _post_nft_list }}
+
+    - name: Assert changed nft apply preserved foreign tables
+      ansible.builtin.assert:
+        that:
+          - "'flush ruleset' not in _post_update_nft_conf"
+          - "'tcp dport ' ~ molecule_iptables_nft_update_extra_port in _post_update_nft_conf"
+          - "'tcp dport ' ~ molecule_iptables_nft_update_extra_port in _post_update_nft_list"
+          - "'table ip molecule_foreign_keep' in _post_update_nft_list"
+          - "'table ip mpig_filter' in _post_update_nft_list"
+          - "'table ip6 mpig_filter' in _post_update_nft_list"
+          - "'table ip mpig_nat' in _post_update_nft_list"
+        fail_msg: |
+          Updating the role-owned nft ruleset should add the new managed rule
+          while preserving foreign tables. Config:
+          {{ _post_update_nft_conf }}
+          Ruleset:
+          {{ _post_update_nft_list }}
+
+    # -- iptables_snat_rules under nft backend ----------------------------
+    # Static SNAT lives in `table ip mpig_nat / chain postrouting`;
+    # randomized SNAT lives in its own `mpig_randomized_snat` table at
+    # `priority srcnat - 10`. All four static-SNAT template branches
+    # must render.
+    - name: Assert static SNAT rendered all four template branches into mpig_nat
+      ansible.builtin.assert:
+        that:
+          # Branch 1 — Kilo (UDP + dst_port): no oifname, no daddr.
+          - "'udp dport ' ~ molecule_iptables_snat_kilo_dst_port
+              ~ ' snat to ' ~ molecule_iptables_snat_kilo_src
+              in _post_update_nft_conf"
+          - "'udp dport ' ~ molecule_iptables_snat_kilo_dst_port
+              ~ ' snat to ' ~ molecule_iptables_snat_kilo_src
+              in _post_update_nft_list"
+          # Branch 2 — Pinned (TCP + dst_port + output_inf): oifname rendered.
+          - "'oifname \"' ~ molecule_iptables_inf_b
+              ~ '\" tcp dport ' ~ molecule_iptables_snat_pinned_inf_dst_port
+              ~ ' snat to ' ~ molecule_iptables_snat_pinned_inf_src
+              in _post_update_nft_conf"
+          # Branch 3 — dst_address + src_port (`ip daddr X tcp sport Y`).
+          - "'ip daddr ' ~ molecule_iptables_snat_dst_addr
+              ~ ' tcp sport ' ~ molecule_iptables_snat_dst_sport
+              ~ ' snat to ' ~ molecule_iptables_snat_dst_src
+              in _post_update_nft_conf"
+          # Branch 4 — dst_address only, no protocol: `ip daddr X snat to Y`
+          # with no L4 match between daddr and snat.
+          - "'ip daddr ' ~ molecule_iptables_snat_no_proto_addr
+              ~ ' snat to ' ~ molecule_iptables_snat_no_proto_src
+              in _post_update_nft_conf"
+        fail_msg: |
+          iptables_snat_rules did not render all four branches into mpig_nat
+          under nft backend. /etc/nftables.conf:
+          {{ _post_update_nft_conf }}
+          Live ruleset:
+          {{ _post_update_nft_list }}
+
+    # -- randomized SNAT in its own nft table -----------------------------
+    - name: Assert randomized SNAT module owns its own nft table at priority srcnat - 10
+      ansible.builtin.assert:
+        that:
+          - "'table ip mpig_randomized_snat' in _post_update_snat_conf"
+          - "'priority srcnat - 10' in _post_update_snat_conf"
+          - "'numgen random mod' in _post_update_snat_conf"
+          # In-file atomic-replace idiom (same as /etc/nftables.conf —
+          # see AGENTS.md pitfall P4). Catches a regression that drops
+          # the `add table; delete table` prefix and reverts the unit's
+          # ExecStart to a shell-wrapped delete + load.
+          - "'add table ip mpig_randomized_snat' in _post_update_snat_conf"
+          - "'delete table ip mpig_randomized_snat' in _post_update_snat_conf"
+          - "'destroy table' not in _post_update_snat_conf"
+          - "'table ip mpig_randomized_snat' in _post_update_snat_table"
+          - "'priority srcnat - 10' in _post_update_snat_table"
+          - molecule_iptables_snat_randomized_ip_a in _post_update_snat_table
+          - molecule_iptables_snat_randomized_ip_b in _post_update_snat_table
+        fail_msg: |
+          randomized SNAT module is missing the dedicated nft table, its
+          hook priority, or the in-file `add table … ; delete table …`
+          atomic-replace prefix. Rendered conf:
+          {{ _post_update_snat_conf }}
+          Live `nft list table ip mpig_randomized_snat`:
+          {{ _post_update_snat_table }}
+
+    # -- Stage 3 idempotence: managed files must not be rewritten ---------
+    - name: Assert Stage 3 re-apply did not rewrite managed files
+      ansible.builtin.assert:
+        that:
+          - "'nftables_conf_unchanged=True' in _stage3_idempotence"
+          - "'firewall_apply_unchanged=True' in _stage3_idempotence"
+          - "'firewall_service_unchanged=True' in _stage3_idempotence"
+        fail_msg: |
+          Stage 3 re-apply rewrote at least one managed file (template
+          rendering is not idempotent for unchanged inputs):
+          {{ _stage3_idempotence }}
+
+    # -- Decoupled SNAT lifecycle: drift recovery -------------------------
+    # The SNAT unit is Type=oneshot without RemainAfterExit and has no
+    # PartOf=/ReloadPropagatedFrom= coupling to nftables.service. Re-
+    # application is driven by mpig-randomized-snat.timer, with the
+    # service's ExecStart doing an atomic delete + load. Stage 4a
+    # simulates kernel drift (manual `nft delete table`) and fires the
+    # service; the table must be back with the configured pool IPs.
+    - name: Assert SNAT service recovered the chain after kernel drift
+      ansible.builtin.assert:
+        that:
+          - "'before drift' in _snat_drift_recovery"
+          - "'table ip mpig_randomized_snat' in _snat_drift_recovery.split('=== before drift ===')[1].split('===')[0]"
+          - "'after recovery' in _snat_drift_recovery"
+          - "'table ip mpig_randomized_snat' in _snat_drift_recovery.split('=== after recovery ===')[1]"
+          - "'priority srcnat - 10' in _snat_drift_recovery.split('=== after recovery ===')[1]"
+          - molecule_iptables_snat_randomized_ip_a in _snat_drift_recovery.split('=== after recovery ===')[1]
+          - molecule_iptables_snat_randomized_ip_b in _snat_drift_recovery.split('=== after recovery ===')[1]
+        fail_msg: |
+          mpig-randomized-snat.service did not restore the randomized
+          SNAT table after a manual delete. Snapshot:
+          {{ _snat_drift_recovery }}
+
+    # -- nftables.service reload independence -----------------------------
+    # The SNAT chain is in /etc/nftables.d/, not /etc/nftables.conf, and
+    # the decoupled unit has no propagation linkage to nftables.service.
+    # Four reloads of the parent must leave the chain in kernel state.
+    - name: Assert mpig_randomized_snat survives nftables.service reload by independence
+      ansible.builtin.assert:
+        that:
+          - "'rc=0' in _after_nft_reload"
+          - "'table ip mpig_randomized_snat' in _after_nft_reload"
+          - "'priority srcnat - 10' in _after_nft_reload"
+        fail_msg: |
+          After four `systemctl reload nftables.service` calls the
+          randomized SNAT table is missing. The decoupled design relies
+          on the chain being independent — nftables.service ExecReload
+          only touches /etc/nftables.conf, which must NOT reference our
+          mpig_randomized_snat table. Captured state:
+          {{ _after_nft_reload }}
+
+    # Stage 4a journal contract — DO NOT WEAKEN.
+    #
+    # The four `systemctl reload nftables.service` calls in converge
+    # MUST leave AT LEAST TWO "Reloaded …nftables" entries in the
+    # journal AND zero "Reload failed" / "Could not process rule"
+    # entries. Two regressions are caught here in one shot:
+    #
+    #   * If Stage 4a is replaced with a static file-diff snapshot to
+    #     dodge a hard-to-reproduce reload failure (pitfall P3), no
+    #     reload happens and the journal slice stays empty.
+    #   * If the template uses `meter NAME { … }` shorthand or any other
+    #     write-once form (pitfall P1), Debian's stock
+    #     `ExecReload=/usr/sbin/nft -f /etc/nftables.conf` fails on the
+    #     2nd, 3rd, 4th reload with EBUSY; we get "Reload failed" /
+    #     "Failed to reload" / "Could not process rule" entries.
+    #
+    # Why `>= 2` instead of `>= 4`: systemd merges queued reload jobs
+    # of the same type on `Type=oneshot RemainAfterExit=yes` units when
+    # several `systemctl reload` calls land while ExecReload is still
+    # running. Four loop calls legitimately collapse to 2-3 journal
+    # events. We do NOT fight this — the contract is "live reload
+    # actually fired multiple times", not "the exact loop count is
+    # visible". The negative checks still catch every meter-EBUSY
+    # regression (failed reloads are NEVER merged).
+    #
+    # If this fails, fix the role (template idempotency, unit linkage)
+    # — do NOT lower the threshold further, do NOT silence the
+    # failure-pattern checks, do NOT delete the loop in converge.yml.
+    - name: Assert Stage 4a journal shows multiple live reloads of nftables.service
+      ansible.builtin.assert:
+        that:
+          - (_stage4a_journal.split('\n')
+              | select('search', 'Reloaded.*nftables')
+              | list | length) >= 2
+          - (_stage4a_journal.split('\n')
+              | select('search', '(?i)(reload failed|failed to reload)')
+              | list | length) == 0
+          - (_stage4a_journal.split('\n')
+              | select('search', '(?i)Could not process rule')
+              | list | length) == 0
+        fail_msg: |
+          Stage 4a journal slice did not record at least two successful
+          reloads of nftables.service, or recorded a reload failure.
+          See AGENTS.md pitfalls P1 and P3.
+
+          Likely causes:
+            * /etc/nftables.conf uses `meter NAME { … }` shorthand or
+              another `create`-semantics form that fails with EBUSY on
+              re-apply. Use explicit `set … flags dynamic` + `update @set`.
+            * The converge replaced the live `systemd: state: reloaded`
+              with a static file snapshot. Restore the loop.
+
+          Journal slice:
+          {{ _stage4a_journal }}
+
+    # Standalone `nft -c -f` against the rendered config. Independent
+    # from the role's own `validate:` hook on the template task — if
+    # somebody drops that hook to silence a re-apply error (pitfall P3),
+    # this check still flags a broken /etc/nftables.conf. DO NOT WEAKEN.
+    - name: Assert standalone `nft -c -f /etc/nftables.conf` succeeded
+      ansible.builtin.assert:
+        that:
+          - "'rc=0' in _stage4a_nft_check"
+        fail_msg: |
+          `/usr/sbin/nft -c -f /etc/nftables.conf` returned a non-zero
+          exit code after the role rendered the file. The template is
+          producing a config the kernel rejects (see AGENTS.md pitfalls
+          P1 and P4). Captured:
+          {{ _stage4a_nft_check }}
+
+    # -- Role-source contract checks (controller-side) --------------------
+    #
+    # These guard pieces of the role/test infrastructure that previous
+    # rounds tried to silently weaken as workarounds. Each one mirrors a
+    # specific regression documented in AGENTS.md. DO NOT WEAKEN ANY OF
+    # THEM — if they fail, fix the underlying code, do not edit the
+    # assertion.
+    #
+    # The `lookup('file', …)` plugin runs on the controller, so we read
+    # the in-tree role files directly (the playbook is at
+    # roles/iptables/molecule/nftables/verify.yml; the role's tasks/ is
+    # two levels up).
+
+    - name: Contract — tasks/nftables.yml still wires `validate:` on the template render
+      ansible.builtin.assert:
+        that:
+          - >-
+            "validate: '/usr/sbin/nft -c -f %s'"
+            in lookup('file', playbook_dir + '/../../tasks/nftables.yml')
+        fail_msg: |
+          tasks/nftables.yml is missing the
+          `validate: '/usr/sbin/nft -c -f %s'` hook on the
+          /etc/nftables.conf render task. See AGENTS.md pitfall P3 —
+          this hook submits the rendered batch to the kernel for a
+          dry-run commit BEFORE replacing the on-disk file. Dropping
+          it to silence a re-apply error just defers the failure to
+          boot or the next drift-check.
+          Fix the template (likely pitfall P1: `meter NAME` shorthand
+          → explicit `set … flags dynamic` + `update @set`), not the
+          validation hook.
+
+    - name: Contract — molecule/Makefile does not pin collection env-vars
+      vars:
+        _makefile: "{{ lookup('file', playbook_dir + '/../Makefile') }}"
+      ansible.builtin.assert:
+        that:
+          # Match common Make variable-pin patterns. The `_guard`
+          # target's shell tests reference `$$ANSIBLE_COLLECTIONS_PATH`
+          # (double-dollar form) and error-message lines mention the
+          # var by name; those don't trip these checks.
+          - "'ANSIBLE_COLLECTIONS_PATH :=' not in _makefile"
+          - "'ANSIBLE_COLLECTIONS_PATH ?=' not in _makefile"
+          - "'\\nANSIBLE_COLLECTIONS_PATH =' not in _makefile"
+          - "'export ANSIBLE_COLLECTIONS_PATH' not in _makefile"
+          - "'GIT_DIR :=' not in _makefile"
+          - "'GIT_DIR ?=' not in _makefile"
+          - "'\\nGIT_DIR =' not in _makefile"
+          - "'export GIT_DIR' not in _makefile"
+          # The `_guard` target itself must exist — that's the runtime
+          # defence inside `make`.
+          - "'_guard:' in _makefile"
+        fail_msg: |
+          molecule/Makefile either pins ANSIBLE_COLLECTIONS_PATH /
+          GIT_DIR as a Make variable (or export statement), or it
+          dropped the `_guard` target. See AGENTS.md pitfall P5 —
+          ansible-compat auto-discovers the collection from galaxy.yml
+          when cwd is inside the collection; overriding these env-vars
+          causes Molecule to test a stale collection cached under the
+          override path. The canonical workflow is
+          `cd $(ROLE_DIR) && molecule …`. Restore it.
+
+    # -- Unified firewall service must run to completion ------------------
+    - name: Assert unified firewall service ran cleanly
+      ansible.builtin.assert:
+        that:
+          - "'timer_active=active' in _drift_status"
+          - "'exec_main_status=0' in _drift_status"
+        fail_msg: |
+          mini-pig-firewall.service did not complete with rc=0, or its
+          timer is not active. Captured state:
+          {{ _drift_status }}
+
+    # -- Regression catcher: no `destroy table` in /etc/nftables.conf -----
+    - name: Assert no `destroy table` in /etc/nftables.conf
+      ansible.builtin.assert:
+        that:
+          - "'destroy table' not in _post_update_nft_conf"
+        fail_msg: |
+          /etc/nftables.conf contains `destroy table`, which is rejected by
+          nft 1.0.6 (Debian 12). Snapshot:
+          {{ _post_update_nft_conf }}
+
+    # -- Module ownership: main config must NOT own mpig_randomized_snat ---
+    - name: Assert /etc/nftables.conf does not include the randomized SNAT table
+      ansible.builtin.assert:
+        that:
+          - "'mpig_randomized_snat' not in _post_update_nft_conf"
+        fail_msg: |
+          /etc/nftables.conf unexpectedly owns the randomized SNAT table —
+          it must live only in /etc/nftables.d/mpig-randomized-snat.conf.
+          Snapshot:
+          {{ _post_update_nft_conf }}
+
+    # -- Legacy stack: torn down -------------------------------------------
+
+    - name: Assert legacy and foreign iptables-nft state was wiped
+      ansible.builtin.assert:
+        that:
+          - "'rules.v4_exists=False' in _legacy_files_env"
+          - "'rules.v6_exists=False' in _legacy_files_env"
+          - "'MPIG-INPUT' not in _post_nft_list"
+          - "'MPIG-FORWARD' not in _post_nft_list"
+          - "'MPIG-POSTROUTING' not in _post_nft_list"
+          # `ip mangle` should NOT exist — neither backend ever wrote to it.
+          - "'table ip mangle' not in _post_nft_list"
+          # Atomic iptables-restore wipe leaves `ip filter`, `ip nat`
+          # and `ip6 filter` as empty containers (built-in chains
+          # only). Foreign chains (KUBE-*, DOCKER-*) get wiped along
+          # with our own MPIG-* — accepted one-time migration cost.
+          # Operators must restart foreign managers (or reboot) for
+          # immediate reconciliation; otherwise they self-heal on
+          # their next periodic pass.
+          - "'table ip filter' in _post_nft_list"
+          - "'table ip nat' in _post_nft_list"
+          - "'table ip6 filter' in _post_nft_list"
+          - "'KUBE-FORWARD' not in _post_nft_list"
+          - "'KUBE-POSTROUTING' not in _post_nft_list"
+          - "('dport ' ~ molecule_iptables_stale_direct_port) not in _post_nft_list"
+        fail_msg: |
+          Legacy + foreign iptables-nft state should be wiped, native
+          nft `mpig_*` tables should be live. Got files:
+          {{ _legacy_files_env }}
+          Ruleset:
+          {{ _post_nft_list }}
+
+    - name: Assert netfilter-persistent removed/disabled, nftables enabled
+      ansible.builtin.assert:
+        that:
+          - "'netfilter_persistent_enabled=enabled' not in _services_env"
+          - "'netfilter_persistent_rc=0' not in _services_env"
+          - "'nftables_enabled=enabled' in _services_env"
+        fail_msg: |
+          Service-state snapshot did not match expectations:
+          {{ _services_env }}
+
+    - name: Assert iptables and nftables packages are installed
+      ansible.builtin.assert:
+        that:
+          - "'iptables_status=ii' in _packages_env"
+          - "'nftables_status=ii' in _packages_env"
+        fail_msg: |
+          Shared bootstrap should install both packages. Got:
+          {{ _packages_env }}
+
+    # -- Reverse-migration guard ------------------------------------------
+
+    - name: Assert reverse-migration was rejected
+      ansible.builtin.assert:
+        that:
+          - _reverse_result == "REJECTED"
+        fail_msg: |
+          Reverse-migration attempt produced unexpected result:
+          {{ _reverse_result }}
+
+    - name: Assert backend marker says nftables
+      ansible.builtin.assert:
+        that:
+          - _marker_content == "nftables"
+        fail_msg: |
+          /var/lib/mini-pig-firewall-backend says: {{ _marker_content }}
+
+    # -- Live traffic through the nft ruleset ------------------------------
+    # Start fresh listeners in verify (instead of reusing one started in
+    # converge stage 1) so the test doesn't depend on the Stage 1 listener
+    # surviving a multi-minute converge. async=1800 gives the verify probes
+    # ample headroom regardless of how long converge took.
+
+    - name: Start nc listener on allowed port (host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}"
+      async: 1800
+      poll: 0
+      changed_when: false
+
+    - name: Start nc listener on blocked port (host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_blocked_port }}"
+      async: 1800
+      poll: 0
+      changed_when: false
+
+    - name: Start nc listener on src_v4-restricted port (host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_src_restricted_port }}"
+      async: 1800
+      poll: 0
+      changed_when: false
+
+    - name: Wait for allowed-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_allowed_port }}"
+        timeout: 10
+
+    - name: Wait for blocked-port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_blocked_port }}"
+        timeout: 10
+
+    - name: Wait for src_v4-restricted port listener to bind
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_src_restricted_port }}"
+        timeout: 10
+
+    # -- Allowed port traffic through both interfaces ----------------------
+    - name: Probe allowed port through extns_a -> ext0 (nft, must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_allowed_port }}
+      register: _probe_nft_a_allowed
+      changed_when: false
+      failed_when: _probe_nft_a_allowed.rc != 0
+
+    - name: Probe allowed port through extns_b -> ext1 (nft, must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_allowed_port }}
+      register: _probe_nft_b_allowed
+      changed_when: false
+      failed_when: _probe_nft_b_allowed.rc != 0
+
+    # -- Blocked port must time out on both interfaces (DROP, not REJECT) --
+    - name: Probe blocked port through extns_a -> ext0 (nft, must time out)
+      ansible.builtin.command:
+        argv:
+          - nsenter
+          - "-n/var/run/netns/{{ molecule_iptables_netns_a }}"
+          - python3
+          - -c
+          - |
+            import socket
+            import sys
+            import time
+
+            host = sys.argv[1]
+            port = int(sys.argv[2])
+            started = time.monotonic()
+            sock = socket.socket()
+            sock.settimeout(3)
+            try:
+                sock.connect((host, port))
+            except socket.timeout:
+                print("TIMEOUT %.2f" % (time.monotonic() - started))
+                sys.exit(124)
+            except OSError as exc:
+                print("ERROR %s %.2f" % (exc, time.monotonic() - started))
+                sys.exit(1)
+            else:
+                print("CONNECTED %.2f" % (time.monotonic() - started))
+                sys.exit(0)
+            finally:
+                sock.close()
+          - "{{ molecule_iptables_host_ip_a }}"
+          - "{{ molecule_iptables_blocked_port }}"
+      register: _probe_nft_a_blocked
+      changed_when: false
+      failed_when: _probe_nft_a_blocked.rc != 124 or 'TIMEOUT' not in _probe_nft_a_blocked.stdout
+
+    - name: Probe blocked port through extns_b -> ext1 (nft, must time out)
+      ansible.builtin.command:
+        argv:
+          - nsenter
+          - "-n/var/run/netns/{{ molecule_iptables_netns_b }}"
+          - python3
+          - -c
+          - |
+            import socket
+            import sys
+            import time
+
+            host = sys.argv[1]
+            port = int(sys.argv[2])
+            started = time.monotonic()
+            sock = socket.socket()
+            sock.settimeout(3)
+            try:
+                sock.connect((host, port))
+            except socket.timeout:
+                print("TIMEOUT %.2f" % (time.monotonic() - started))
+                sys.exit(124)
+            except OSError as exc:
+                print("ERROR %s %.2f" % (exc, time.monotonic() - started))
+                sys.exit(1)
+            else:
+                print("CONNECTED %.2f" % (time.monotonic() - started))
+                sys.exit(0)
+            finally:
+                sock.close()
+          - "{{ molecule_iptables_host_ip_b }}"
+          - "{{ molecule_iptables_blocked_port }}"
+      register: _probe_nft_b_blocked
+      changed_when: false
+      failed_when: _probe_nft_b_blocked.rc != 124 or 'TIMEOUT' not in _probe_nft_b_blocked.stdout
+
+    # -- src_v4-restricted port: extns_a in subnet → accept, extns_b → drop -
+    - name: Probe src_v4-restricted port from extns_a (in subnet → must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_src_restricted_port }}
+      register: _probe_nft_src_allowed
+      changed_when: false
+      failed_when: _probe_nft_src_allowed.rc != 0
+
+    - name: Probe src_v4-restricted port from extns_b (out of subnet → must time out)
+      ansible.builtin.command:
+        argv:
+          - nsenter
+          - "-n/var/run/netns/{{ molecule_iptables_netns_b }}"
+          - python3
+          - -c
+          - |
+            import socket
+            import sys
+            import time
+
+            host = sys.argv[1]
+            port = int(sys.argv[2])
+            started = time.monotonic()
+            sock = socket.socket()
+            sock.settimeout(3)
+            try:
+                sock.connect((host, port))
+            except socket.timeout:
+                print("TIMEOUT %.2f" % (time.monotonic() - started))
+                sys.exit(124)
+            except OSError as exc:
+                print("ERROR %s %.2f" % (exc, time.monotonic() - started))
+                sys.exit(1)
+            else:
+                print("CONNECTED %.2f" % (time.monotonic() - started))
+                sys.exit(0)
+            finally:
+                sock.close()
+          - "{{ molecule_iptables_host_ip_b }}"
+          - "{{ molecule_iptables_src_restricted_port }}"
+      register: _probe_nft_src_blocked
+      changed_when: false
+      failed_when: _probe_nft_src_blocked.rc != 124 or 'TIMEOUT' not in _probe_nft_src_blocked.stdout
+
+    # Multi-CIDR src_v4 as an nft set `{ a, b }`: extns_a (in subnet_a)
+    # connects, extns_b (in neither) is dropped — proves the set match works.
+    - name: Start nc listener on multi-CIDR set port (nft, host netns)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ molecule_iptables_multi_src_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for multi-CIDR set port listener to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ molecule_iptables_multi_src_port }}"
+        timeout: 10
+
+    - name: Probe multi-CIDR set port from extns_a (in set → must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_nft_multi_allowed
+      changed_when: false
+      failed_when: _probe_nft_multi_allowed.rc != 0
+
+    - name: Probe multi-CIDR set port from extns_b (not in set → must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_b }} {{ molecule_iptables_multi_src_port }}
+      register: _probe_nft_multi_blocked
+      changed_when: false
+      failed_when: _probe_nft_multi_blocked.rc == 0
+
+    # Port range as nft `LOW-HIGH`: a port inside connects; one just outside
+    # (listener up) is dropped — tests the dash-range boundary.
+    - name: Start nc listeners on in-range and out-of-range ports (nft)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ item }}"
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for in-range / out-of-range listeners to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 10
+      loop:
+        - "{{ molecule_iptables_range_in_port }}"
+        - "{{ molecule_iptables_range_out_port }}"
+
+    - name: Probe in-range port from extns_a (nft, must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_in_port }}
+      register: _probe_nft_range_in
+      changed_when: false
+      failed_when: _probe_nft_range_in.rc != 0
+
+    - name: Probe out-of-range port from extns_a (nft, listener up, must time out)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_range_out_port }}
+      register: _probe_nft_range_out
+      changed_when: false
+      failed_when: _probe_nft_range_out.rc == 0
+
+    # nft multiport set `{ p1, p2 }`: one entry opens both ports, both connect.
+    # iptables has no list form (rejected there — see the negative cases).
+    - name: Start nc listeners on both multiport ports (nft)
+      ansible.builtin.command:
+        cmd: "nc -l -k 0.0.0.0 {{ item }}"
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for both multiport listeners to bind (nft)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 10
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+
+    - name: Probe both multiport ports from extns_a (nft, both must succeed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ item }}
+      register: _probe_nft_mport
+      changed_when: false
+      failed_when: _probe_nft_mport.rc != 0
+      loop:
+        - "{{ molecule_iptables_mport_a }}"
+        - "{{ molecule_iptables_mport_b }}"
+
+    # Stage 4 applied `iptables_inf_ext: "ext*"` and the probes above all flow
+    # through it; confirm the verbatim wildcard is what the kernel loaded.
+    - name: Read live nft ruleset (nft)
+      ansible.builtin.command:
+        cmd: nft list ruleset
+      register: _live_nft_ruleset
+      changed_when: false
+
+    - name: Assert the live ruleset matches on the verbatim `ext*` wildcard
+      ansible.builtin.assert:
+        that:
+          - "'iifname \"ext*\"' in _live_nft_ruleset.stdout"
+        fail_msg: |
+          Expected `iifname "ext*"` in the live nft ruleset (Stage 4 set
+          iptables_inf_ext: "ext*"). The probes above only prove enforcement
+          if the wildcard is really what matched.
+
+    # -- DNAT through the nft ruleset --------------------------------------
+    - name: Start nc listener inside extns_b for DNAT target (nft)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          nc -l -k 0.0.0.0 {{ molecule_iptables_allowed_port }}
+      async: 300
+      poll: 0
+      changed_when: false
+
+    - name: Wait for extns_b listener to bind (nft)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_b }}
+          ss -ltn sport = :{{ molecule_iptables_allowed_port }}
+      register: _extns_b_listener_check_nft
+      changed_when: false
+      until: "'LISTEN' in _extns_b_listener_check_nft.stdout"
+      retries: 10
+      delay: 1
+
+    - name: Probe DNAT external port from extns_a (nft, must reach extns_b)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          nc -z -w 3 {{ molecule_iptables_host_ip_a }} {{ molecule_iptables_dnat_external_port }}
+      register: _probe_nft_dnat
+      changed_when: false
+      failed_when: _probe_nft_dnat.rc != 0
+
+    # -- ICMP rate-limit accept rule -------------------------------------
+    - name: Ping container from extns_a (nft, echo-request must be ACCEPTed)
+      ansible.builtin.command:
+        cmd: >-
+          nsenter -n/var/run/netns/{{ molecule_iptables_netns_a }}
+          ping -c 1 -W 3 {{ molecule_iptables_host_ip_a }}
+      register: _ping_nft
+      changed_when: false
+      failed_when: _ping_nft.rc != 0
+
+    # -- AGENTS.md P12: echo-request rate-limit sits ABOVE state shortcut ----
+    # Stage 4c fired 20 parallel `ping -c 1` from extns_a — each its own
+    # ICMP id → fresh conntrack tuple, no ESTABLISHED shortcut. Assert the
+    # peer saw real packet loss (1 ≤ OK < N).
+    - name: Read ICMP burst results (nft)
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-icmp-results.txt
+      register: _icmp_results_nft_raw
+
+    - name: Count successful and dropped pings (nft)
+      ansible.builtin.set_fact:
+        _icmp_lines_nft: "{{ (_icmp_results_nft_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert rate-limit cut some of the N parallel pings (nft, P12)
+      ansible.builtin.assert:
+        that:
+          - (_icmp_lines_nft | length) == 20
+          - (_icmp_lines_nft | select('equalto', 'OK') | list | length) >= 1
+          - (_icmp_lines_nft | select('equalto', 'OK') | list | length) < 20
+        fail_msg: |
+          ICMP rate-limit did not throttle the burst under nft mode. Out of
+          N=20 parallel pings from extns_a, OK={{ _icmp_lines_nft | select('equalto', 'OK') | list | length }},
+          FAIL={{ _icmp_lines_nft | select('equalto', 'FAIL') | list | length }}.
+          Expected OK in 1..19 — all-success means the nft rate-limit was
+          bypassed (P12 ordering regressed below `ct state related,established
+          accept`), all-fail means even the in-burst portion was dropped.
+          Raw results:
+          {{ _icmp_lines_nft }}
+
+    # -- sysctl propagation under nft mode --------------------------------
+    - name: Read net.ipv4.ip_forward sysctl (nft)
+      ansible.builtin.slurp:
+        src: /proc/sys/net/ipv4/ip_forward
+      register: _ip_forward_nft_raw
+
+    - name: Assert iptables_ipv4_forward_enable still propagated under nft mode
+      ansible.builtin.assert:
+        that:
+          - (_ip_forward_nft_raw.content | b64decode).strip() == '1'
+        fail_msg: |
+          net.ipv4.ip_forward is not 1 under nft mode — sysctl logic
+          regressed during migration. Current value:
+          '{{ (_ip_forward_nft_raw.content | b64decode).strip() }}'
+
+    # Stage 6: every nft-dialect mismatch must read `=rejected`. The
+    # `nft-plus-iface` case matters most — `nft -f` accepts `iifname "ext+"`
+    # and matches nothing, so only validation catches it.
+    - name: Read nft-dialect negative-case outcomes
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iptables-negcases.txt
+      register: _negcases_nft_raw
+
+    - name: Parse nft-dialect negative-case outcomes
+      ansible.builtin.set_fact:
+        _negcases_nft: "{{ (_negcases_nft_raw.content | b64decode).splitlines() | map('trim') | reject('equalto', '') | list }}"
+
+    - name: Assert every nft-dialect mismatch was rejected by validation
+      ansible.builtin.assert:
+        that:
+          - _negcases_nft | length == 4
+          - _negcases_nft | select('search', '=applied') | list | length == 0
+          - _negcases_nft | select('search', '=rejected') | list | length == 4
+        fail_msg: |
+          An nft-dialect mismatch was NOT rejected by tasks/validate.yml.
+          Outcomes (want all `=rejected`):
+          {{ _negcases_nft }}

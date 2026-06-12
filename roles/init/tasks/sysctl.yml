@@ -1,0 +1,31 @@
+---
+# Copyright © 2025 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: init | sysctl | remove obsolete role-managed sysctl drop-ins
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/{{ item }}"
+    state: absent
+  loop:
+    - "90-init-role.conf"
+  when: item != init_sysctl_conf_filename
+
+- name: init | sysctl | render persistent sysctl file
+  ansible.builtin.template:
+    src: sysctl.conf.j2
+    dest: "/etc/sysctl.d/{{ init_sysctl_conf_filename }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: init | sysctl | apply sysctl parameters at runtime
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: "/etc/sysctl.d/{{ init_sysctl_conf_filename }}"
+    sysctl_set: true
+    reload: false
+  loop: "{{ (_init_sysctl_parameters | combine(init_sysctl_parameters)) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"

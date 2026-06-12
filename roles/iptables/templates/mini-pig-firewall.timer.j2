@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Mini Pig firewall periodic re-assertion
+
+[Timer]
+# Re-fire N minutes after the service last finished; randomized to
+# desynchronize fleet-wide reloads.
+OnBootSec=15min
+OnUnitActiveSec={{ iptables_drift_check_interval }}min
+Unit=mini-pig-firewall.service
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

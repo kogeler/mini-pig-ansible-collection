@@ -3,7 +3,20 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: scw_k8s_kosmos_agent | binary 
+# The binary is stored under a versioned path inside the role base
+# directory (scw_k8s_kosmos_agent_base_dir). If the versioned binary
+# already exists, the download is skipped entirely; a version bump
+# changes the path and triggers a fresh download.
+
+- name: scw_k8s_kosmos_agent | binary | check binary
+  ansible.builtin.stat:
+    path: "{{ _scw_k8s_kosmos_agent_binary_path }}"
+  register: _scw_k8s_kosmos_agent_binary_stat_register
+  check_mode: false
+  changed_when: false
+
+- name: scw_k8s_kosmos_agent | binary | install binary
+  when: not _scw_k8s_kosmos_agent_binary_stat_register.stat.exists
   block:
 
     - name: scw_k8s_kosmos_agent | binary | create temporary directory
@@ -13,7 +26,7 @@
       register: _scw_k8s_kosmos_agent_temp_dir_register
       check_mode: false
       changed_when: false
-      
+
     - name: scw_k8s_kosmos_agent | binary | download binary
       ansible.builtin.get_url:
         url: "{{ scw_k8s_kosmos_agent_binary_url }}"
@@ -21,9 +34,40 @@
         mode: "0755"
         owner: root
         group: root
-        timeout: 30
+        timeout: "{{ scw_k8s_kosmos_agent_binary_download_timeout }}"
+      register: _scw_k8s_kosmos_agent_download_register
+      until: _scw_k8s_kosmos_agent_download_register is succeeded
+      retries: "{{ scw_k8s_kosmos_agent_binary_download_retries }}"
+      delay: "{{ scw_k8s_kosmos_agent_binary_download_delay }}"
       check_mode: false
       changed_when: false
+
+    - name: scw_k8s_kosmos_agent | binary | check downloaded binary
+      ansible.builtin.command:
+        argv:
+          - "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+          - "-version"
+      register: _scw_k8s_kosmos_agent_downloaded_binary_version_register
+      check_mode: false
+      changed_when: false
+
+    - name: scw_k8s_kosmos_agent | binary | check downloaded binary supports kosmos
+      ansible.builtin.command:
+        argv:
+          - "{{ _scw_k8s_kosmos_agent_temp_dir_register.path }}/scw-k8s-node-agent"
+          - "-h"
+      register: _scw_k8s_kosmos_agent_downloaded_binary_help_register
+      check_mode: false
+      changed_when: false
+      failed_when: "'-kosmos' not in _scw_k8s_kosmos_agent_downloaded_binary_help_register.stderr"
+
+    - name: scw_k8s_kosmos_agent | binary | create base directory
+      ansible.builtin.file:
+        path: "{{ scw_k8s_kosmos_agent_base_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
     - name: scw_k8s_kosmos_agent | binary | copy binary
       ansible.builtin.copy:

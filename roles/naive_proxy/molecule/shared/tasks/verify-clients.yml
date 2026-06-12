@@ -1,0 +1,203 @@
+---
+# Verifies the per-user sing-box client configs produced by
+# `tasks/clients.yml`. The role renders TWO files per user:
+#
+#   * singbox-<host>-<user>-auto.json    — top `proxy` outbound is `urltest`
+#   * singbox-<host>-<user>-manual.json  — top `proxy` outbound is `selector`
+#
+# Each file draws its servers from its OWN map — the auto file from
+# `naive_proxy_external_ip_auto`, the manual file from
+# `naive_proxy_external_ip_manual` — so the two can differ. Inside a file
+# every entry (a `<name>: <ip>` map) becomes one `<name> - Naive` naive
+# outbound and, when AnyTLS is enabled, one `<name> - AnyTLS` anytls
+# outbound. Both reach the same `<ip>`
+# and are told apart by SNI (naive vs anytls server_name). We assert:
+#
+#   * both files exist per user and are valid JSON
+#   * 2 × len(map) options when AnyTLS on (1 × len(map) when off)
+#   * option tags are "<name> - <Proto>" — built from the map KEY, never the IP
+#   * each naive/anytls option carries the mapped IP as `server`
+#   * naive options use naive_proxy_domain as SNI, anytls options the anytls
+#     domain; anytls options carry no username
+#   * the auto file's `proxy` is a urltest (probe url + interval), the manual
+#     file's `proxy` is a selector (manual choice) — no automatic switching
+#   * route default + DNS detour both target the `proxy` tag
+#   * (when _verify_clients_qr_enabled) each `<base>.png` QR decodes back to the
+#     exact same config object as its `<base>.json`
+#
+# Runs on the controller (`localhost`) because that's where the role
+# delegates the file write. Reusable across scenarios via:
+#
+#   - import_tasks: tasks/verify-clients.yml
+#     vars:
+#       _verify_clients_users: { testuser: testpass }
+#       _verify_clients_ip_map_auto:   { primary: 127.0.0.1, secondary: 127.0.0.2 }
+#       _verify_clients_ip_map_manual: { fallback: 127.0.0.1 }
+#       _verify_clients_config_dir: "{{ playbook_dir }}/naive-proxy-json-configs"
+#       _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+#       _verify_clients_external_port: 9443
+#       _verify_clients_domain: naive.test
+#       _verify_clients_anytls_domain: anytls.test
+#       _verify_clients_anytls_enabled: true
+#       _verify_clients_urltest_url: https://www.gstatic.com/generate_204
+#       _verify_clients_urltest_interval: 3m
+#       _verify_clients_qr_enabled: false   # decode .png and compare to .json
+
+- name: verify-clients | print expectations
+  ansible.builtin.debug:
+    msg: >-
+      Expecting two files per user. auto: servers
+      [{{ _verify_clients_ip_map_auto | dict2items | map(attribute='key') | join(', ') }}];
+      manual: servers
+      [{{ _verify_clients_ip_map_manual | dict2items | map(attribute='key') | join(', ') }}].
+      Each server yields {{ (_verify_clients_anytls_enabled | bool) | ternary(2, 1) }}
+      option(s) plus a top `proxy` outbound (urltest in auto, selector in manual).
+
+- name: verify-clients | assert each user config file exists
+  ansible.builtin.stat:
+    path: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json
+  register: _verify_clients_stats
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_users | dict2items | product(['auto', 'manual']) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}-{{ item.1 }}"
+
+- name: verify-clients | fail if any config file is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Expected sing-box client config not found:
+      singbox-{{ _verify_clients_inventory_hostname }}-{{ item.item.0.key }}-{{ item.item.1 }}.json
+  loop: "{{ _verify_clients_stats.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}-{{ item.item.1 }}"
+
+- name: verify-clients | read each user config file
+  ansible.builtin.slurp:
+    src: >-
+      {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json
+  register: _verify_clients_slurps
+  delegate_to: localhost
+  connection: local
+  become: false
+  loop: "{{ _verify_clients_users | dict2items | product(['auto', 'manual']) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}-{{ item.1 }}"
+
+- name: verify-clients | assert per-file config shape
+  vars:
+    _user_name: "{{ item.item.0.key }}"
+    _user_pass: "{{ item.item.0.value }}"
+    _mode: "{{ item.item.1 }}"
+    _expected_map: >-
+      {{ {'auto': _verify_clients_ip_map_auto,
+          'manual': _verify_clients_ip_map_manual}[item.item.1] }}
+    _config: "{{ item.content | b64decode | from_json }}"
+    _naive_obs: >-
+      {{ _config.outbounds | selectattr('type', 'equalto', 'naive') | list }}
+    _anytls_obs: >-
+      {{ _config.outbounds | selectattr('type', 'equalto', 'anytls') | list }}
+    _option_obs: >-
+      {{ _config.outbounds | selectattr('type', 'in', ['naive', 'anytls']) | list }}
+    _proxy_ob: >-
+      {{ (_config.outbounds | selectattr('tag', 'equalto', 'proxy') | list | first) }}
+    _expected_naive_tags: >-
+      {{ _expected_map | dict2items | map(attribute='key')
+         | map('regex_replace', '$', ' - Naive') | list }}
+    _expected_anytls_tags: >-
+      {{ (_verify_clients_anytls_enabled | bool)
+         | ternary(_expected_map | dict2items | map(attribute='key')
+                   | map('regex_replace', '$', ' - AnyTLS') | list, []) }}
+    _expected_option_tags: "{{ (_expected_naive_tags + _expected_anytls_tags) | sort }}"
+    _actual_option_tags: "{{ _option_obs | map(attribute='tag') | list | sort }}"
+    _naive_key_to_server: >-
+      {{ dict(_naive_obs | map(attribute='tag') | map('regex_replace', ' - Naive$', '')
+              | zip(_naive_obs | map(attribute='server'))) }}
+    _anytls_key_to_server: >-
+      {{ dict(_anytls_obs | map(attribute='tag') | map('regex_replace', ' - AnyTLS$', '')
+              | zip(_anytls_obs | map(attribute='server'))) }}
+    _expected_proxy_type: "{{ (_mode == 'manual') | ternary('selector', 'urltest') }}"
+    _anytls_utls_fingerprint: "{{ _verify_clients_anytls_utls_fingerprint | default('') }}"
+    _anytls_with_utls: >-
+      {{ _anytls_obs | selectattr('tls.utls', 'defined') | list }}
+    _anytls_utls_fps: >-
+      {{ _anytls_with_utls | map(attribute='tls.utls.fingerprint') | unique | list }}
+  ansible.builtin.assert:
+    that:
+      # Option set: 2 × map (AnyTLS on) / 1 × map (off); tags built from keys.
+      - _option_obs | length == _expected_map | length * ((_verify_clients_anytls_enabled | bool) | ternary(2, 1))
+      - _actual_option_tags == _expected_option_tags
+      # Naive options: mapped IP as server, naive SNI, shared creds + port.
+      - _naive_key_to_server == _expected_map
+      - (_naive_obs | map(attribute='username') | unique | list) == [_user_name]
+      - (_naive_obs | map(attribute='password') | unique | list) == [_user_pass]
+      - (_naive_obs | map(attribute='server_port') | unique | list) == [_verify_clients_external_port | int]
+      - (_naive_obs | map(attribute='tls.server_name') | unique | list) == [_verify_clients_domain]
+      # AnyTLS options: mapped IP as server, anytls SNI, password only (no username).
+      - (not (_verify_clients_anytls_enabled | bool)) or (_anytls_key_to_server == _expected_map)
+      - (not (_verify_clients_anytls_enabled | bool)) or ((_anytls_obs | map(attribute='password') | unique | list) == [_user_pass])
+      - (not (_verify_clients_anytls_enabled | bool)) or ((_anytls_obs | map(attribute='server_port') | unique | list) == [_verify_clients_external_port | int])
+      - (not (_verify_clients_anytls_enabled | bool)) or ((_anytls_obs | map(attribute='tls.server_name') | unique | list) == [_verify_clients_anytls_domain])
+      - (_anytls_obs | selectattr('username', 'defined') | list | length) == 0
+      # AnyTLS uTLS: when a fingerprint is configured every anytls option carries
+      # a tls.utls block with that fingerprint; when empty, none carry one.
+      - (_anytls_utls_fingerprint | length == 0) or (_anytls_with_utls | length == _anytls_obs | length)
+      - (_anytls_utls_fingerprint | length == 0) or (_anytls_utls_fps == [_anytls_utls_fingerprint])
+      - (_anytls_utls_fingerprint | length > 0) or (_anytls_with_utls | length == 0)
+      # Top `proxy` outbound: urltest (auto) vs selector (manual).
+      - _proxy_ob.tag == 'proxy'
+      - _proxy_ob.type == _expected_proxy_type
+      - (_proxy_ob.outbounds | sort) == _expected_option_tags
+      - (_mode != 'auto') or (_proxy_ob.url == _verify_clients_urltest_url)
+      - (_mode != 'auto') or (_proxy_ob.interval == _verify_clients_urltest_interval)
+      - (_mode != 'manual') or (_proxy_ob.default in _actual_option_tags)
+      # Route default + DNS detour follow the manual/auto choice.
+      - _config.route.final == 'proxy'
+      - _config.dns.servers[0].detour == 'proxy'
+    fail_msg: >-
+      Sing-box {{ _mode }} config for user {{ _user_name }} does not match the
+      expected shape. Option tags (got vs expected): {{ _actual_option_tags }}
+      vs {{ _expected_option_tags }}. Naive key→server: {{ _naive_key_to_server }};
+      AnyTLS key→server: {{ _anytls_key_to_server }}; expected {{ _mode }} map:
+      {{ _expected_map }}. Proxy outbound: {{ _proxy_ob | default('<missing>') }}.
+  loop: "{{ _verify_clients_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}-{{ item.item.1 }}"
+
+# QR PNGs (`kogeler.mini_pig.qr_code`, enabled per scenario via
+# _verify_clients_qr_enabled). Real round-trip: decode the actual PNG bytes with
+# the pure-Python `kogeler.mini_pig.qr_decode` module (no external tools) and
+# assert the embedded (minified) config parses back to the exact same object as
+# the on-disk JSON — a counter/grep would not catch a corrupt symbol.
+- name: verify-clients | decode + round-trip the client config QR codes
+  when: _verify_clients_qr_enabled | default(false) | bool
+  block:
+    - name: verify-clients | decode each QR PNG back to text
+      kogeler.mini_pig.qr_decode:
+        src: >-
+          {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.png
+      register: _verify_clients_qr_decoded
+      delegate_to: localhost
+      connection: local
+      become: false
+      loop: "{{ _verify_clients_users | dict2items | product(['auto', 'manual']) | list }}"
+      loop_control:
+        label: "{{ item.0.key }}-{{ item.1 }}"
+
+    - name: verify-clients | assert decoded QR equals the JSON config
+      vars:
+        _json_path: >-
+          {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.item.0.key }}-{{ item.item.1 }}.json
+      ansible.builtin.assert:
+        that:
+          - (item.data | from_json) == (lookup('file', _json_path) | from_json)
+        fail_msg: >-
+          QR PNG for {{ item.item.0.key }}-{{ item.item.1 }} did not decode back
+          to its JSON config (decoded {{ item.length }} bytes).
+      loop: "{{ _verify_clients_qr_decoded.results }}"
+      loop_control:
+        label: "{{ item.item.0.key }}-{{ item.item.1 }}"

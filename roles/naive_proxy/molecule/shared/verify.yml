@@ -11,6 +11,36 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- Per-user client configs (auto + manual) -------------------------------
+    # Verify the two-file layout from the per-mode server maps
+    # (naive_proxy_external_ip_auto / _manual): each option carries its own
+    # `server` IP and is named from the map key.
+    - name: Verify per-IP sing-box client configs
+      ansible.builtin.import_tasks: tasks/verify-clients.yml
+      vars:
+        _verify_clients_users: "{{ molecule_naive_proxy_users }}"
+        _verify_clients_ip_map_auto: "{{ molecule_naive_proxy_external_ip_map_auto }}"
+        _verify_clients_ip_map_manual: "{{ molecule_naive_proxy_external_ip_map_manual }}"
+        _verify_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _verify_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _verify_clients_external_port: "{{ molecule_naive_proxy_external_port }}"
+        _verify_clients_domain: "{{ molecule_naive_proxy_domain }}"
+        _verify_clients_anytls_domain: "{{ molecule_naive_proxy_anytls_domain }}"
+        _verify_clients_anytls_enabled: true
+        # Default scenario keeps uTLS off — assert no tls.utls block is emitted.
+        _verify_clients_anytls_utls_fingerprint: ""
+        _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+        _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+        # Decode-and-compare the QR PNGs only where they were generated (gha).
+        _verify_clients_qr_enabled: "{{ molecule_naive_proxy_client_qr_enabled | default(false) }}"
+
+    # -- HAProxy diagnostics surface ------------------------------------------
+    - name: Verify HAProxy diagnostics surface
+      ansible.builtin.import_tasks: tasks/verify-diagnostics.yml
+      when: naive_proxy_haproxy_diagnostics_enabled | default(false)
+      vars:
+        naive_proxy_haproxy_diagnostics_port: "{{ naive_proxy_haproxy_diagnostics_port | default(19999) }}"
+
     - name: Read rendered HAProxy config
       ansible.builtin.slurp:
         src: /opt/naive-proxy/haproxy.cfg
@@ -25,10 +55,15 @@
         that:
           - "(_haproxy_cfg | regex_search('(?m)^\\s*cpu-policy\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.ssl\\.cachesize\\s+\\S+\\s*$')) is not none"
-          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.h2\\.fe\\.rxbuf\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout client-fin\\s+\\S+\\s*$')) is not none"
           - "(_haproxy_cfg | regex_search('(?m)^\\s*timeout server-fin\\s+\\S+\\s*$')) is not none"
       when: naive_proxy_haproxy_cpu_policy | default('') | length > 0
+
+    - name: Assert tune.h2.fe.rxbuf is rendered when explicitly configured
+      ansible.builtin.assert:
+        that:
+          - "(_haproxy_cfg | regex_search('(?m)^\\s*tune\\.h2\\.fe\\.rxbuf\\s+\\S+\\s*$')) is not none"
+      when: (naive_proxy_haproxy_h2_frontend_rxbuf | default('') | string | trim) | length > 0
 
     # -- Decoy site smoke test -------------------------------------------------
 
@@ -220,6 +255,119 @@
 
     - name: Run shared benchmark tasks
       ansible.builtin.import_tasks: tasks/benchmark.yml
+
+    # -- Test 4: reverse-proxy decoy mode (naive_proxy_decoy_upstream_url) ----
+    # Re-render the Caddyfile with an upstream URL set, restart the decoy,
+    # and confirm unauthenticated traffic is reverse-proxied to the remote
+    # site with content rewriting limited to the Host header.
+    # example.com is used as a stable, IANA-controlled upstream.
+
+    - name: Reverse-proxy decoy mode test
+      block:
+        # IMPORTANT: every variable that the initial converge passed to
+        # the role MUST be repeated here. include_role re-renders every
+        # template the role owns (Caddyfile, pod.service.j2,
+        # haproxy.cfg, decoy.service.j2, ...), not only the Caddyfile.
+        # Dropping a flag like `naive_proxy_haproxy_diagnostics_enabled`
+        # would un-publish `127.0.0.1:19999:19999` from pod.service.j2,
+        # mark the pod unit "changed", and cascade into a full
+        # `restart naive-pod` + `restart naive-decoy` chain — the
+        # decoy systemd unit then races its own cgroup cleanup on the
+        # gha runner (Ubuntu systemd, strict) and fails with
+        # status=219/CGROUP. Keep this var dict in sync with
+        # `shared/tasks/converge-naive-proxy.yml`.
+        - name: Reconfigure decoy in reverse-proxy mode (upstream URL)
+          ansible.builtin.include_role:
+            name: kogeler.mini_pig.naive_proxy
+            tasks_from: config.yml
+          vars:
+            naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
+            naive_proxy_anytls_domain: "{{ molecule_naive_proxy_anytls_domain }}"
+            naive_proxy_external_ip_auto: "{{ molecule_naive_proxy_external_ip_map_auto }}"
+            naive_proxy_external_ip_manual: "{{ molecule_naive_proxy_external_ip_map_manual }}"
+            naive_proxy_client_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+            naive_proxy_listen_port: "{{ molecule_naive_proxy_listen_port }}"
+            naive_proxy_external_port: "{{ molecule_naive_proxy_external_port }}"
+            naive_proxy_users: "{{ molecule_naive_proxy_users }}"
+            naive_proxy_molecule_mode: true
+            naive_proxy_backend_naive_args:
+              - "--v=1"
+            naive_proxy_haproxy_diagnostics_enabled: true
+            naive_proxy_singbox_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
+            naive_proxy_singbox_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+            naive_proxy_decoy_upstream_url: "https://example.com"
+
+        - name: Flush handlers to apply Caddyfile change
+          ansible.builtin.meta: flush_handlers
+
+        - name: Smoke test reverse-proxy decoy via HAProxy
+          ansible.builtin.uri:
+            url: "https://{{ molecule_naive_proxy_domain }}:{{ molecule_naive_proxy_listen_port }}/"
+            validate_certs: false
+            use_proxy: false
+            return_content: true
+          register: _decoy_upstream_response
+          until:
+            - _decoy_upstream_response.status == 200
+            - "'Example Domain' in (_decoy_upstream_response.content | default(''))"
+          retries: 12
+          delay: 5
+
+        - name: Assert decoy reverse-proxies to upstream URL
+          ansible.builtin.assert:
+            that:
+              - "'Example Domain' in _decoy_upstream_response.content"
+            fail_msg: >-
+              Expected upstream content from example.com but got:
+              {{ _decoy_upstream_response.content | default('<empty>') | truncate(300) }}
+      rescue:
+        - name: Capture decoy systemd status on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: systemctl status podman-naive-decoy.service --no-pager -l
+          register: _decoy_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture decoy journal on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: journalctl -xeu podman-naive-decoy.service --no-pager -n 200
+          register: _decoy_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Capture podman ps on failure # noqa: command-instead-of-module
+          ansible.builtin.command:
+            cmd: podman ps -a
+          register: _decoy_podman_ps
+          changed_when: false
+          failed_when: false
+
+        - name: Capture rendered Caddyfile on failure
+          ansible.builtin.slurp:
+            src: "{{ naive_proxy_config_dir | default('/opt/naive-proxy') }}/Caddyfile"
+          register: _decoy_caddyfile_raw
+          failed_when: false
+
+        - name: Print reverse-proxy decoy diagnostics
+          ansible.builtin.debug:
+            msg: |-
+              === systemctl status podman-naive-decoy.service ===
+              {{ _decoy_status.stdout | default('<no output>') }}
+              {{ _decoy_status.stderr | default('') }}
+              === journalctl -xeu podman-naive-decoy.service ===
+              {{ _decoy_journal.stdout | default('<no output>') }}
+              {{ _decoy_journal.stderr | default('') }}
+              === podman ps -a ===
+              {{ _decoy_podman_ps.stdout | default('<no output>') }}
+              === rendered /opt/naive-proxy/Caddyfile ===
+              {{ (_decoy_caddyfile_raw.content | b64decode)
+                 if _decoy_caddyfile_raw.content is defined
+                 else '<could not read Caddyfile>' }}
+
+        - name: Re-raise reverse-proxy decoy test failure
+          ansible.builtin.fail:
+            msg: >-
+              Reverse-proxy decoy mode test failed; see diagnostics above.
 
     - name: Start acme-renew timer after verify
       ansible.builtin.systemd:

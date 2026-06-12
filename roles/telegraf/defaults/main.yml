@@ -16,7 +16,7 @@ telegraf_metric_batch_size: 3000
 telegraf_collection_interval: 30s
 telegraf_metric_buffer_limit: 300000
 
-telegraf_distribution: "{{ ansible_distribution | lower }}"
+telegraf_distribution: "{{ ansible_facts['distribution'] | lower }}"
 
 telegraf_debug_enable: false
 

@@ -1,0 +1,62 @@
+[Unit]
+Description=Podman container-{{ _naive_proxy_anytls_name }}.service (sing-box AnyTLS)
+Requires={{ _naive_proxy_pod_unit }}
+{% set _anytls_pebble_dep = (naive_proxy_molecule_mode | bool) and (_naive_proxy_anytls_acme | bool) %}
+Wants={{ _naive_proxy_haproxy_unit }}{% if _anytls_pebble_dep %} {{ _naive_proxy_pebble_unit }}{% endif %}
+
+After=network-online.target {{ _naive_proxy_pod_unit }} {{ _naive_proxy_haproxy_unit }}{% if _anytls_pebble_dep %} {{ _naive_proxy_pebble_unit }}{% endif %}
+
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ naive_proxy_singbox_image }}:{{ naive_proxy_singbox_image_tag }} \
+        || /usr/bin/podman pull {{ naive_proxy_singbox_image }}:{{ naive_proxy_singbox_image_tag }}'
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --log-driver=passthrough \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _naive_proxy_anytls_name }} \
+        --pull=never \
+{% if naive_proxy_read_only_rootfs %}
+        --read-only \
+{% endif %}
+        --security-opt=no-new-privileges \
+        --security-opt=apparmor=unconfined \
+        --cap-drop=ALL \
+        --pod={{ _naive_proxy_pod_name }} \
+        --volume {{ naive_proxy_config_dir }}/anytls.json:/etc/sing-box/config.json:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
+{% if _naive_proxy_anytls_acme | bool %}
+        --volume {{ _naive_proxy_anytls_acme_data_dir }}:/acme-data{% if naive_proxy_selinux_relabel %}:Z{% endif %} \
+{% if naive_proxy_anytls_acme_directory_ca | length > 0 %}
+        --volume {{ naive_proxy_anytls_acme_directory_ca }}:/anytls-acme-ca.pem:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
+        --env SSL_CERT_FILE=/anytls-acme-ca.pem \
+{% endif %}
+{% else %}
+        --volume {{ _naive_proxy_anytls_certs_dir }}:/anytls-certs:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
+{% endif %}
+        {{ naive_proxy_singbox_image }}:{{ naive_proxy_singbox_image_tag }} \
+        run -c /etc/sing-box/config.json
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

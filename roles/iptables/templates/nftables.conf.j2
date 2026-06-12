@@ -1,0 +1,215 @@
+{#-
+Copyright © 2025 kogeler
+SPDX-License-Identifier: Apache-2.0
+
+Role-owned nftables rules. Declares only the `mpig_*` tables; never
+`flush ruleset`. Each table is wrapped in the `add … ; delete … ; table … { … }`
+idiom so the whole file is a single atomic kernel transaction (in-file
+delete-then-create, no shell wrapper, no race window). `add table` is
+idempotent — creates an empty table if missing, no-op if present — so the
+following `delete table` never errors on first apply or after a kernel
+wipe. No `destroy table` statement: nft 1.0.6 (Debian 12) rejects it
+(see AGENTS.md pitfall P4).
+
+Layout mirrors the iptables templates 1:1:
+  * `table ip mpig_filter`  ↔ rules.v4 *filter
+  * `table ip6 mpig_filter` ↔ rules.v6 *filter
+  * `table ip mpig_nat`     ↔ rules.v4 *nat
+The `mpig_` prefix is the ownership boundary.
+-#}
+#!/usr/sbin/nft -f
+
+add table ip mpig_filter
+delete table ip mpig_filter
+add table ip6 mpig_filter
+delete table ip6 mpig_filter
+add table ip mpig_nat
+delete table ip mpig_nat
+
+table ip mpig_filter {
+{#- One dynamic set per (family, direction), shared across all external
+    interfaces. Mirrors the iptables-side `--hashlimit-name icmp-{req,rep}`
+    and `icmpv6-{req,rep}` global buckets — rate-limit counts per saddr
+    regardless of which interface the packet arrived on. Per-set
+    `timeout 5m` evicts stale entries under sustained traffic. -#}
+{% if iptables_external_ping_enable | bool %}
+    set icmp_echo_v4 { type ipv4_addr; flags dynamic; timeout 5m; }
+    set icmp_reply_v4 { type ipv4_addr; flags dynamic; timeout 5m; }
+{% endif %}
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iif "lo" accept
+{# echo-request rate-limit ABOVE conntrack shortcut + explicit drop on over-burst; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" icmp type echo-request update @icmp_echo_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" icmp type echo-request drop
+{% endfor %}
+{% endif %}
+        ct state related,established accept
+        ct state invalid drop
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_ports %}
+        iifname "{{ inf }}" ip saddr {{ port.src_v4 | default('0.0.0.0/0') }} {{ port.protocol }} dport {{ port.port }} ct state new accept
+{% endfor %}
+{% if iptables_external_ping_enable | bool %}
+        iifname "{{ inf }}" icmp type echo-reply update @icmp_reply_v4 { ip saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" meta l4proto icmp drop
+{% endif %}
+        iifname "{{ inf }}" udp sport 67-68 udp dport 67-68 ct state new accept
+        iifname "{{ inf }}" ct state new drop
+{% endfor %}
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        ct state related,established accept
+        ct state invalid drop
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_docker_ports %}
+        iifname "{{ inf }}" ip saddr {{ port.src_v4 | default('0.0.0.0/0') }} {{ port.protocol }} dport {{ port.port }} ct state new accept
+{% endfor %}
+{% endfor %}
+{% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
+        ip daddr {{ port.dst_address }} iifname "{{ port.forwarded_inf }}" {{ port.protocol }} dport {{ port.dst_port }} ct state new accept
+{% else %}
+        iifname "{{ port.forwarded_inf }}" ip saddr {{ port.src_v4 | default('0.0.0.0/0') }} {{ port.protocol }} dport {{ port.forwarded_port }} ct state new accept
+{% endif %}
+{% endfor %}
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" ct state new drop
+{% endfor %}
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        oif "lo" accept
+        ct state related,established accept
+        ct state invalid drop
+{% if iptables_disable_local_output | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        oifname "{{ inf }}" udp sport 67-68 udp dport 67-68 ct state new accept
+{% for range in iptables_disable_local_excluded_ipv4_ranges %}
+        oifname "{{ inf }}" ip daddr {{ range }} ct state new accept
+{% endfor %}
+        oifname "{{ inf }}" ip daddr 10.0.0.0/8 ct state new reject
+        oifname "{{ inf }}" ip daddr 172.16.0.0/12 ct state new reject
+        oifname "{{ inf }}" ip daddr 192.168.0.0/16 ct state new reject
+        oifname "{{ inf }}" ip daddr 100.64.0.0/10 ct state new reject
+{% endfor %}
+{% endif %}
+    }
+}
+
+table ip6 mpig_filter {
+{% if iptables_external_ping_enable | bool %}
+    set icmpv6_echo { type ipv6_addr; flags dynamic; timeout 5m; }
+    set icmpv6_reply { type ipv6_addr; flags dynamic; timeout 5m; }
+{% endif %}
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iif "lo" accept
+{# NDP + MLD on any iface — IPv6 stack relies on these regardless of source iface (RFC 4890) #}
+        icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, nd-redirect, mld2-listener-report } accept
+{# same ordering as v4 above; see AGENTS.md P12 #}
+{% if iptables_external_ping_enable | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" icmpv6 type echo-request update @icmpv6_echo { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" icmpv6 type echo-request drop
+{% endfor %}
+{% endif %}
+        ct state related,established accept
+        ct state invalid drop
+{% for inf in _iptables_inf_ext_list %}
+{% for port in iptables_ports %}
+{% if not ((port.skip_v6 | default(false)) | bool) %}
+        iifname "{{ inf }}" ip6 saddr {{ port.src_v6 | default('::/0') }} {{ port.protocol }} dport {{ port.port }} ct state new accept
+{% endif %}
+{% endfor %}
+{% if iptables_external_ping_enable | bool %}
+        iifname "{{ inf }}" icmpv6 type echo-reply update @icmpv6_reply { ip6 saddr limit rate {{ iptables_external_ping_limit }}/minute } accept
+        iifname "{{ inf }}" meta l4proto ipv6-icmp drop
+{% endif %}
+        iifname "{{ inf }}" udp sport 547 udp dport 546 ct state new accept
+        iifname "{{ inf }}" ct state new drop
+{% endfor %}
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        ct state related,established accept
+        ct state invalid drop
+{% for inf in _iptables_inf_ext_list %}
+        iifname "{{ inf }}" ct state new drop
+{% endfor %}
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        oif "lo" accept
+        ct state related,established accept
+        ct state invalid drop
+        udp dport 547 limit rate 10/minute accept
+        udp dport 547 drop
+{% if iptables_disable_local_output | bool %}
+{% for inf in _iptables_inf_ext_list %}
+{% for range in iptables_disable_local_excluded_ipv6_ranges %}
+        oifname "{{ inf }}" ip6 daddr {{ range }} ct state new accept
+{% endfor %}
+        oifname "{{ inf }}" ip6 daddr fe80::/10 ct state new reject
+        oifname "{{ inf }}" ip6 daddr fc00::/7 ct state new reject
+{% endfor %}
+{% endif %}
+    }
+}
+
+table ip mpig_nat {
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+{% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
+        iifname "{{ port.forwarded_inf }}" {{ port.protocol }} dport {{ port.forwarded_port }} dnat to {{ port.dst_address }}:{{ port.dst_port }}
+{% endif %}
+{% endfor %}
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+{#-
+  Note: randomized SNAT (`iptables_randomized_ext_ips`) lives in its own
+  table `mpig_randomized_snat` at `priority srcnat - 10` and is rendered
+  in /etc/nftables.d/mpig-randomized-snat.conf, not here.
+
+  Static SNAT rules from `iptables_snat_rules` ARE rendered here (mirror of
+  the scoped iptables backend's MPIG-POSTROUTING rendering). They sit before
+  the broad masquerade so the narrower match terminates first. Validation
+  in tasks/main.yml guarantees `to_source` is set and `protocol` is present
+  whenever `src_port`/`dst_port` is given.
+-#}
+{% for rule in iptables_snat_rules %}
+{#- Translate `-p proto -m proto --sport X --dport Y` into nft:
+    * `protocol` alone (no ports) → `meta l4proto <proto>` (the bare keyword
+      `tcp`/`udp` is only valid as the prefix of a port match in nft).
+    * `protocol` plus `src_port`/`dst_port` → `<proto> sport X dport Y` (the
+      protocol keyword introduces the port-match block once).
+    * Neither protocol nor ports → no L4 match at all (e.g. dst_address-only
+      rules). Validation in tasks/main.yml guarantees that whenever a port
+      IS set, protocol is also set, so we never emit a bare port match. -#}
+{% set has_ports = (rule.src_port is defined and rule.src_port) or (rule.dst_port is defined and rule.dst_port) -%}
+        {% if rule.output_inf is defined and rule.output_inf %}oifname "{{ rule.output_inf }}" {% endif %}{% if rule.dst_address is defined and rule.dst_address %}ip daddr {{ rule.dst_address }} {% endif %}{% if has_ports %}{{ rule.protocol }}{% if rule.src_port is defined and rule.src_port %} sport {{ rule.src_port }}{% endif %}{% if rule.dst_port is defined and rule.dst_port %} dport {{ rule.dst_port }}{% endif %} {% elif rule.protocol is defined and rule.protocol %}meta l4proto {{ rule.protocol }} {% endif %}snat to {{ rule.to_source }}
+{% endfor %}
+{% if iptables_ext_inf_masquerade | bool %}
+{% for inf in _iptables_inf_ext_list %}
+        oifname "{{ inf }}" masquerade
+{% endfor %}
+{% endif %}
+{% for port in iptables_forwarded_ports %}
+{% if port.dst_address is defined %}
+        ip daddr {{ port.dst_address }} {{ port.protocol }} dport {{ port.dst_port }} masquerade
+{% endif %}
+{% endfor %}
+    }
+}

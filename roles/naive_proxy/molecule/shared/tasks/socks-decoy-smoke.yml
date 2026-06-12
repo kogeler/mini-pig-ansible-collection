@@ -1,0 +1,37 @@
+---
+# Shared: SOCKS5 decoy smoke test. Uses curl --socks5-hostname so the
+# destination hostname is resolved by the SOCKS proxy itself, mirroring
+# how a real client uses the tunnel. Wrapped in retries because the
+# upstream SOCKS client (naive / sing-box) may take a few seconds to
+# warm up its TLS to HAProxy.
+#
+# Caller contract:
+#   _socks_smoke_proxy_host  (str)  SOCKS5 host (typically 127.0.0.1)
+#   _socks_smoke_proxy_port  (int)  SOCKS5 port
+#   _socks_smoke_label       (str)  short label used in fail messages
+#
+# Reads: molecule_naive_proxy_decoy_url (shared/vars/common.yml)
+#
+# Sets host fact:
+#   _socks_smoke_result — registered curl result
+
+- name: Fetch decoy site through {{ _socks_smoke_label }} # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >
+      curl -sf --max-time 10
+      --socks5-hostname {{ _socks_smoke_proxy_host }}:{{ _socks_smoke_proxy_port }}
+      {{ molecule_naive_proxy_decoy_url }}
+  changed_when: false
+  register: _socks_smoke_result
+  retries: 10
+  delay: 5
+  until: _socks_smoke_result.rc == 0
+
+- name: Assert decoy page received through {{ _socks_smoke_label }}
+  ansible.builtin.assert:
+    that:
+      - "'Welcome' in _socks_smoke_result.stdout"
+      - "'under construction' in _socks_smoke_result.stdout"
+    fail_msg: >-
+      Failed to fetch decoy site through {{ _socks_smoke_label }}.
+      Got: {{ _socks_smoke_result.stdout | default('empty') }}

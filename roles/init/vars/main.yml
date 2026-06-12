@@ -14,10 +14,35 @@ _init_packages:
   - "btrfs-progs"
   - "sysfsutils"
   - "systemd-timesyncd"
-  
+  - "htop"
+  - "iotop"
+  - "net-tools"
+  - "nano"
+  - "tmux"
+  - "mosh"
+  - "rsync"
+  - "curl"
+  - "btrfs-compsize"
+  - "wget"
+  - "netcat-openbsd"
+
+_init_packages_remove:
+  - "linux-xanmod"
+  - "linux-xanmod-x64v1"
+  - "chrony"
+
 _init_timesyncd_conf_path: "/etc/systemd/timesyncd.conf"
 _init_timesyncd_unit_path: "/lib/systemd/system/systemd-timesyncd.service"
 
 _init_systemd_resolved_unit_path: "/lib/systemd/system/systemd-resolved.service"
 
 _init_apt_auto_upgrades_conf_path: "/etc/apt/apt.conf.d/20auto-upgrades"
+
+# GPT partition type GUID for "BIOS boot" partition (UEFI spec, Annex N).
+# Used to identify which GPT disks are valid BIOS-grub install targets.
+_init_grub_bios_boot_part_guid: "21686148-6449-6e6f-744e-656564454649"
+
+_init_sysctl_parameters:
+  fs.inotify.max_user_instances: 8192
+  fs.inotify.max_queued_events: 32768
+  fs.inotify.max_user_watches: 1013352

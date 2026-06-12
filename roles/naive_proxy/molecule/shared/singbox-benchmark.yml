@@ -1,0 +1,51 @@
+---
+# Standalone sing-box TUN stress benchmark playbook.
+#
+# Same shape as shared/benchmark.yml: runs only the throughput portion,
+# without the rest of verify. Useful for ad-hoc reproduction runs against
+# a converged Molecule instance.
+#
+# The bridge-gateway / pod-IP discovery here mirrors what
+# singbox-verify.yml does: set_fact only survives within a single
+# ansible-playbook invocation, so any play that runs `singbox-benchmark`
+# tasks must rediscover the IPs the converge baked into the role-rendered
+# configs.
+- name: Sing-box TUN stress benchmark
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - vars/benchmark.yml
+    - vars/singbox-benchmark.yml
+  tasks:
+    - name: Wait for benchmark prerequisites
+      ansible.builtin.import_tasks: tasks/wait-services.yml
+
+    - name: Discover inner podman default-bridge gateway
+      containers.podman.podman_network_info:
+        name: podman
+      register: _singbox_stress_net
+
+    - name: Discover naive-backend container IP (= naive-pod IP)
+      containers.podman.podman_container_info:
+        name: naive-backend
+      register: _singbox_stress_backend
+
+    - name: Pin discovered IPs as facts
+      ansible.builtin.set_fact:
+        _singbox_stress_bridge_gateway: >-
+          {{ (_singbox_stress_net.networks[0].subnets
+              | selectattr('gateway', 'defined')
+              | list | first).gateway }}
+        _singbox_stress_pod_ip: >-
+          {{ (_singbox_stress_backend.containers[0].NetworkSettings.Networks
+              | dict2items | first).value.IPAddress }}
+
+    - name: Override naive_proxy external_ip_map for benchmark client config
+      ansible.builtin.set_fact:
+        molecule_naive_proxy_external_ip: "{{ _singbox_stress_bridge_gateway }}"
+        molecule_naive_proxy_external_ip_map_auto:
+          primary: "{{ _singbox_stress_bridge_gateway }}"
+
+    - name: Run sing-box TUN stress benchmark tasks
+      ansible.builtin.import_tasks: tasks/singbox-benchmark.yml

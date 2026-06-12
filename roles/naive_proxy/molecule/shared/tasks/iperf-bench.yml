@@ -1,0 +1,151 @@
+---
+# Shared: drive iperf3 through proxychains4 over a local SOCKS5 client,
+# wrap the run in CPU-counter snapshots for the haproxy/backend/iperf
+# units, parse the JSON result, print a Mbps + per-unit avg-CPU report,
+# and assert minimum throughput. Used by both the official-naive
+# benchmark and the sing-box stress benchmark.
+#
+# Caller contract — set these before importing/including this file:
+#   _iperf_bench_socks_host       (str)    SOCKS5 host the client listens on
+#   _iperf_bench_socks_port       (int)    SOCKS5 port
+#   _iperf_bench_proxychains_conf (path)   where to render the proxychains conf
+#   _iperf_bench_parallel         (int)    iperf3 -P value
+#   _iperf_bench_duration         (int)    iperf3 -t value
+#   _iperf_bench_min_bps          (number) minimum acceptable throughput
+#   _iperf_bench_label            (str)    short label used in debug / fail messages
+#
+# Reads from shared/vars/benchmark.yml:
+#   iperf_cpu_units, iperf_port
+# Reads from shared/vars/common.yml:
+#   molecule_naive_proxy_domain
+#
+# Sets host facts (visible to caller after the include):
+#   _iperf_bench_iperf_raw, _iperf_bench_iperf_json,
+#   _iperf_bench_bps, _iperf_bench_cpu_avg_report,
+#   _iperf_bench_started_ns, _iperf_bench_finished_ns
+
+- name: Render proxychains config for SOCKS5 client
+  ansible.builtin.copy:
+    dest: "{{ _iperf_bench_proxychains_conf }}"
+    mode: "0644"
+    content: |
+      strict_chain
+      proxy_dns
+      tcp_read_time_out 30000
+      tcp_connect_time_out 15000
+
+      [ProxyList]
+      socks5 {{ _iperf_bench_socks_host }} {{ _iperf_bench_socks_port }}
+
+- name: Read systemd CPU counters before iperf3 stress run
+  ansible.builtin.systemd:
+    name: "{{ item.unit }}"
+  loop: "{{ iperf_cpu_units }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: _iperf_bench_cpu_before
+
+- name: Record iperf3 stress run start timestamp
+  ansible.builtin.command:
+    cmd: date +%s%N
+  register: _iperf_bench_started_ns
+  changed_when: false
+
+- name: Run iperf3 through SOCKS5 client # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >
+      proxychains4 -f {{ _iperf_bench_proxychains_conf }}
+      iperf3 -c {{ molecule_naive_proxy_domain }} -p {{ iperf_port }}
+      -t {{ _iperf_bench_duration }}
+      -P {{ _iperf_bench_parallel }}
+      -J
+  register: _iperf_bench_iperf_raw
+  changed_when: false
+  failed_when: false
+  # The `-P N` SOCKS5 H2 burst can transiently drop a single stream
+  # (e.g. ERR_SOCKS_CONNECTION_FAILED) under load on small CI runners,
+  # making iperf3 exit non-zero with partial JSON. Retry the whole run so
+  # a one-off transient does not fail the job; a sustained H2 / tunnel
+  # regression still fails every attempt and is caught by the assert below.
+  until: _iperf_bench_iperf_raw.rc == 0
+  retries: 3
+  delay: 5
+
+- name: Record iperf3 stress run end timestamp
+  ansible.builtin.command:
+    cmd: date +%s%N
+  register: _iperf_bench_finished_ns
+  changed_when: false
+
+- name: Read systemd CPU counters after iperf3 stress run
+  ansible.builtin.systemd:
+    name: "{{ item.unit }}"
+  loop: "{{ iperf_cpu_units }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: _iperf_bench_cpu_after
+
+- name: Reset CPU report list for this iperf3 stress run
+  ansible.builtin.set_fact:
+    _iperf_bench_cpu_avg_report: []
+
+- name: Build average CPU report for iperf3 stress interval
+  ansible.builtin.set_fact:
+    _iperf_bench_cpu_avg_report: "{{ _iperf_bench_cpu_avg_report + [_iperf_bench_cpu_line] }}"
+  vars:
+    _cpu_before_ns: "{{ _iperf_bench_cpu_before.results[_iperf_cpu_idx].status.CPUUsageNSec | default('0') | int }}"
+    _cpu_after_ns: "{{ item.status.CPUUsageNSec | default('0') | int }}"
+    _cpu_delta_ns: "{{ (_cpu_after_ns | int) - (_cpu_before_ns | int) }}"
+    _cpu_pct: "{{ ((_cpu_delta_ns | float) / ((_iperf_bench_finished_ns.stdout | int) - (_iperf_bench_started_ns.stdout | int)) * 100.0) | round(2) }}"
+    _iperf_bench_cpu_line: >-
+      {{ iperf_cpu_units[_iperf_cpu_idx].label }} avg_cpu={{ _cpu_pct }}%
+      cpu_time={{ (_cpu_delta_ns / 1000000000.0) | round(3) }}s
+  loop: "{{ _iperf_bench_cpu_after.results }}"
+  loop_control:
+    index_var: _iperf_cpu_idx
+  when: ((_iperf_bench_finished_ns.stdout | int) - (_iperf_bench_started_ns.stdout | int)) > 0
+
+- name: Assert iperf3 produced JSON output through {{ _iperf_bench_label }}
+  ansible.builtin.assert:
+    that:
+      - _iperf_bench_iperf_raw.rc == 0
+      - (_iperf_bench_iperf_raw.stdout | trim) | length > 0
+    fail_msg: >-
+      iperf3 through {{ _iperf_bench_label }} did not return JSON.
+      rc={{ _iperf_bench_iperf_raw.rc }}
+      stdout={{ _iperf_bench_iperf_raw.stdout | default('') | truncate(400) }}
+      stderr={{ _iperf_bench_iperf_raw.stderr | default('') | truncate(400) }}
+
+- name: Parse iperf3 result
+  ansible.builtin.set_fact:
+    _iperf_bench_iperf_json: "{{ _iperf_bench_iperf_raw.stdout | from_json }}"
+    _iperf_bench_bps: >-
+      {{ (_iperf_bench_iperf_raw.stdout | from_json).end.sum_received.bits_per_second
+         | default((_iperf_bench_iperf_raw.stdout | from_json).end.sum_sent.bits_per_second, true)
+         | float }}
+
+- name: Assert iperf3 reported no top-level error
+  ansible.builtin.assert:
+    that:
+      - _iperf_bench_iperf_json.error is not defined
+    fail_msg: >-
+      iperf3 reported a top-level error: {{ _iperf_bench_iperf_json.error | default('?') }}
+
+- name: Print iperf3 throughput through {{ _iperf_bench_label }}
+  ansible.builtin.debug:
+    msg: >-
+      iperf3 -P {{ _iperf_bench_parallel }} through {{ _iperf_bench_label }}:
+      {{ (_iperf_bench_bps / 1000000) | round(2) }} Mbps
+
+- name: Print average CPU load over iperf3 stress interval
+  ansible.builtin.debug:
+    var: _iperf_bench_cpu_avg_report
+
+- name: Assert iperf3 met minimum throughput through {{ _iperf_bench_label }}
+  ansible.builtin.assert:
+    that:
+      - _iperf_bench_bps | float > _iperf_bench_min_bps | float
+    fail_msg: >-
+      iperf3 through {{ _iperf_bench_label }} throughput too low:
+      {{ (_iperf_bench_bps / 1000000) | round(2) }} Mbps
+      (floor: {{ (_iperf_bench_min_bps | float / 1000000) | round(2) }} Mbps)

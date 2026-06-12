@@ -10,6 +10,25 @@
       naive_proxy_domain is required. Set it to the server's FQDN.
     quiet: true
 
+- name: naive-proxy | preflight | validate external ip maps (auto + manual)
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_external_ip_auto is mapping
+      - naive_proxy_external_ip_auto | length > 0
+      - (naive_proxy_external_ip_auto.values() | reject('string') | list | length) == 0
+      - (naive_proxy_external_ip_auto.values() | map('trim') | select('equalto', '') | list | length) == 0
+      - naive_proxy_external_ip_manual is mapping
+      - naive_proxy_external_ip_manual | length > 0
+      - (naive_proxy_external_ip_manual.values() | reject('string') | list | length) == 0
+      - (naive_proxy_external_ip_manual.values() | map('trim') | select('equalto', '') | list | length) == 0
+    fail_msg: >-
+      naive_proxy_external_ip_auto and naive_proxy_external_ip_manual must each
+      be a non-empty map of `<name>: <ip>` where every value is a non-empty
+      publicly reachable IPv4 or IPv6 string that {{ naive_proxy_domain }}
+      (and {{ naive_proxy_anytls_domain }}) resolves to. The automatic and the
+      manual client configs each need at least one server.
+    quiet: true
+
 - name: naive-proxy | preflight | validate users are defined
   ansible.builtin.assert:
     that:
@@ -17,6 +36,34 @@
     fail_msg: >-
       naive_proxy_users must contain at least one user entry.
     quiet: true
+
+- name: naive-proxy | preflight | validate anytls domain
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_anytls_domain | length > 0
+      - naive_proxy_anytls_domain != naive_proxy_domain
+    fail_msg: >-
+      naive_proxy_anytls_domain is required when naive_proxy_anytls_enabled is
+      true and must differ from naive_proxy_domain. The AnyTLS server sits
+      behind the same HAProxy on the same IP(s); HAProxy tells the two servers
+      apart by SNI, so each needs its own FQDN (both resolving to the same
+      public IP addresses).
+    quiet: true
+  when: naive_proxy_anytls_enabled | bool
+
+- name: naive-proxy | preflight | validate anytls utls fingerprint
+  ansible.builtin.assert:
+    that:
+      - naive_proxy_anytls_utls_fingerprint in _naive_proxy_anytls_utls_fingerprints
+    fail_msg: >-
+      naive_proxy_anytls_utls_fingerprint ('{{ naive_proxy_anytls_utls_fingerprint }}')
+      is not a valid sing-box uTLS fingerprint. Choose one of
+      {{ _naive_proxy_anytls_utls_fingerprints | join(', ') }}, or leave it empty
+      to disable uTLS for the AnyTLS client outbound.
+    quiet: true
+  when:
+    - naive_proxy_anytls_enabled | bool
+    - naive_proxy_anytls_utls_fingerprint | length > 0
 
 - name: naive-proxy | preflight | validate listen port
   ansible.builtin.assert:
@@ -46,6 +93,13 @@
           '_naive_proxy_decoy_port': _naive_proxy_decoy_port | int,
           '_naive_proxy_acme_alpn_port': _naive_proxy_acme_alpn_port | int
         }
+        | combine(
+            naive_proxy_anytls_enabled | bool
+            | ternary(
+                {'_naive_proxy_anytls_port': _naive_proxy_anytls_port | int},
+                {}
+              )
+          )
         | combine(
             naive_proxy_molecule_mode | bool
             | ternary(
