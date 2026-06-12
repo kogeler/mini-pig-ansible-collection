@@ -23,7 +23,6 @@ Target OS: Debian / Ubuntu. Container workloads run under **Podman + systemd** (
 
 | Role | What it does |
 | --- | --- |
-| [`monitoring`](roles/monitoring) | Grafana + InfluxDB + Matrix alert webhook deployed via Docker Compose. |
 | [`telegraf`](roles/telegraf) | InfluxData Telegraf agent — system, Docker, SMART, and Raspberry Pi GPU metrics. |
 | [`systemd_health_controller`](roles/systemd_health_controller) | Python Prometheus exporter that watches systemd units and restarts failures (up to 3 attempts). |
 
@@ -32,7 +31,6 @@ Target OS: Debian / Ubuntu. Container workloads run under **Podman + systemd** (
 | Role | What it does |
 | --- | --- |
 | [`init`](roles/init) | Base OS bootstrap: apt, DNS, users, time sync, kernel sysctls, SSH hardening, S3 mounts, log forwarding. |
-| [`docker`](roles/docker) | Installs Docker + Compose and schedules a daily `docker system prune`. |
 | [`scw_k8s_kosmos_agent`](roles/scw_k8s_kosmos_agent) | Joins a node to a Scaleway Kosmos-managed Kubernetes cluster. |
 
 ## Requirements
