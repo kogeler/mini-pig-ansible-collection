@@ -288,7 +288,7 @@ The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own on
 
 - `naive_proxy_listen_port` — default `443`
 - `naive_proxy_external_port` — public port advertised to clients
-- `naive_proxy_naive_version` — release tag, for example `v148.0.7778.96-5`
+- `naive_proxy_naive_version` — release tag, for example `v149.0.7827.114-1`
 - `naive_proxy_padding` — default `true`; enables `--padding` on the backend
 - `naive_proxy_backend_base_image` — default `docker.io/library/ubuntu`; base image for backend container build
 - `naive_proxy_backend_base_image_tag` — default `22.04`
