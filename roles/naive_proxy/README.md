@@ -158,7 +158,7 @@ helsinki - AnyTLS
 
 | Variable | Default | Description |
 |---|---|---|
-| `naive_proxy_naive_version` | `"v148.0.7778.96-5"` | Standalone naive release tag |
+| `naive_proxy_naive_version` | `"v149.0.7827.114-1"` | Standalone naive release tag |
 | `naive_proxy_padding` | `true` | Enable `--padding` on the backend |
 | `naive_proxy_backend_base_image` | `"docker.io/library/ubuntu"` | Base image for the backend container build |
 | `naive_proxy_backend_base_image_tag` | `"22.04"` | Base image tag |

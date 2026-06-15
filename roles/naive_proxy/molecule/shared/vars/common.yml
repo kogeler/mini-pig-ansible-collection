@@ -1,5 +1,5 @@
 ---
-naive_proxy_naive_version: "v148.0.7778.96-5"
+naive_proxy_naive_version: "v149.0.7827.114-1"
 molecule_naive_proxy_domain: "naive.test"
 # Separate FQDN for the sing-box AnyTLS server. Resolves to the same IP(s)
 # as the naive domain; HAProxy tells the two servers apart by SNI. In

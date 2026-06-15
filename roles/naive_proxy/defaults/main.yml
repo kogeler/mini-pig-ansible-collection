@@ -57,7 +57,7 @@ naive_proxy_users: {}
 # Official standalone naive binary from klzgrad/naiveproxy releases.
 # Releases: https://github.com/klzgrad/naiveproxy/releases
 
-naive_proxy_naive_version: "v148.0.7778.96-5"
+naive_proxy_naive_version: "v149.0.7827.114-1"
 naive_proxy_padding: true
 # Base image for the naive backend container build.
 naive_proxy_backend_base_image: "docker.io/library/ubuntu"
