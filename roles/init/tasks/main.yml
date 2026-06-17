@@ -25,6 +25,14 @@
   when: init_flow_control_apt | bool
   tags: ['init', 'init-apt']
 
+- name: init | apt-cleanup
+  ansible.builtin.include_tasks:
+    file: apt-cleanup.yml
+    apply:
+      tags: ['init', 'init-apt', 'init-apt-cleanup']
+  when: (init_flow_control_apt | bool) and (init_apt_kernel_cleanup | bool)
+  tags: ['init', 'init-apt', 'init-apt-cleanup']
+
 - name: init | dns
   ansible.builtin.include_tasks:
     file: dns.yml

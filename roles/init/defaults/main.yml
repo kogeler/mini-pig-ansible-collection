@@ -42,6 +42,12 @@ init_aws_secret_access_key: ""
 init_apt_upgrade: false
 init_apt_reboot_if_required: false
 
+# Purge old kernels so /boot does not fill up. Explicitly-installed kernels
+# (e.g. Debian backports) carry no metapackage dep, so apt autoremove never
+# reaps them. Keep the N newest patch versions of each minor (X.Y) line.
+init_apt_kernel_cleanup: true
+init_apt_kernel_versions_keep: 2
+
 # Manual override of grub-pc/install_devices. Empty = autodetect from lsblk
 # (BIOS hosts only; UEFI and hosts without grub-pc are skipped).
 init_grub_install_devices: []

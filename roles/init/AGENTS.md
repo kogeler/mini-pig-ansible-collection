@@ -59,19 +59,20 @@ Conventions to keep when editing:
 | 0 | bare `user:` task | resolves `ansible_user`'s home into `_init_user_info` (consumed by `s3.yml`). |
 | 1 | `grub.yml` | also tagged `init-apt` (it touches dpkg/debconf state). |
 | 2 | `apt.yml` | |
-| 3 | `dns.yml` | ends with `meta: flush_handlers`. |
-| 4 | `users.yml` | |
-| 5 | `time.yml` | ends with `meta: flush_handlers`. |
-| 6 | `kernel.yml` | |
-| 7 | `sysctl.yml` | |
-| 8 | `hosts.yml` | |
-| 9 | `ssh.yml` | |
-| 10 | `mount.yml` | only when `init_block_dev != ''`. |
-| 11 | `s3.yml` | only when both AWS keys are set. |
-| 12 | `logs.yml` | |
-| 13 | reboot decision task | notifies `reboot host` (see Handlers & reboot). |
+| 3 | `apt-cleanup.yml` | only when `init_apt_kernel_cleanup`; tagged `init-apt` + `init-apt-cleanup`. |
+| 4 | `dns.yml` | ends with `meta: flush_handlers`. |
+| 5 | `users.yml` | |
+| 6 | `time.yml` | ends with `meta: flush_handlers`. |
+| 7 | `kernel.yml` | |
+| 8 | `sysctl.yml` | |
+| 9 | `hosts.yml` | |
+| 10 | `ssh.yml` | |
+| 11 | `mount.yml` | only when `init_block_dev != ''`. |
+| 12 | `s3.yml` | only when both AWS keys are set. |
+| 13 | `logs.yml` | |
+| 14 | reboot decision task | notifies `reboot host` (see Handlers & reboot). |
 
-The two `meta: flush_handlers` (dns step 3, time step 5) start
+The two `meta: flush_handlers` (dns step 4, time step 6) start
 systemd-resolved / systemd-timesyncd within the run. They also constrain when
 the reboot may be notified — see below.
 
@@ -93,6 +94,18 @@ the reboot may be notified — see below.
   When `init_apt_reboot_if_required`, computes `_init_apt_will_reboot`
   (true if `/var/run/reboot-required` exists OR running kernel != newest
   installed). The actual reboot is deferred to a handler (see below).
+  Old-kernel purging lives in its own area (`apt-cleanup.yml`, below).
+- **apt-cleanup.yml** — runs right after `apt.yml`, gated on
+  `init_apt_kernel_cleanup` (default true). From `package_facts` it groups
+  every versioned `linux-{image,headers,modules,kbuild,compiler}-*` package by
+  minor (X.Y) line, keeps the `init_apt_kernel_versions_keep` (default 2)
+  newest patch versions per line plus the running kernel, and purges the rest.
+  Match is by the version embedded in the package name, so
+  stock/backports/metapackage kernels are all covered; version-less
+  metapackages like `linux-image-amd64` never match and are never touched.
+  Before purging, an `assert` guard fails the run if the computed remove set
+  ever targets the running kernel (`ansible_facts['kernel']`) — defence in
+  depth, since the running kernel is already force-kept.
 - **dns.yml** — installs a dhclient hook to stop DHCP from rewriting DNS;
   ensures `systemd-resolved`; renders the DNS-over-TLS drop-in from
   `init_resolved_dns` (notify `restart systemd-resolved`); points
@@ -149,9 +162,9 @@ Two facts about handlers drive the reboot design:
    (and everything else). Keep it last; if you add a handler, put it before
    `reboot host`.
 2. **A notified handler fires at the next `meta: flush_handlers` or at
-   end-of-play.** Because `dns.yml` (step 3) and `time.yml` (step 5) flush,
-   the reboot must only be *notified after step 5*, or it would fire mid-play
-   before `kernel.yml` (step 6) rewrote the cmdline / `grub.cfg`.
+   end-of-play.** Because `dns.yml` (step 4) and `time.yml` (step 6) flush,
+   the reboot must only be *notified after step 6*, or it would fire mid-play
+   before `kernel.yml` (step 7) rewrote the cmdline / `grub.cfg`.
 
 So the reboot is notified from a **single** decision task at the end of
 `tasks/main.yml` that aggregates both triggers — APT
@@ -182,6 +195,9 @@ Defaults that change behaviour materially (`defaults/main.yml`):
 - `init_apt_upgrade` (false) — run `apt upgrade --full`.
 - `init_apt_reboot_if_required` (false) — enables reboot-required detection
   (and thus the reboot path).
+- `init_apt_kernel_cleanup` (true) — purge stale kernels at the end of
+  `apt.yml`; `init_apt_kernel_versions_keep` (2) — how many newest patch
+  versions to keep per minor (X.Y) line (running kernel always kept).
 - `init_cmdline_linux` ("") — kernel cmdline; empty means leave it untouched.
 - `init_block_dev` ("") / `init_mount_point` (`/data`) / `init_block_dev_ssd`
   — data-disk mount; empty `init_block_dev` skips `mount.yml`.
