@@ -40,3 +40,9 @@
     state: restarted
     enabled: yes
   ignore_errors: "{{ not _init_time_timesyncd_unit_register.stat.exists }}"
+
+# Defined last so it runs after every other handler (e.g. "update grub"):
+# handlers fire in definition order, not notification order.
+- name: reboot host
+  ansible.builtin.reboot:
+    reboot_timeout: 1200

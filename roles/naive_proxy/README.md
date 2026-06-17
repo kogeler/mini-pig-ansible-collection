@@ -619,8 +619,8 @@ The benchmark playbook runs the throughput portion without the rest of `verify`:
 cd naive_proxy/molecule
 make default-podman-converge
 
-INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
-ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
+INV="$HOME/.ansible/tmp/molecule.<id>.default/inventory"
+ANSIBLE_COLLECTIONS_PATH=<path-to-your-collections-checkout> \
   ansible-playbook -i "$INV" shared/benchmark.yml
 ```
 
@@ -727,8 +727,8 @@ make singbox-stress-podman-verify
 cd naive_proxy/molecule
 make singbox-stress-podman-converge
 
-INV=/home/verstak/.ansible/tmp/molecule.<id>.singbox-stress/inventory
-ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
+INV="$HOME/.ansible/tmp/molecule.<id>.singbox-stress/inventory"
+ANSIBLE_COLLECTIONS_PATH=<path-to-your-collections-checkout> \
   ansible-playbook -i "$INV" shared/singbox-benchmark.yml
 ```
 
@@ -758,8 +758,8 @@ remains the control test; both should pass on a healthy stack.
 cd naive_proxy/molecule
 make default-podman-converge
 
-INV=/home/verstak/.ansible/tmp/molecule.<id>.default/inventory
-ANSIBLE_COLLECTIONS_PATH=/media/data/git/ansible-v2/collections \
+INV="$HOME/.ansible/tmp/molecule.<id>.default/inventory"
+ANSIBLE_COLLECTIONS_PATH=<path-to-your-collections-checkout> \
   ansible-playbook -i "$INV" shared/utils.yml
 ```
 

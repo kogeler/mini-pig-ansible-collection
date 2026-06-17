@@ -104,3 +104,12 @@
       tags: ['init', 'init-logs']
   when: init_flow_control_logs | bool
   tags: ['init', 'init-logs']
+
+- name: init | notify reboot host handler
+  ansible.builtin.set_fact:
+    _init_reboot_required: >-
+      {{ (_init_apt_will_reboot | default(false) | bool)
+         or (_init_grub_cmdline_changed | default(false) | bool) }}
+  changed_when: _init_reboot_required | bool
+  notify: reboot host
+  tags: ['init', 'init-apt', 'init-kernel']

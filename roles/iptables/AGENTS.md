@@ -511,8 +511,8 @@ trim_blocks pitfall).
    The cd-into-role-dir is what lets ansible-compat auto-discover the
    collection from `galaxy.yml`. Bare `molecule` invoked from
    `molecule/<scenario>` will not auto-discover.
-2. Activate the local Python venv before make/molecule/ansible commands:
-   `source /media/data/app/python/venv3/bin/activate`.
+2. Activate the project's Ansible venv before make/molecule/ansible commands
+   (its path is in your local agent config, not in this repo).
 3. Prefer separate `converge` and `verify` while debugging. Use `test`
    for a final clean run only — it destroys the instance at the end and
    discards artefacts that verify reads from `/tmp/molecule-*` files.
@@ -539,7 +539,7 @@ trim_blocks pitfall).
 Run from `roles/iptables/molecule`:
 
 ```bash
-source /media/data/app/python/venv3/bin/activate
+# activate the project's Ansible venv first (path from your local agent config)
 make help
 make default-podman-converge
 make default-podman-verify

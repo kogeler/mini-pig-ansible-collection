@@ -12,6 +12,7 @@
     path: "/etc/default/grub"
     regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=".*"$'
     replace: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ init_cmdline_linux }}"'
+  register: _init_kernel_cmdline_grub_file
   notify: update grub
   when:
     - init_cmdline_linux != ''
@@ -24,10 +25,17 @@
     owner: root
     group: root
     mode: "0644"
+  register: _init_kernel_cmdline_grubd
   notify: update grub
   when:
     - init_cmdline_linux != ''
     - not _init_kernel_grub_file_register.stat.exists
+
+- name: init | kernel | record whether the GRUB cmdline changed
+  ansible.builtin.set_fact:
+    _init_grub_cmdline_changed: >-
+      {{ (_init_kernel_cmdline_grub_file is changed)
+         or (_init_kernel_cmdline_grubd is changed) }}
 
 - name: init | kernel | check /etc/init.d/sysfsutils
   ansible.builtin.stat:

@@ -5,8 +5,8 @@
 1. Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule`
    commands. It injects the role-scoped base config and the `GIT_DIR=/dev/null`
    workaround needed in this collection layout.
-2. Always activate the local venv before make/molecule/ansible commands:
-   `source /media/data/app/python/venv3/bin/activate`
+2. Always activate the project's Ansible venv before make/molecule/ansible
+   commands (its path is in your local agent config, not in this repo).
 3. Avoid `make ...-test` during debugging because it destroys the instance at
    the end. Prefer separate `converge`, `idempotence`, and `verify` runs; use
    `destroy` explicitly when you need a clean slate.

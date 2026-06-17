@@ -16,7 +16,7 @@
    podman exec molecule-naive-proxy ss -tlnp
    ```
 5. **Keep the Molecule instance alive** between iterations. Re-run the `converge` and `verify` actions without destroying. Only destroy when the instance state is suspect or you need to test from scratch.
-6. **Always activate the venv** before any make/molecule/ansible command: `source /media/data/app/python/venv3/bin/activate`
+6. **Always activate the venv** before any make/molecule/ansible command (its path is in your local agent config, not in this repo).
 
 ## What this role does
 
