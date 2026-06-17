@@ -1,16 +1,15 @@
 {{ ansible_managed | comment }}
 [Unit]
-# Type=oneshot, no RemainAfterExit — each start runs ExecStart again,
-# which re-asserts firewall state for the active backend.
-# `systemctl status` normally reports "inactive (dead)"; that is expected.
-# Called by the role at apply time, by mini-pig-firewall.timer
-# periodically, and on boot via WantedBy=multi-user.target.
+# Type=oneshot, no RemainAfterExit: each start re-asserts the ruleset
+# (idempotent; "inactive (dead)" between runs is expected).
+# After=network-online, NOT Before=network-pre: re-applying mid NIC bring-up
+# (`nft -f` atomically delete+recreates the mpig_* tables) triggers a kernel
+# nftables lockup — suspected dynamic rate-limit set teardown vs packet-path
+# race — that hard-hangs boot on cloud-init hosts that block until
+# network-online (e.g. Scaleway Elastic Metal).
 Description=Mini Pig firewall (idempotent apply + drift check)
-DefaultDependencies=no
-Wants=network-pre.target
-Before=network-pre.target shutdown.target
-After=local-fs.target systemd-modules-load.service
-Conflicts=shutdown.target
+Wants=network-online.target
+After=network-online.target
 ConditionPathExists=/usr/local/sbin/mini-pig-firewall-apply
 
 [Service]

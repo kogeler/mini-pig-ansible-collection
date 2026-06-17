@@ -1,11 +1,12 @@
 {{ ansible_managed | comment }}
 [Unit]
 Description=Mini Pig randomized SNAT (native nft chain at priority srcnat - 10)
-DefaultDependencies=no
-Wants=network-pre.target
-Before=network-pre.target shutdown.target
-After=local-fs.target systemd-modules-load.service nftables.service
-Conflicts=shutdown.target
+# After=network-online, NOT Before=network-pre: same kernel nftables bring-up
+# lockup as mini-pig-firewall.service (re-apply mid NIC bring-up freezes boot
+# on cloud-init hosts). After=nftables.service so the SNAT chain lands after
+# the base ruleset exists.
+Wants=network-online.target
+After=network-online.target nftables.service
 ConditionPathExists=/etc/nftables.d/mpig-randomized-snat.conf
 
 [Service]
