@@ -1,0 +1,84 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# Old-kernel cleanup: keep only the N newest patch versions of each minor
+# (X.Y) line plus the running kernel; purge every other versioned kernel
+# package (image/headers/kbuild/modules). Matches by the version embedded in
+# the package name, so it covers stock, backports and metapackage-tracked
+# kernels alike. Version-less metapackages (linux-image-amd64) never match.
+# Gated as a whole from main.yml on init_apt_kernel_cleanup.
+- name: init | apt-cleanup | gather package facts
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: init | apt-cleanup | list installed kernel-versioned packages
+  ansible.builtin.set_fact:
+    _init_kernel_pkgs: >-
+      {{ ansible_facts.packages.keys()
+         | select('match', '^linux-(image|headers|modules|kbuild|compiler)-.*[0-9]+\.[0-9]+\.[0-9]+')
+         | list }}
+
+- name: init | apt-cleanup | derive running and installed kernel versions
+  ansible.builtin.set_fact:
+    _init_kernel_running_ver: >-
+      {{ ansible_facts['kernel']
+         | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?).*$', '\1') }}
+    _init_kernel_minors: >-
+      {{ _init_kernel_pkgs
+         | map('regex_replace', '^.*?([0-9]+\.[0-9]+)\.[0-9]+.*$', '\1')
+         | unique | list }}
+    _init_kernel_vers: >-
+      {{ _init_kernel_pkgs
+         | map('regex_replace', '^.*?([0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?).*$', '\1')
+         | unique | list }}
+
+- name: init | apt-cleanup | select kernel versions to keep (N newest per minor)
+  ansible.builtin.set_fact:
+    _init_kernel_keep_vers: >-
+      {{ (_init_kernel_keep_vers | default([])) +
+         (_init_kernel_vers
+          | select('match', '^' ~ (item | regex_escape) ~ '\.')
+          | community.general.version_sort | reverse | list)[:init_apt_kernel_versions_keep | int] }}
+  loop: "{{ _init_kernel_minors }}"
+
+- name: init | apt-cleanup | compute old kernel versions to purge
+  ansible.builtin.set_fact:
+    _init_kernel_remove_vers: >-
+      {{ _init_kernel_vers
+         | difference((_init_kernel_keep_vers | default([])) + [_init_kernel_running_ver])
+         | list }}
+
+- name: init | apt-cleanup | resolve old kernel package names
+  ansible.builtin.set_fact:
+    _init_kernel_remove_pkgs: >-
+      {{ _init_kernel_pkgs
+         | select('match', '^.*?(' ~ (_init_kernel_remove_vers | map('regex_escape') | join('|')) ~ ')([^0-9]|$)')
+         | list }}
+  when: _init_kernel_remove_vers | length > 0
+
+# Safety net: the running kernel is already force-kept above, so it must never
+# reach the purge set. Fail loudly before any apt action if it somehow did.
+- name: init | apt-cleanup | guard - never purge the running kernel
+  ansible.builtin.assert:
+    that:
+      - _init_kernel_running_ver not in _init_kernel_remove_vers
+      - >-
+        _init_kernel_remove_pkgs | default([])
+        | select('search', (ansible_facts['kernel'] | regex_escape)) | list | length == 0
+    fail_msg: >-
+      Refusing to remove old kernels: the computed purge set targets the
+      running kernel ({{ ansible_facts['kernel'] }}). Aborting before any
+      package is removed.
+    quiet: true
+  when: _init_kernel_remove_vers | length > 0
+
+- name: init | apt-cleanup | purge old kernel packages
+  ansible.builtin.apt:
+    name: "{{ _init_kernel_remove_pkgs }}"
+    state: absent
+    purge: true
+    autoremove: true
+    update_cache: false
+    force_apt_get: true
+  when: _init_kernel_remove_pkgs | default([]) | length > 0
