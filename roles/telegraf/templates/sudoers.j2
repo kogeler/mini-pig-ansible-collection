@@ -1,0 +1,20 @@
+# Managed by Ansible
+# Defaults!<cmd> !logfile,!syslog,!pam_session keep telegraf's per-interval sudo calls out of the logs.
+{% if telegraf_disk_smart_enable | bool %}
+# inputs.smart (use_sudo)
+telegraf ALL = NOPASSWD: /usr/sbin/smartctl
+Defaults!/usr/sbin/smartctl !logfile, !syslog, !pam_session
+telegraf ALL = NOPASSWD: /usr/sbin/nvme
+Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session
+{% endif %}
+{% if telegraf_lvm_enable | bool %}
+# inputs.lvm (use_sudo) + lvm.py via inputs.exec
+telegraf ALL = NOPASSWD: /usr/sbin/pvs
+Defaults!/usr/sbin/pvs !logfile, !syslog, !pam_session
+telegraf ALL = NOPASSWD: /usr/sbin/vgs
+Defaults!/usr/sbin/vgs !logfile, !syslog, !pam_session
+telegraf ALL = NOPASSWD: /usr/sbin/lvs
+Defaults!/usr/sbin/lvs !logfile, !syslog, !pam_session
+telegraf ALL = NOPASSWD: {{ telegraf_base_dir }}/lvm.py
+Defaults!{{ telegraf_base_dir }}/lvm.py !logfile, !syslog, !pam_session
+{% endif %}
