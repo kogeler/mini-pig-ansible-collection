@@ -138,12 +138,28 @@
   register: _init_apt_kernel_modules_register
   when: init_apt_reboot_if_required | bool
 
+# version_sort (LooseVersion) crashes with "'<' not supported between instances
+# of 'int' and 'str'" on raw /lib/modules names whose components misalign by type
+# (stock amd64 vs meta/xanmod). Normalise to a bare X.Y.Z(-N) version first (as
+# apt-cleanup.yml does) so version_sort only ever sees type-consistent values.
+- name: init | apt | derive running and newest installed kernel versions
+  ansible.builtin.set_fact:
+    _init_apt_running_kernel_ver: >-
+      {{ ansible_facts['kernel']
+         | regex_replace('^([0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?).*$', '\1') }}
+    _init_apt_latest_kernel_ver: >-
+      {{ _init_apt_kernel_modules_register.files | map(attribute='path') | map('basename')
+         | select('match', '^[0-9]+\.[0-9]+\.[0-9]+')
+         | map('regex_replace', '^([0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?).*$', '\1')
+         | community.general.version_sort | last }}
+  when: init_apt_reboot_if_required | bool
+
 - name: init | apt | determine if reboot is required
   ansible.builtin.set_fact:
     _init_apt_will_reboot: >-
       {{
         _init_apt_reboot_required_file_register.stat.exists or
-        (ansible_facts['kernel'] != (_init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last))
+        (_init_apt_running_kernel_ver != _init_apt_latest_kernel_ver)
       }}
   when: init_apt_reboot_if_required | bool
 
@@ -151,8 +167,8 @@
   ansible.builtin.debug:
     msg:
       - "reboot-required file exists: {{ _init_apt_reboot_required_file_register.stat.exists }}"
-      - "running kernel: {{ ansible_facts['kernel'] }}"
-      - "latest installed kernel: {{ _init_apt_kernel_modules_register.files | map(attribute='path') | map('basename') | community.general.version_sort | last }}"
+      - "running kernel: {{ ansible_facts['kernel'] }} ({{ _init_apt_running_kernel_ver }})"
+      - "latest installed kernel: {{ _init_apt_latest_kernel_ver }}"
       - "packages upgraded: {{ _init_apt_upgrade_register.changed | default(false) }}"
       - "packages installed: {{ _init_apt_install_packages_register.changed | default(false) }}"
       - "will reboot: {{ _init_apt_will_reboot | bool }}"
