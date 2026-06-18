@@ -29,6 +29,9 @@
   ## ie, if interval="10s" then always collect on :00, :10, :20, etc.
   round_interval = true
 
+  ## Explicit since the default flips to true in Telegraf 1.40 (no aggregators here).
+  skip_processors_after_aggregators = true
+
   ## Telegraf will send metrics to outputs in batches of at most
   ## metric_batch_size metrics.
   ## This controls the size of writes that Telegraf sends to output plugins.
@@ -749,7 +752,7 @@
 #   #lvs_binary = "/usr/sbin/lvs"
 
 [[inputs.exec]]
-  commands = ["sudo {{ telegraf_base_dir }}/lvm.py"]
+  commands = [["sudo", "{{ telegraf_base_dir }}/lvm.py"]]
   timeout  = "5s"
   data_format = "influx"
   interval = "60s"
@@ -1134,7 +1137,7 @@
 
 {% if telegraf_rpi_gpu_temp_enable %}
 [[inputs.exec]]
-  commands = [ "/usr/bin/vcgencmd measure_temp" ]
+  commands = [["/usr/bin/vcgencmd", "measure_temp"]]
   name_override = "rpi_gpu_temperature"
   data_format = "grok"
   grok_patterns = ["%{NUMBER:value:float}"]
@@ -1143,6 +1146,6 @@
 
 [[inputs.exec]]
   commands = [
-    "/bin/sh -c 'echo \"linux_kernel_info,version=$(cat /proc/sys/kernel/osrelease | tr -d \"\\n\")\" value=1'"
+    ["/bin/sh", "-c", "echo \"linux_kernel_info,version=$(cat /proc/sys/kernel/osrelease | tr -d \"\\n\")\" value=1"]
   ]
   data_format = "influx"

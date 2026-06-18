@@ -135,19 +135,14 @@
       notify: restart telegraf on host
       when: telegraf_rpi_gpu_temp_enable | bool
 
-    - name: telegraf | add telegraf user to sudoers.d
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers.d/telegraf
-        line: "{{ item }}"
-        state: "{% if telegraf_disk_smart_enable | bool %}present{% else %}absent{% endif %}"
-        mode: 0600
-        create: yes
+    - name: telegraf | manage /etc/sudoers.d/telegraf
+      ansible.builtin.template:
+        src: sudoers.j2
+        dest: /etc/sudoers.d/telegraf
+        owner: root
+        group: root
+        mode: "0600"
         validate: "visudo -cf %s"
-      loop:
-        - "telegraf ALL = NOPASSWD: /usr/sbin/smartctl"
-        - "Defaults!/usr/sbin/smartctl !logfile, !syslog, !pam_session"
-        - "telegraf ALL = NOPASSWD: /usr/sbin/nvme"
-        - "Defaults!/usr/sbin/nvme !logfile, !syslog, !pam_session"
       notify: restart telegraf on host
 
     - name: telegraf | configure UPS monitoring (NUT)
