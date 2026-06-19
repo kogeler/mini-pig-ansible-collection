@@ -188,6 +188,12 @@ naive_proxy_config_dir: /opt/naive-proxy
 
 # -- Network ------------------------------------------------------------------
 
+# Optional: attach the pod to a pre-existing podman network instead of the
+# default one. Empty string keeps podman's default network. The role never
+# creates or manages networks — create it out-of-band and set this to its
+# name to attach (e.g. a dual-stack network providing IPv6 egress via NAT).
+naive_proxy_pod_network: ""
+
 naive_proxy_listen_port: 443
 # External port visible to clients (e.g. after port forwarding).
 # Used in client configs. Defaults to listen_port.

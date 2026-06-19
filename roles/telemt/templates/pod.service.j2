@@ -9,6 +9,9 @@ RemainAfterExit=yes
 ExecStartPre=-/usr/bin/podman pod rm --ignore {{ _telemt_pod_name }}
 ExecStart=/usr/bin/podman pod create \
         --name {{ _telemt_pod_name }} \
+{% if telemt_pod_network | length > 0 %}
+        --network {{ telemt_pod_network }} \
+{% endif %}
 {% if telemt_publish_api and telemt_api_enabled %}
         --publish {{ telemt_api_bind }}:{{ telemt_api_port }}:{{ telemt_api_port }} \
 {% endif %}
