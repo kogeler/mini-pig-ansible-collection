@@ -9,6 +9,9 @@ RemainAfterExit=yes
 ExecStartPre=-/usr/bin/podman pod rm --ignore {{ _naive_proxy_pod_name }}
 ExecStart=/usr/bin/podman pod create \
         --name {{ _naive_proxy_pod_name }} \
+{% if naive_proxy_pod_network | length > 0 %}
+        --network {{ naive_proxy_pod_network }} \
+{% endif %}
 {% if naive_proxy_molecule_mode %}
         --publish {{ _naive_proxy_pebble_port }}:{{ _naive_proxy_pebble_port }} \
         --publish {{ _naive_proxy_pebble_mgmt_port }}:{{ _naive_proxy_pebble_mgmt_port }} \

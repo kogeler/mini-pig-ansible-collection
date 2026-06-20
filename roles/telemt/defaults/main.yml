@@ -17,6 +17,12 @@ telemt_container_config_path: /run/telemt/config.toml
 
 # -- Network ------------------------------------------------------------------
 
+# Optional: attach the pod to a pre-existing podman network instead of the
+# default one. Empty string keeps podman's default network. The role never
+# creates or manages networks — create it out-of-band and set this to its
+# name to attach (e.g. a dual-stack network providing IPv6 egress via NAT).
+telemt_pod_network: ""
+
 telemt_listen_port: 443
 
 # -- Container options ---------------------------------------------------------
