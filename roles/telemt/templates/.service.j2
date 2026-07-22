@@ -22,6 +22,7 @@ ExecStartPre=-/usr/bin/podman pull \
 ExecStart=/usr/bin/podman container run \
         --cidfile=%t/%n.ctr-id \
         --cgroups=split \
+        --log-driver=passthrough \
         --sdnotify=conmon \
         --replace \
         --name {{ _telemt_container_name }} \
