@@ -132,15 +132,4 @@ jobs:
       # so this works whether or not the role has a shared base file.
       - name: Molecule test
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
-        run: |
-          set +e
-          molecule -c molecule/shared/base.yml test -s "${{ matrix.scenario }}"
-          rc=$?
-
-          # TEMPORARY CI DIAGNOSTICS: remove after the Podman restart failure is resolved.
-          diagnostics="molecule/${{ matrix.scenario }}/diagnostics.sh"
-          if [ "$rc" -ne 0 ] && [ -f "$diagnostics" ]; then
-            bash "$diagnostics" || true
-          fi
-
-          exit "$rc"
+        run: molecule -c molecule/shared/base.yml test -s "${{ matrix.scenario }}"
