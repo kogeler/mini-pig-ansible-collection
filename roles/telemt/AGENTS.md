@@ -102,7 +102,9 @@ Internal ports:
 
 ```text
 restart telemt-pod
-  -> notifies: restart telemt-decoy, restart telemt
+  -> stops: telemt, decoy, Pebble (molecule only)
+  -> restarts: pod
+  -> notifies: restart Pebble (molecule only), restart decoy, restart telemt
 
 restart telemt-pebble   molecule-only Pebble unit
 restart telemt-decoy    Caddy decoy container

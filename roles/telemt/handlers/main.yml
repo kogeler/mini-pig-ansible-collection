@@ -3,6 +3,18 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+- name: stop telemt containers before restarting telemt-pod
+  listen: restart telemt-pod
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: >-
+    {{
+      [_telemt_systemd_unit_name, _telemt_decoy_systemd_unit_name]
+      + ([_telemt_pebble_systemd_unit_name] if telemt_molecule_mode else [])
+    }}
+  ignore_errors: "{{ ansible_check_mode }}"
+
 - name: restart telemt-pod
   ansible.builtin.systemd:
     name: "{{ _telemt_pod_systemd_unit_name }}"
@@ -11,6 +23,7 @@
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"
   notify:
+    - restart telemt-pebble
     - restart telemt-decoy
     - restart telemt
 
@@ -21,6 +34,7 @@
     daemon_reload: true
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"
+  when: telemt_molecule_mode
 
 - name: restart telemt-decoy
   ansible.builtin.systemd:
