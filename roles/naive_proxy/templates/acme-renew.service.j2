@@ -36,7 +36,9 @@ ExecStart=/bin/sh -c '\
         --fullchain-file /certs/fullchain.pem \
         --reloadcmd true; \
         rc=$$?; \
-        /bin/systemctl restart {{ _naive_proxy_haproxy_unit }}; \
+        if [ "$$rc" -eq 0 ]; then \
+            /bin/systemctl reload {{ _naive_proxy_haproxy_unit }} || exit $$?; \
+        fi; \
         exit $$rc'
 # exit 0 = issued/renewed, exit 2 = valid cert exists (skip). Both are success.
 SuccessExitStatus=0 2

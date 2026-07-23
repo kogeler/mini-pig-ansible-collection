@@ -496,11 +496,13 @@ journalctl -u podman-naive-anytls.service -f
 # Manual certificate issue/renew
 systemctl start naive-acme-renew.service
 
-# Restart runtime services
-systemctl restart podman-naive-haproxy.service
-systemctl restart podman-naive-backend.service
-systemctl restart podman-naive-decoy.service
+# Reload HAProxy configuration and certificates without recreating its cgroup
+systemctl reload podman-naive-haproxy.service
 ```
+
+Apply configuration changes through the role. Its handlers stop each affected
+container, wait for all `--cgroups=split` child processes to leave the systemd
+cgroup, and only then start the service again.
 
 ## Idempotency
 

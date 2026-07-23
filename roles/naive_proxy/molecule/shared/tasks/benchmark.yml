@@ -64,11 +64,11 @@
               --ignore -t 10 \
               --cidfile=%t/%n.ctr-id
 
-- name: Start naive client container
-  ansible.builtin.systemd:
-    name: "{{ naive_client_unit }}"
-    state: restarted
-    daemon_reload: true
+- name: Restart naive client container with cgroup cleanup
+  ansible.builtin.include_tasks: restart-container-unit.yml
+  vars:
+    _naive_proxy_molecule_lifecycle_label: Naive client
+    _naive_proxy_molecule_lifecycle_unit: "{{ naive_client_unit }}"
 
 - name: Wait for naive client to start listening
   ansible.builtin.wait_for:

@@ -296,12 +296,13 @@ systemctl status podman-telemt-decoy.service
 # Logs
 journalctl -u podman-telemt.service -f
 
-# Restart (restarts the container, pod stays up)
-systemctl restart podman-telemt.service
-
 # Stop everything (pod + containers)
 systemctl stop podman-telemt-pod.service
 ```
+
+Apply configuration changes through the role. Its restart handlers stop the
+affected container, wait for all child cgroup processes to exit, and then start
+the service again.
 
 ## Proxy links
 

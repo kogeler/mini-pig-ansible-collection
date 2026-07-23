@@ -2,68 +2,275 @@
 # Copyright © 2026 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+- name: naive-proxy | handlers | stop containers before restarting naive-pod
+  listen: naive-proxy | handlers | restart naive-pod
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    daemon_reload: true
+    state: stopped
+  loop: >-
+    {{
+      [_naive_proxy_backend_unit]
+      + ([_naive_proxy_anytls_unit] if naive_proxy_anytls_enabled else [])
+      + [_naive_proxy_haproxy_unit, _naive_proxy_decoy_unit]
+      + ([_naive_proxy_pebble_unit] if naive_proxy_molecule_mode else [])
+    }}
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | wait for pod container cgroups to be released
+  listen: naive-proxy | handlers | restart naive-pod
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ item }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  loop: >-
+    {{
+      [_naive_proxy_backend_unit]
+      + ([_naive_proxy_anytls_unit] if naive_proxy_anytls_enabled else [])
+      + [_naive_proxy_haproxy_unit, _naive_proxy_decoy_unit]
+      + ([_naive_proxy_pebble_unit] if naive_proxy_molecule_mode else [])
+    }}
+  register: _naive_proxy_pod_child_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_pod_child_cgroup_procs.rc != 0
+    or (_naive_proxy_pod_child_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
 - name: naive-proxy | handlers | restart naive-pod
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_pod_unit }}"
     enabled: true
     daemon_reload: true
     state: restarted
-  register: _naive_proxy_restart_pod
-  until: _naive_proxy_restart_pod is succeeded
-  retries: 6
-  delay: 5
   ignore_errors: "{{ ansible_check_mode }}"
   notify:
+    - naive-proxy | handlers | restart naive-pebble
     - naive-proxy | handlers | restart naive-decoy
     - naive-proxy | handlers | restart naive-haproxy
     - naive-proxy | handlers | restart naive-backend
     - naive-proxy | handlers | restart naive-anytls
 
-- name: naive-proxy | handlers | restart naive-decoy
+- name: naive-proxy | handlers | stop naive-pebble before restart
+  listen: naive-proxy | handlers | restart naive-pebble
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_pebble_unit }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: naive_proxy_molecule_mode
+
+- name: naive-proxy | handlers | stop naive-decoy before restart
+  listen: naive-proxy | handlers | restart naive-decoy
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_decoy_unit }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | stop naive-haproxy before restart
+  listen: naive-proxy | handlers | restart naive-haproxy
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_haproxy_unit }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | stop naive-backend before restart
+  listen: naive-proxy | handlers | restart naive-backend
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_backend_unit }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: naive-proxy | handlers | stop naive-anytls before restart
+  listen: naive-proxy | handlers | restart naive-anytls
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_anytls_unit }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: naive_proxy_anytls_enabled
+
+- name: naive-proxy | handlers | wait for naive-pebble cgroup to be released
+  listen: naive-proxy | handlers | restart naive-pebble
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_pebble_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_pebble_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_pebble_cgroup_procs.rc != 0
+    or (_naive_proxy_pebble_cgroup_procs.stdout | trim | length == 0)
+  when:
+    - naive_proxy_molecule_mode
+    - not ansible_check_mode
+
+- name: naive-proxy | handlers | wait for naive-decoy cgroup to be released
+  listen: naive-proxy | handlers | restart naive-decoy
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_decoy_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_decoy_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_decoy_cgroup_procs.rc != 0
+    or (_naive_proxy_decoy_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: naive-proxy | handlers | wait for naive-haproxy cgroup to be released
+  listen: naive-proxy | handlers | restart naive-haproxy
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_haproxy_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_haproxy_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_haproxy_cgroup_procs.rc != 0
+    or (_naive_proxy_haproxy_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: naive-proxy | handlers | wait for naive-backend cgroup to be released
+  listen: naive-proxy | handlers | restart naive-backend
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_backend_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_backend_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_backend_cgroup_procs.rc != 0
+    or (_naive_proxy_backend_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: naive-proxy | handlers | wait for naive-anytls cgroup to be released
+  listen: naive-proxy | handlers | restart naive-anytls
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_anytls_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_anytls_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_anytls_cgroup_procs.rc != 0
+    or (_naive_proxy_anytls_cgroup_procs.stdout | trim | length == 0)
+  when:
+    - naive_proxy_anytls_enabled
+    - not ansible_check_mode
+
+- name: naive-proxy | handlers | start naive-pebble after restart
+  listen: naive-proxy | handlers | restart naive-pebble
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_pebble_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: naive_proxy_molecule_mode
+
+- name: naive-proxy | handlers | start naive-decoy after restart
+  listen: naive-proxy | handlers | restart naive-decoy
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_decoy_unit }}"
     enabled: true
     daemon_reload: true
-    state: restarted
-  register: _naive_proxy_restart_decoy
-  until: _naive_proxy_restart_decoy is succeeded
-  retries: 6
-  delay: 5
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: naive-proxy | handlers | restart naive-haproxy
+- name: naive-proxy | handlers | start naive-haproxy after restart
+  listen: naive-proxy | handlers | restart naive-haproxy
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_haproxy_unit }}"
     enabled: true
     daemon_reload: true
-    state: restarted
-  register: _naive_proxy_restart_haproxy
-  until: _naive_proxy_restart_haproxy is succeeded
-  retries: 6
-  delay: 5
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: naive-proxy | handlers | restart naive-backend
+- name: naive-proxy | handlers | start naive-backend after restart
+  listen: naive-proxy | handlers | restart naive-backend
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_backend_unit }}"
     enabled: true
     daemon_reload: true
-    state: restarted
-  register: _naive_proxy_restart_backend
-  until: _naive_proxy_restart_backend is succeeded
-  retries: 6
-  delay: 5
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: naive-proxy | handlers | restart naive-anytls
+- name: naive-proxy | handlers | start naive-anytls after restart
+  listen: naive-proxy | handlers | restart naive-anytls
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_anytls_unit }}"
     enabled: true
     daemon_reload: true
-    state: restarted
-  register: _naive_proxy_restart_anytls
-  until: _naive_proxy_restart_anytls is succeeded
-  retries: 6
-  delay: 5
-  when: naive_proxy_anytls_enabled
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
+  when: naive_proxy_anytls_enabled
