@@ -14,6 +14,7 @@ ExecStartPre=/bin/sh -c '\
 ExecStart=/bin/sh -c '\
         /usr/bin/podman run --rm \
         --cgroups=split \
+        --log-driver=passthrough \
         --pod={{ _naive_proxy_pod_name }} \
         --volume {{ _naive_proxy_certs_dir }}:/certs \
         --volume {{ _naive_proxy_acme_data_dir }}:/acme.sh \
@@ -35,7 +36,9 @@ ExecStart=/bin/sh -c '\
         --fullchain-file /certs/fullchain.pem \
         --reloadcmd true; \
         rc=$$?; \
-        /bin/systemctl restart {{ _naive_proxy_haproxy_unit }}; \
+        if [ "$$rc" -eq 0 ]; then \
+            /bin/systemctl reload {{ _naive_proxy_haproxy_unit }} || exit $$?; \
+        fi; \
         exit $$rc'
 # exit 0 = issued/renewed, exit 2 = valid cert exists (skip). Both are success.
 SuccessExitStatus=0 2

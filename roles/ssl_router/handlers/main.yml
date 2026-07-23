@@ -3,10 +3,43 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: restart ssl-router
+- name: stop ssl-router before restart
+  listen: restart ssl-router
+  ansible.builtin.systemd:
+    name: "{{ _ssl_router_systemd_unit_name }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: wait for ssl-router cgroup to be released
+  listen: restart ssl-router
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _ssl_router_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _ssl_router_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _ssl_router_cgroup_procs.rc != 0
+    or (_ssl_router_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: start ssl-router after restart
+  listen: restart ssl-router
   ansible.builtin.systemd:
     name: "{{ _ssl_router_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
-    state: restarted
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"

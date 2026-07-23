@@ -226,11 +226,11 @@
               --ignore -t 10 \
               --cidfile=%t/%n.ctr-id
 
-- name: anytls-bench | start sing-box client container
-  ansible.builtin.systemd:
-    name: "{{ singbox_anytls_client_unit }}"
-    state: restarted
-    daemon_reload: true
+- name: anytls-bench | restart sing-box client with cgroup cleanup
+  ansible.builtin.include_tasks: restart-container-unit.yml
+  vars:
+    _naive_proxy_molecule_lifecycle_label: AnyTLS sing-box client
+    _naive_proxy_molecule_lifecycle_unit: "{{ singbox_anytls_client_unit }}"
 
 - name: anytls-bench | wait for sing-box client container to report active
   ansible.builtin.systemd:

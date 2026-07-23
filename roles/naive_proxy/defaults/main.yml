@@ -57,7 +57,7 @@ naive_proxy_users: {}
 # Official standalone naive binary from klzgrad/naiveproxy releases.
 # Releases: https://github.com/klzgrad/naiveproxy/releases
 
-naive_proxy_naive_version: "v149.0.7827.114-1"
+naive_proxy_naive_version: "v150.0.7871.63-1"
 naive_proxy_padding: true
 # Base image for the naive backend container build.
 naive_proxy_backend_base_image: "docker.io/library/ubuntu"
@@ -105,7 +105,7 @@ naive_proxy_acme_image_tag: "latest"
 # to an explicit stable tag (NOT `latest`) for reproducibility — bumping to a
 # newer stable sing-box release is the expected maintenance path.
 naive_proxy_singbox_image: "ghcr.io/sagernet/sing-box"
-naive_proxy_singbox_image_tag: "v1.13.13"
+naive_proxy_singbox_image_tag: "v1.13.14"
 
 # -- ACME / TLS ---------------------------------------------------------------
 

@@ -22,6 +22,7 @@ ExecStartPre=/bin/sh -c '\
 ExecStart=/usr/bin/podman container run \
         --cidfile=%t/%n.ctr-id \
         --cgroups=split \
+        --log-driver=passthrough \
         --sdnotify=conmon \
         --replace \
         --name {{ _telemt_pebble_name }} \

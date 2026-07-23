@@ -201,6 +201,7 @@
     group: root
     mode: "0644"
   when: naive_proxy_molecule_mode
+  notify: naive-proxy | handlers | restart naive-pebble
 
 - name: naive-proxy | config | copy pebble systemd unit
   ansible.builtin.template:
@@ -210,3 +211,4 @@
     group: root
     mode: "0600"
   when: naive_proxy_molecule_mode
+  notify: naive-proxy | handlers | restart naive-pebble

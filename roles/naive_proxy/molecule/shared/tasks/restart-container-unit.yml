@@ -1,0 +1,39 @@
+---
+# Restart a Molecule-only Podman systemd unit without racing cleanup of the
+# child cgroups created by --cgroups=split.
+
+- name: Molecule | stop container unit | {{ _naive_proxy_molecule_lifecycle_label }}
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_molecule_lifecycle_unit }}"
+    daemon_reload: true
+    state: stopped
+
+- name: Molecule | wait for cgroup release | {{ _naive_proxy_molecule_lifecycle_label }}
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _naive_proxy_molecule_lifecycle_unit }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _naive_proxy_molecule_container_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _naive_proxy_molecule_container_cgroup_procs.rc != 0
+    or
+    (_naive_proxy_molecule_container_cgroup_procs.stdout | trim | length == 0)
+
+- name: Molecule | start container unit | {{ _naive_proxy_molecule_lifecycle_label }}
+  ansible.builtin.systemd:
+    name: "{{ _naive_proxy_molecule_lifecycle_unit }}"
+    enabled: true
+    daemon_reload: true
+    state: started

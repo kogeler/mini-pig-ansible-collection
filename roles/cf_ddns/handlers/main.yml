@@ -3,9 +3,43 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: restart cf_ddns
+- name: stop cf_ddns before restart
+  listen: restart cf_ddns
   ansible.builtin.systemd:
     name: "{{ _cf_ddns_systemd_unit_name }}"
-    enabled: yes
-    daemon_reload: yes
-    state: restarted
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: wait for cf_ddns cgroup to be released
+  listen: restart cf_ddns
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _cf_ddns_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _cf_ddns_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _cf_ddns_cgroup_procs.rc != 0
+    or (_cf_ddns_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: start cf_ddns after restart
+  listen: restart cf_ddns
+  ansible.builtin.systemd:
+    name: "{{ _cf_ddns_systemd_unit_name }}"
+    enabled: true
+    daemon_reload: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"

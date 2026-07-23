@@ -39,6 +39,9 @@ ExecStart=/usr/bin/podman container run \
         --volume {{ _naive_proxy_certs_dir }}:/certs:ro{% if naive_proxy_selinux_relabel %},Z{% endif %} \
         --pod={{ _naive_proxy_pod_name }} \
         {{ naive_proxy_haproxy_image }}:{{ naive_proxy_haproxy_image_tag }}
+ExecReload=/usr/bin/podman kill \
+        --signal=USR2 \
+        {{ _naive_proxy_haproxy_name }}
 ExecStop=/usr/bin/podman stop \
         --ignore -t 10 \
         --cidfile=%t/%n.ctr-id

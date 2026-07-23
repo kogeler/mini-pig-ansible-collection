@@ -158,7 +158,7 @@ helsinki - AnyTLS
 
 | Variable | Default | Description |
 |---|---|---|
-| `naive_proxy_naive_version` | `"v149.0.7827.114-1"` | Standalone naive release tag |
+| `naive_proxy_naive_version` | `"v150.0.7871.63-1"` | Standalone naive release tag |
 | `naive_proxy_padding` | `true` | Enable `--padding` on the backend |
 | `naive_proxy_backend_base_image` | `"docker.io/library/ubuntu"` | Base image for the backend container build |
 | `naive_proxy_backend_base_image_tag` | `"22.04"` | Base image tag |
@@ -496,11 +496,13 @@ journalctl -u podman-naive-anytls.service -f
 # Manual certificate issue/renew
 systemctl start naive-acme-renew.service
 
-# Restart runtime services
-systemctl restart podman-naive-haproxy.service
-systemctl restart podman-naive-backend.service
-systemctl restart podman-naive-decoy.service
+# Reload HAProxy configuration and certificates without recreating its cgroup
+systemctl reload podman-naive-haproxy.service
 ```
+
+Apply configuration changes through the role. Its handlers stop each affected
+container, wait for all `--cgroups=split` child processes to leave the systemd
+cgroup, and only then start the service again.
 
 ## Idempotency
 

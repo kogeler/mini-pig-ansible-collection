@@ -185,7 +185,7 @@ client before arming a capture.
 # (on target — invoke directly or via TTY bridge with `printf … | nc …`)
 
 # 1) Confirm haproxy.cfg has the debug knobs and admin socket. If not,
-#    patch and `systemctl restart podman-naive-haproxy.service`.
+#    patch and `systemctl reload podman-naive-haproxy.service`.
 sudo grep -E 'ring h2trace|stats socket' /opt/naive-proxy/haproxy.cfg
 
 # 2) Enable H2 trace. Trace state resets on HAProxy restart, so re-run
@@ -299,7 +299,7 @@ TCP path was.
 - **The role does not render any of these debug knobs.** Adding
   `ring h2trace`, the admin socket, or the `tune.h2.*` workarounds is
   manual editing of `/opt/naive-proxy/haproxy.cfg` followed by
-  `systemctl restart podman-naive-haproxy.service`. Always back up the
+  `systemctl reload podman-naive-haproxy.service`. Always back up the
   current cfg first; the role's idempotent re-run will overwrite your
   edits the next time the playbook runs.
 - **Two-sided sync.** When you fix a target-side script directly on

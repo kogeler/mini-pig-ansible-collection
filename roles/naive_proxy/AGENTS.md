@@ -288,7 +288,7 @@ The two benchmarks (`tasks/benchmark.yml`, `tasks/singbox-benchmark.yml`) own on
 
 - `naive_proxy_listen_port` — default `443`
 - `naive_proxy_external_port` — public port advertised to clients
-- `naive_proxy_naive_version` — release tag, for example `v149.0.7827.114-1`
+- `naive_proxy_naive_version` — release tag, for example `v150.0.7871.63-1`
 - `naive_proxy_padding` — default `true`; enables `--padding` on the backend
 - `naive_proxy_backend_base_image` — default `docker.io/library/ubuntu`; base image for backend container build
 - `naive_proxy_backend_base_image_tag` — default `22.04`
@@ -392,13 +392,25 @@ All internals are `_naive_proxy_*`.
 
 ```text
 restart naive-pod
-  -> notifies: restart naive-haproxy, restart naive-decoy, restart naive-backend, restart naive-anytls
+  -> stops and waits for every child cgroup
+  -> recreates the pod
+  -> notifies: restart naive-pebble, restart naive-decoy, restart naive-haproxy,
+               restart naive-backend, restart naive-anytls
 
+restart naive-pebble     triggered by pebble config or unit (molecule mode only)
 restart naive-haproxy    triggered by haproxy.cfg or haproxy.service.j2
 restart naive-decoy      triggered by Caddyfile, index.html, or decoy.service.j2
 restart naive-backend    triggered by image rebuild or backend.service.j2
 restart naive-anytls     triggered by anytls.json, anytls.service.j2, or anytls static cert (when enabled)
 ```
+
+Every container restart topic runs `stop -> recursive cgroup.procs polling ->
+start`. The recursive check is required because `--cgroups=split` keeps conmon
+and the payload in child cgroups. Do not replace it with `state: restarted`,
+fixed pauses, or retries around a failing restart; those hide the
+`219/CGROUP` cleanup race instead of observing the actual lifecycle state.
+Molecule-only benchmark container units use the same sequence through
+`molecule/shared/tasks/restart-container-unit.yml`.
 
 ## Systemd unit dependency graph
 

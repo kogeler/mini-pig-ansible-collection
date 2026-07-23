@@ -59,11 +59,11 @@
       [Install]
       WantedBy=multi-user.target
 
-- name: Start iperf3 benchmark server inside naive pod via systemd
-  ansible.builtin.systemd:
-    name: "{{ iperf_unit }}"
-    state: restarted
-    daemon_reload: true
+- name: Restart iperf3 benchmark server with cgroup cleanup
+  ansible.builtin.include_tasks: restart-container-unit.yml
+  vars:
+    _naive_proxy_molecule_lifecycle_label: Iperf3 server
+    _naive_proxy_molecule_lifecycle_unit: "{{ iperf_unit }}"
 
 - name: Wait for iperf3 benchmark service to become active
   ansible.builtin.systemd:
