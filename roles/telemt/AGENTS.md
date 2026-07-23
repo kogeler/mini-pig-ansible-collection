@@ -111,6 +111,12 @@ restart telemt-decoy    Caddy decoy container
 restart telemt          telemt proxy container
 ```
 
+Each container restart is implemented as stop, polling until every
+`cgroup.procs` in the unit's cgroup tree is empty or the tree is gone, then
+start. The recursive check is required because `--cgroups=split` puts conmon
+and the payload in child cgroups. Podman 4.9 on Ubuntu 24.04 can otherwise race
+an immediate systemd restart and fail `ExecStartPre` with `219/CGROUP`.
+
 In molecule mode the Pebble setup is deliberately before `meta: flush_handlers`
 so the decoy container never starts with a missing `pebble-root.pem` bind
 source.

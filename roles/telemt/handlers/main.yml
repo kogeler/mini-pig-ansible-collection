@@ -27,27 +27,126 @@
     - restart telemt-decoy
     - restart telemt
 
-- name: restart telemt-pebble
+- name: stop telemt-pebble before restart
+  listen: restart telemt-pebble
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pebble_systemd_unit_name }}"
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: telemt_molecule_mode
+
+- name: stop telemt-decoy before restart
+  listen: restart telemt-decoy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_decoy_systemd_unit_name }}"
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: stop telemt before restart
+  listen: restart telemt
+  ansible.builtin.systemd:
+    name: "{{ _telemt_systemd_unit_name }}"
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: wait for telemt-pebble cgroup to be released
+  listen: restart telemt-pebble
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _telemt_pebble_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _telemt_pebble_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _telemt_pebble_cgroup_procs.rc != 0
+    or (_telemt_pebble_cgroup_procs.stdout | trim | length == 0)
+  when:
+    - telemt_molecule_mode
+    - not ansible_check_mode
+
+- name: wait for telemt-decoy cgroup to be released
+  listen: restart telemt-decoy
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _telemt_decoy_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _telemt_decoy_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _telemt_decoy_cgroup_procs.rc != 0
+    or (_telemt_decoy_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: wait for telemt cgroup to be released
+  listen: restart telemt
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _telemt_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _telemt_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _telemt_cgroup_procs.rc != 0
+    or (_telemt_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: start telemt-pebble after restart
+  listen: restart telemt-pebble
   ansible.builtin.systemd:
     name: "{{ _telemt_pebble_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
-    state: restarted
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
   when: telemt_molecule_mode
 
-- name: restart telemt-decoy
+- name: start telemt-decoy after restart
+  listen: restart telemt-decoy
   ansible.builtin.systemd:
     name: "{{ _telemt_decoy_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
-    state: restarted
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: restart telemt
+- name: start telemt after restart
+  listen: restart telemt
   ansible.builtin.systemd:
     name: "{{ _telemt_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
-    state: restarted
+    state: started
   ignore_errors: "{{ ansible_check_mode }}"
