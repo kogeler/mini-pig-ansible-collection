@@ -26,6 +26,13 @@ http {
 }
 
 stream {
+{% if ssl_router_acme_alpn_port %}
+    map $ssl_preread_alpn_protocols $upstream {
+        ~\bacme-tls/1\b      acme_solver;
+        default              $name;
+    }
+
+{% endif %}
     map $ssl_preread_server_name $name {
 {% for key, value in ssl_router_upstream_map.items() | sort %}
         ~^{{ value.regex }}$    {{ key }};
@@ -37,6 +44,12 @@ stream {
         server 0.0.0.1:1;
     }
 
+{% if ssl_router_acme_alpn_port %}
+    upstream acme_solver {
+        server 127.0.0.1:{{ ssl_router_acme_alpn_port }};
+    }
+
+{% endif %}
 {% for key, value in ssl_router_upstream_map.items() | sort %}
     upstream {{ key }} {
         server {{ value.host | default(ansible_facts['default_ipv4']['address']) }}:{{ value.port }};
@@ -46,7 +59,7 @@ stream {
     server {
         listen      [::]:{{ ssl_router_https_port }};
         listen      {{ ssl_router_https_port }};
-        proxy_pass  $name;
+        proxy_pass  {% if ssl_router_acme_alpn_port %}$upstream{% else %}$name{% endif %};
         proxy_connect_timeout 1s;
         ssl_preread on;
         

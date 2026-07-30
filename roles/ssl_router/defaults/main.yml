@@ -15,3 +15,7 @@ ssl_router_upstream_map: {}
 
 ssl_router_preread_buffer_size: "32k"
 ssl_router_proxy_buffer_size: "64k"
+
+# local TCP port of an ACME TLS-ALPN-01 solver; when set, connections
+# with ALPN "acme-tls/1" are routed to it instead of the SNI map
+ssl_router_acme_alpn_port: ""
