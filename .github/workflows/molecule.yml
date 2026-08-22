@@ -9,13 +9,13 @@ on:
 jobs:
   detect:
     name: Detect changed roles and scenarios
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       has_jobs: ${{ steps.build-matrix.outputs.has_jobs }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
@@ -92,14 +92,14 @@ jobs:
     name: "${{ matrix.role }} / ${{ matrix.scenario }}"
     needs: detect
     if: needs.detect.outputs.has_jobs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.detect.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           path: ansible_collections/kogeler/mini_pig
 
