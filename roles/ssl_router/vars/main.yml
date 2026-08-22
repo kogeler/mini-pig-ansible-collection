@@ -5,3 +5,12 @@
 
 _ssl_router_container_name: ssl-router
 _ssl_router_systemd_unit_name: "podman-{{ _ssl_router_container_name }}.service"
+_ssl_router_effective_resolvers: >-
+  {{
+    ssl_router_resolvers
+    if ssl_router_resolvers | length > 0
+    else (
+      ansible_facts.get('dns', {}).get('nameservers', [])
+      | default(['127.0.0.53'], true)
+    )
+  }}

@@ -5,8 +5,8 @@
 - name: naive-proxy | services | flush handlers
   ansible.builtin.meta: flush_handlers
 
-# Service start order follows the same dependency chain as the units:
-# pod -> decoy -> haproxy -> backend.
+# Start the production runtime after the pod exists. Pebble is started later by
+# acme.yml because only molecule mode needs it.
 - name: naive-proxy | services | start pod service
   ansible.builtin.systemd:
     name: "{{ _naive_proxy_pod_unit }}"

@@ -41,26 +41,6 @@
     state: started
   when: mp_driver == 'podman'
 
-# The client-config QR codes are generated AND decoded on the CONTROLLER (the
-# role + verify delegate the file work to localhost), entirely with the
-# kogeler.mini_pig.qr_code / qr_decode modules — no external tools. So the dep
-# is qrcode + Pillow on the controller's Python. Only the `default` scenario
-# exercises QR (molecule_naive_proxy_client_qr_enabled), so ensure it only
-# there. delegate_to: localhost installs it for the same interpreter the
-# modules run under; a no-op when it is already present (e.g. a dev venv).
-- name: Ensure qrcode + Pillow on the controller (QR scenario only)
-  ansible.builtin.pip:
-    name:
-      - qrcode
-      - pillow
-    state: present
-    # The runner's python may be PEP 668 externally-managed; a no-op in a venv.
-    break_system_packages: true
-  delegate_to: localhost
-  run_once: true
-  become: false
-  when: molecule_naive_proxy_client_qr_enabled | default(false) | bool
-
 - name: Download naive client
   ansible.builtin.get_url:
     url: "https://github.com/klzgrad/naiveproxy/releases/download/{{ naive_proxy_naive_version }}/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64.tar.xz"

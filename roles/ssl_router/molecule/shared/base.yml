@@ -1,0 +1,27 @@
+---
+dependency:
+  name: galaxy
+
+driver:
+  name: podman
+
+verifier:
+  name: ansible
+
+provisioner:
+  name: ansible
+  options:
+    D: true
+  inventory:
+    host_vars:
+      molecule-ssl-router:
+        mp_driver: podman
+
+ansible:
+  cfg:
+    defaults:
+      callbacks_enabled: ansible.posix.profile_tasks
+  playbooks:
+    prepare: ../shared/prepare.yml
+    converge: ../shared/converge.yml
+    verify: ../shared/verify.yml

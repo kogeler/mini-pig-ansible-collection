@@ -49,7 +49,8 @@ naive_proxy_external_ip_manual: {}
 # -- Users (required) ---------------------------------------------------------
 # Dict of name -> password.  At least one user must be defined.
 # Passwords are used for HTTP basic auth (Proxy-Authorization header).
-# Users are configured in BOTH HAProxy (userlist) and naive backend (--listen).
+# HAProxy owns Naive HTTP authentication; the backend listener deliberately has
+# no user database. The same passwords are also AnyTLS shared secrets.
 
 naive_proxy_users: {}
 
@@ -65,39 +66,34 @@ naive_proxy_backend_base_image_tag: "22.04"
 
 # -- Images -------------------------------------------------------------------
 
-# Pinned to the explicit minor `3.3.10-alpine` (NOT the rolling
-# `3.3-alpine`) because `v3.3.10` is the first 3.3.x release that
-# carries the upstream fix for the H2 PADDED-DATA padding-drain bug
+# Pinned to the explicit patch `3.4.3-alpine` (NOT the rolling
+# `3.4-alpine`) and kept above `v3.3.10`, the first 3.3.x release that
+# carried the upstream fix for the H2 PADDED-DATA padding-drain bug
 # we hit in production (haproxy#3354). The official Docker Hub
 # library/haproxy image leaves OCI image labels empty
 # (`org.opencontainers.image.version` etc. are not set), so the only
-# way to pin to a known-good build is the explicit minor tag — the
-# image's `HAPROXY_VERSION=3.3.10` ENV and `haproxy -v` banner
-# ("HAProxy version 3.3.10-0a72d7f9f 2026/05/11") confirm the build.
+# way to pin to a known-good build is an explicit patch tag.
 #
 # DO NOT drop this pin below `3.3.10`. Branches that still carry the
 # bug: 3.3.9 and earlier on the 3.3 line, plus the entire 3.2 / 3.0 /
 # 2.8 maintenance lines (the fix has not been backported there yet).
-# 3.3 also happens to be the first stable branch that ships the
-# `ring` infrastructure the optional diagnostics toggle below uses.
 #
-# Bumping the pin UPWARDS to a newer 3.3.x (3.3.11 once it ships, …)
-# is the expected maintenance path. Before bumping, pull the new
-# tag and verify `haproxy -v` reports a build dated after the
-# `043db34` backport (2026-05-07) — every 3.3.10+ build qualifies.
+# Bumping the pin upwards to a newer stable release is the expected
+# maintenance path. Before bumping, pull the new tag and verify
+# `haproxy -v` reports a build dated after the `043db34` backport
+# (2026-05-07) — every 3.3.10+ build qualifies.
 #
 #   - issue:        https://github.com/haproxy/haproxy/issues/3354
 #   - upstream fix: https://github.com/haproxy/haproxy/commit/faf3e9ac3a5df7258b0abbc06b0e0378617a18e5
 #                   ("BUG/MEDIUM: mux-h2: Properly consume padding for DATA frames")
 #   - 3.3 backport: https://git.haproxy.org/?p=haproxy-3.3.git;a=commit;h=043db34df5b08f32055e1ebf1dd568473b268dbe
 #   - 3.3 tags:     https://git.haproxy.org/?p=haproxy-3.3.git;a=tags
-#   - local notes:  temp/haproxy-3354-evidence/AGENT-REPORT-verbosity-complete-rerun.md
 naive_proxy_haproxy_image: "docker.io/library/haproxy"
-naive_proxy_haproxy_image_tag: "3.3.10-alpine"
+naive_proxy_haproxy_image_tag: "3.4.3-alpine"
 naive_proxy_decoy_image: "docker.io/library/caddy"
-naive_proxy_decoy_image_tag: "latest"
+naive_proxy_decoy_image_tag: "2.11.4-alpine"
 naive_proxy_acme_image: "docker.io/neilpang/acme.sh"
-naive_proxy_acme_image_tag: "latest"
+naive_proxy_acme_image_tag: "3.1.4"
 
 # sing-box image for the AnyTLS server container. The official image is
 # Alpine-based (`FROM alpine`) and built with `with_acme` plus core AnyTLS,
@@ -105,7 +101,7 @@ naive_proxy_acme_image_tag: "latest"
 # to an explicit stable tag (NOT `latest`) for reproducibility — bumping to a
 # newer stable sing-box release is the expected maintenance path.
 naive_proxy_singbox_image: "ghcr.io/sagernet/sing-box"
-naive_proxy_singbox_image_tag: "v1.13.14"
+naive_proxy_singbox_image_tag: "v1.13.19"
 
 # -- ACME / TLS ---------------------------------------------------------------
 
@@ -143,9 +139,9 @@ naive_proxy_anytls_log_level: "info"
 #   true  (default) -> sing-box obtains/renews its own certificate via ACME.
 #   false            -> sing-box uses a static certificate from
 #                       `<config_dir>/anytls-certs/{fullchain,key}.pem`.
-# In molecule_mode the role forces the static path (and generates a
-# self-signed cert) so tests never depend on public Let's Encrypt issuance;
-# the working ACME config is still rendered and validated separately.
+# In molecule_mode the role uses the static path by default (and generates a
+# self-signed cert). The anytls-stress scenario enables
+# naive_proxy_anytls_acme_in_molecule to exercise real issuance against Pebble.
 naive_proxy_anytls_acme_enabled: true
 # ACME CA provider for the AnyTLS certificate: letsencrypt / zerossl / a
 # custom ACME directory URL (mirrors naive_proxy_acme_server semantics).
@@ -294,11 +290,12 @@ naive_proxy_haproxy_notsent_lowat: 0
 # -- HAProxy diagnostics ------------------------------------------------------
 # Opt-in. When enabled, the role exposes the HAProxy CLI admin socket on
 # the host's loopback (127.0.0.1) and declares a wide H2 trace ring sink
-# in `global`. This is what the helper scripts under `roles/naive_proxy/
-# debug/` need to capture full H2 demuxer events from a running pod.
+# in `global`. This is what the helper scripts under
+# `roles/naive_proxy/doc/scripts/` need to capture full H2 demuxer events from
+# a running pod.
 #
 # Side-effects when enabling:
-#   - `ring h2trace` is added to haproxy.cfg (32 MiB by default — see size below)
+#   - `ring h2trace` is added to haproxy.cfg (128 MiB by default — see below)
 #   - `stats socket ipv4@*:<port> level admin` is added to the global section
 #   - the pod publishes `127.0.0.1:<port>` → pod's `<port>` (NOT 0.0.0.0,
 #     so the socket is unreachable from outside the host's loopback)
@@ -359,7 +356,8 @@ naive_proxy_decoy_index_html: ""
 # given URL (e.g. "https://example.com") instead of serving the local static
 # page. Caddy terminates HTTPS on the upstream side and rewrites the Host
 # header so the upstream sees its own hostname. Absolute URLs and Location
-# redirects from the upstream are NOT rewritten — see README "Limitations".
+# redirects from the upstream are NOT rewritten — see
+# `doc/guides/deployment-and-operations.md`.
 # When set, naive_proxy_decoy_index_html is ignored.
 
 naive_proxy_decoy_upstream_url: ""
@@ -382,30 +380,6 @@ naive_proxy_singbox_urltest_url: "https://www.gstatic.com/generate_204"
 # Sing-box duration syntax (`30s`, `3m`, `1h`). Lower = faster failover
 # but more probe traffic per outbound.
 naive_proxy_singbox_urltest_interval: "3m"
-
-# For every generated sing-box client config the role also writes a PNG QR code
-# with the config embedded, next to the JSON (same name, `.png`) — handy for
-# importing a profile by scanning instead of copying a file. The QR encodes the
-# MINIFIED config (the pretty-printed JSON never fits a single symbol).
-#
-# Requires the `qrcode` Python library with Pillow on the CONTROLLER, installed
-# for the SAME Python that runs Ansible (configs are written there via
-# delegate_to: localhost). From a virtualenv: `pip install "qrcode[pil]"` — the
-# system `apt install python3-qrcode python3-pil` packages are not visible inside
-# a venv; use apt only under the system Python.
-#
-# Capacity: a single QR holds ~2953 bytes at error-correction L. With AnyTLS on
-# each server is two outbounds, so a config fits up to ~4 servers; beyond that
-# the module fails loudly rather than emitting an unscannable code — split the
-# server set or generate fewer servers per file.
-naive_proxy_client_qr_enabled: false
-# QR error-correction level: L/M/Q/H. L holds the most data (~2953 bytes) and is
-# the right default for these configs; raise it for more damage resistance at the
-# cost of capacity (Q ~1663 bytes, H ~1273 bytes).
-naive_proxy_client_qr_error_correction: "L"
-# Pixels per QR module and quiet-zone width (in modules; QR spec minimum is 4).
-naive_proxy_client_qr_box_size: 8
-naive_proxy_client_qr_border: 4
 
 # -- Molecule testing mode ----------------------------------------------------
 # Deploys pebble (test ACME CA) as an additional container in the pod.

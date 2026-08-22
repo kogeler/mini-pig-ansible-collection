@@ -129,7 +129,7 @@
 
 # -- Systemd units -------------------------------------------------------------
 # Keep the copy order aligned with runtime dependencies. Handler execution is
-# ordered, so pod -> decoy -> haproxy -> backend is intentional.
+# ordered: pod -> Pebble (tests) -> decoy -> HAProxy -> backend -> AnyTLS.
 
 - name: naive-proxy | config | copy pod systemd unit
   ansible.builtin.template:

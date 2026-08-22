@@ -1,8 +1,8 @@
 ---
 # Role-scoped molecule base config for the naive_proxy role.
 #
-# Loaded explicitly via `molecule --base-config molecule/shared/base.yml`
-# (the Makefile and CI workflow inject the flag for every scenario).
+# Loaded explicitly by `molecule/Makefile` (which injects `-c
+# molecule/shared/base.yml` for every scenario).
 # Each scenario's `molecule.yml` deep-merges on top of this — anything
 # common across scenarios lives here, anything scenario-specific stays
 # in the scenario file.
@@ -54,19 +54,21 @@ provisioner:
     #
     # Pins mirror SagerNet/sing-box-for-android (SFA) — the Android client —
     # so this build reproduces the exact H2/Naive code paths real SFA users
-    # hit. After bumping any pin: `molecule destroy` + `molecule converge`
-    # (also `podman rmi localhost/molecule_local/docker.io/library/debian:trixie`
-    # if the cache hides the rebuild).
+    # hit. After bumping any tuple member, follow
+    # `doc/maintenance/update-versions.md`: destroy every instance holding the
+    # shared local trixie tag and remove only that exact image before the
+    # Makefile converges the stress scenarios.
     #
     # WHERE TO LOOK to refresh these (DO NOT remove these URLs):
-    #   * SFA `version.properties` → VERSION_NAME (sing-box tag, add `v`) and
+    #   * Released SFA `version.properties` → VERSION_NAME (sing-box tag,
+    #     add `v`) and
     #     GO_VERSION (strip the `go` prefix):
-    #     https://github.com/SagerNet/sing-box-for-android/blob/dev/version.properties
+    #     https://github.com/SagerNet/sing-box-for-android/blob/main/version.properties
     #   * sing-box `release/DEFAULT_BUILD_TAGS` at that tag — the libbox.aar SFA
     #     ships is built from these; mirror them for H2 code-path parity:
     #     https://github.com/SagerNet/sing-box/blob/<VERSION_NAME>/release/DEFAULT_BUILD_TAGS
     #     (`with_purego` below is OUR addition: makes cronet-go dlopen
-    #     libcronet.so at runtime so the Go binary builds CGO_ENABLED=0 static;
+    #     libcronet.so at runtime so the Go binary builds with CGO_ENABLED=0;
     #     `badlinkname`/`tfogo_checklinkname0` are upstream Go 1.24+ linkname
     #     workarounds, hence the `-checklinkname=0` ldflag in the Dockerfile.)
     #   * sing-box `go.mod` cronet-go pin (`github.com/sagernet/cronet-go
@@ -78,16 +80,16 @@ provisioner:
     #     drifts and libcronet.so calls segfault):
     #     https://github.com/sagernet/cronet-go/releases
     #
-    # LAST CHECKED 2026-06-06: pins below track SFA dev = 1.14.0-alpha.28 /
-    # go1.25.10 (current as of this date). cronet-go latest release is
-    # v148.0.7778.96-1 (chromium 148.0.7778.96); the alpha.28 go.mod cronet pin
-    # (commit b3eec8134aec, 2026-05-16) only regenerates the Go packages — no
-    # chromium bump — so that release's libcronet.so still ABI-matches. Build
-    # tags match upstream DEFAULT_BUILD_TAGS at alpha.28 (+ our `with_purego`).
+    # LAST CHECKED 2026-08-22: released SFA main advertises 1.13.19 /
+    # go1.25.12, matching the latest sing-box release and its bundled
+    # SFA-1.13.19 APKs. Its go.mod pins cronet-go commit ec9a39c5ba3b
+    # (Chromium 150.0.7871.63), so cronet-go release v150.0.7871.63-1
+    # provides the ABI-matching libcronet.so. Build tags match upstream
+    # DEFAULT_BUILD_TAGS at v1.13.19 (+ our `with_purego`).
     group_vars:
       all:
         # SFA version.properties → VERSION_NAME (with `v`).
-        singbox_build_version: "v1.14.0-alpha.28"
+        singbox_build_version: "v1.13.19"
         # sing-box release/DEFAULT_BUILD_TAGS at that tag + our `with_purego`.
         singbox_build_tags:
           - with_gvisor
@@ -100,15 +102,14 @@ provisioner:
           - with_tailscale
           - with_ccm
           - with_ocm
-          - with_cloudflared
           - with_naive_outbound
           - badlinkname
           - tfogo_checklinkname0
           - with_purego
         # SFA version.properties → GO_VERSION (strip the `go` prefix).
-        singbox_build_go_version: "1.25.10"
+        singbox_build_go_version: "1.25.12"
         # cronet-go release matching the sing-box go.mod cronet pin's chromium.
-        singbox_cronet_version: "v148.0.7778.96-1"
+        singbox_cronet_version: "v150.0.7871.63-1"
 
 ansible:
   cfg:

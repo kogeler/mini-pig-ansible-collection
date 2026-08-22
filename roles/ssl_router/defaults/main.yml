@@ -12,6 +12,15 @@ ssl_router_upstream_map: {}
 #    regex: ".*abc.com"
 #    host: abc.abc
 #    port: "5443"
+#    resolve: true  # Optional. Defaults to true for hostnames and false for IPs.
 
 ssl_router_preread_buffer_size: "32k"
 ssl_router_proxy_buffer_size: "64k"
+
+# Empty means use the DNS servers discovered by Ansible on the managed host.
+# Entries may include a non-standard port, for example "127.0.0.1:53535".
+ssl_router_resolvers: []
+ssl_router_resolver_valid: "30s"
+ssl_router_resolver_timeout: "5s"
+ssl_router_resolver_ipv6: true
+ssl_router_upstream_zone_size: "64k"

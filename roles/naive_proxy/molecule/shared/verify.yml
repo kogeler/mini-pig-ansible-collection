@@ -31,8 +31,6 @@
         _verify_clients_anytls_utls_fingerprint: ""
         _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
         _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
-        # Decode-and-compare the QR PNGs only where they were generated (gha).
-        _verify_clients_qr_enabled: "{{ molecule_naive_proxy_client_qr_enabled | default(false) }}"
 
     # -- HAProxy diagnostics surface ------------------------------------------
     - name: Verify HAProxy diagnostics surface

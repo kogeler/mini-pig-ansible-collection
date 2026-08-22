@@ -1,0 +1,137 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: true
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Install TLS and DNS test dependencies
+      ansible.builtin.apt:
+        name:
+          - dnsmasq-base
+          - openssl
+          - python3-cryptography
+        state: present
+        update_cache: true
+
+    - name: Create backend certificate directory
+      ansible.builtin.file:
+        path: /etc/molecule-ssl-router
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Generate backend private keys
+      community.crypto.openssl_privatekey:
+        path: "/etc/molecule-ssl-router/{{ item.name }}.key"
+        size: 2048
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ molecule_ssl_router_backends }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Generate backend certificate requests
+      community.crypto.openssl_csr:
+        path: "/etc/molecule-ssl-router/{{ item.name }}.csr"
+        privatekey_path: "/etc/molecule-ssl-router/{{ item.name }}.key"
+        common_name: "{{ item.common_name }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ molecule_ssl_router_backends }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Generate backend self-signed certificates
+      community.crypto.x509_certificate:
+        path: "/etc/molecule-ssl-router/{{ item.name }}.crt"
+        csr_path: "/etc/molecule-ssl-router/{{ item.name }}.csr"
+        privatekey_path: "/etc/molecule-ssl-router/{{ item.name }}.key"
+        provider: selfsigned
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ molecule_ssl_router_backends }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Install TLS backend units
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/molecule-ssl-backend-{{ item.name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Molecule TLS backend {{ item.name }}
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/openssl s_server -quiet -www \
+            -accept {{ item.address }}:{{ item.port }} \
+            -cert /etc/molecule-ssl-router/{{ item.name }}.crt \
+            -key /etc/molecule-ssl-router/{{ item.name }}.key
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+      loop: "{{ molecule_ssl_router_backends }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Start TLS backends
+      ansible.builtin.systemd:
+        name: "molecule-ssl-backend-{{ item.name }}.service"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ molecule_ssl_router_backends }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Install initial DNS response
+      ansible.builtin.copy:
+        dest: "{{ molecule_ssl_router_dns_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          port={{ molecule_ssl_router_dns_port }}
+          listen-address=127.0.0.1
+          bind-interfaces
+          no-hosts
+          no-resolv
+          local-ttl=1
+          address=/{{ molecule_ssl_router_dns_name }}/127.0.0.3
+
+    - name: Install dedicated DNS unit
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ molecule_ssl_router_dns_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Molecule DNS server for ssl_router
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/sbin/dnsmasq --keep-in-foreground \
+            --conf-file={{ molecule_ssl_router_dns_config }} \
+            --pid-file=/run/molecule-ssl-router-dns.pid
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start dedicated DNS server
+      ansible.builtin.systemd:
+        name: "{{ molecule_ssl_router_dns_unit }}"
+        enabled: true
+        state: started
+        daemon_reload: true

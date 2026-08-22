@@ -3,7 +3,7 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-scw_k8s_kosmos_agent_version: "v0.1.5"
+scw_k8s_kosmos_agent_version: "v0.1.7"
 scw_k8s_kosmos_agent_base_dir: "/opt/scw_k8s_kosmos_agent"
 scw_k8s_kosmos_agent_binary_url: "https://github.com/scaleway/k8s-agent/releases/download/{{ scw_k8s_kosmos_agent_version }}/k8s-agent_linux_amd64"
 scw_k8s_kosmos_agent_binary_download_timeout: 60

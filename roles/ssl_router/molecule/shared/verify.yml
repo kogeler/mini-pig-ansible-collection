@@ -1,0 +1,116 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Read rendered Nginx configuration
+      ansible.builtin.slurp:
+        src: /opt/ssl-router/nginx.conf
+      register: _nginx_config_raw
+
+    - name: Decode rendered Nginx configuration
+      ansible.builtin.set_fact:
+        _nginx_config: "{{ _nginx_config_raw.content | b64decode }}"
+
+    - name: Assert dynamic DNS and static IP directives are rendered
+      ansible.builtin.assert:
+        that:
+          - "'valid=30s' in _nginx_config"
+          - "'resolver_timeout 5s;' in _nginx_config"
+          - "_nginx_config is search('server backend\\.router\\.test:19444 resolve;')"
+          - "_nginx_config is search('zone dns_backend 64k;')"
+          - "_nginx_config is search('server 127\\.0\\.0\\.2:19443;')"
+          - "_nginx_config is not search('server 127\\.0\\.0\\.2:19443 resolve;')"
+
+    - name: Wait for IP target to serve its certificate through the router
+      community.crypto.get_certificate:
+        host: "127.0.0.1"
+        port: "{{ molecule_ssl_router_listen_port }}"
+        server_name: ip.router.test
+      register: _ip_target_certificate
+      until:
+        - _ip_target_certificate.subject.CN | default('') == 'ip-backend'
+      retries: 30
+      delay: 1
+
+    - name: Reset hostname target to the initial DNS address
+      ansible.builtin.copy:
+        dest: "{{ molecule_ssl_router_dns_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          port={{ molecule_ssl_router_dns_port }}
+          listen-address=127.0.0.1
+          bind-interfaces
+          no-hosts
+          no-resolv
+          local-ttl=1
+          address=/{{ molecule_ssl_router_dns_name }}/127.0.0.3
+
+    - name: Restart DNS after restoring its initial response
+      ansible.builtin.systemd:
+        name: "{{ molecule_ssl_router_dns_unit }}"
+        state: restarted
+
+    - name: Wait for hostname target to serve its initial certificate
+      community.crypto.get_certificate:
+        host: "127.0.0.1"
+        port: "{{ molecule_ssl_router_listen_port }}"
+        server_name: dns.router.test
+      register: _dns_target_initial_certificate
+      until:
+        - _dns_target_initial_certificate.subject.CN | default('') == 'dns-backend-a'
+      retries: 45
+      delay: 1
+
+    - name: Capture router container before changing DNS
+      containers.podman.podman_container_info:
+        name: ssl-router
+      register: _router_before_dns_change
+
+    - name: Change hostname target DNS address
+      ansible.builtin.copy:
+        dest: "{{ molecule_ssl_router_dns_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          port={{ molecule_ssl_router_dns_port }}
+          listen-address=127.0.0.1
+          bind-interfaces
+          no-hosts
+          no-resolv
+          local-ttl=1
+          address=/{{ molecule_ssl_router_dns_name }}/127.0.0.4
+
+    - name: Restart DNS with the changed response
+      ansible.builtin.systemd:
+        name: "{{ molecule_ssl_router_dns_unit }}"
+        state: restarted
+
+    - name: Wait for Nginx to re-resolve the hostname target
+      community.crypto.get_certificate:
+        host: "127.0.0.1"
+        port: "{{ molecule_ssl_router_listen_port }}"
+        server_name: dns.router.test
+      register: _dns_target_changed_certificate
+      until:
+        - _dns_target_changed_certificate.subject.CN | default('') == 'dns-backend-b'
+      retries: 45
+      delay: 1
+
+    - name: Capture router container after changing DNS
+      containers.podman.podman_container_info:
+        name: ssl-router
+      register: _router_after_dns_change
+
+    - name: Assert both routes worked and DNS changed without a router restart
+      ansible.builtin.assert:
+        that:
+          - _ip_target_certificate.subject.CN == 'ip-backend'
+          - _dns_target_initial_certificate.subject.CN == 'dns-backend-a'
+          - _dns_target_changed_certificate.subject.CN == 'dns-backend-b'
+          - _router_before_dns_change.containers[0].Id == _router_after_dns_change.containers[0].Id

@@ -41,10 +41,3 @@
     # actually run during verify.
     naive_proxy_singbox_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
     naive_proxy_singbox_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
-    # Client-config QR PNGs are generated on the CONTROLLER (delegate_to:
-    # localhost). For podman scenarios that controller is the dev host, which we
-    # must not mutate to install qrcode/Pillow (host-isolation policy), so QR is
-    # OFF there. Only the gha scenario — where controller == target == runner —
-    # enables it (toggle set in gha/inventory/hosts.yml, deps installed in
-    # prepare). Inventory-only so the vars_files default can't mask it.
-    naive_proxy_client_qr_enabled: "{{ molecule_naive_proxy_client_qr_enabled | default(false) }}"

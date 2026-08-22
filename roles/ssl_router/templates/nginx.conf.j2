@@ -33,13 +33,33 @@ stream {
         default              reject;
     }
 
+{% set resolver_state = namespace(required=false) %}
+{% for key, value in ssl_router_upstream_map.items() | sort %}
+{% set upstream_host = value.host | default(ansible_facts['default_ipv4']['address']) | string %}
+{% set host_is_ip = ((upstream_host | regex_search('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')) is not none) or (':' in upstream_host) %}
+{% set dynamic_resolve = value.resolve | default(host_is_ip == false) | bool %}
+{% if dynamic_resolve %}
+{% set resolver_state.required = true %}
+{% endif %}
+{% endfor %}
+{% if resolver_state.required %}
+    resolver {{ _ssl_router_effective_resolvers | join(' ') }} valid={{ ssl_router_resolver_valid }}{% if not ssl_router_resolver_ipv6 | bool %} ipv6=off{% endif %};
+    resolver_timeout {{ ssl_router_resolver_timeout }};
+
+{% endif %}
     upstream reject {
         server 0.0.0.1:1;
     }
 
 {% for key, value in ssl_router_upstream_map.items() | sort %}
+{% set upstream_host = value.host | default(ansible_facts['default_ipv4']['address']) | string %}
+{% set host_is_ip = ((upstream_host | regex_search('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')) is not none) or (':' in upstream_host) %}
+{% set dynamic_resolve = value.resolve | default(host_is_ip == false) | bool %}
     upstream {{ key }} {
-        server {{ value.host | default(ansible_facts['default_ipv4']['address']) }}:{{ value.port }};
+{% if dynamic_resolve %}
+        zone {{ key }} {{ ssl_router_upstream_zone_size }};
+{% endif %}
+        server {% if ':' in upstream_host %}[{{ upstream_host }}]{% else %}{{ upstream_host }}{% endif %}:{{ value.port }}{% if dynamic_resolve %} resolve{% endif %};
     }
 {% endfor %}
 

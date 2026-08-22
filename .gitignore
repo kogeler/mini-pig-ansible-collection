@@ -9,3 +9,6 @@ naive-proxy-json-configs
 # Python bytecode (e.g. from running py_compile / ansible-lint over plugins)
 __pycache__/
 *.pyc
+
+# Role-local Molecule development environments
+roles/naive_proxy/molecule/.venv/

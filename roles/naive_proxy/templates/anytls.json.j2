@@ -7,8 +7,9 @@
   variables — never hardcode them here.
 
   TLS / certificate:
-    * ACME (production, `_naive_proxy_anytls_acme`): sing-box obtains and
-      renews its own Let's Encrypt certificate via built-in CertMagic.
+    * ACME (`_naive_proxy_anytls_acme`): sing-box obtains and renews its own
+      certificate via built-in CertMagic (Let's Encrypt in production, local
+      Pebble in the anytls-stress scenario).
       `disable_http_challenge` is set because only :443 is routed to the
       pod (no :80), so issuance uses TLS-ALPN-01. `alternative_tls_port`
       is the internal listener port: sing-box runs ManageSync BEFORE the
@@ -19,9 +20,9 @@
       challenge is answered inline on the same listener. Leaving this at
       the default (443) would make CertMagic collide with HAProxy and the
       challenge would never be answered.
-    * Static (`molecule_mode` / ACME disabled): a certificate prepared at
-      `/anytls-certs/{fullchain,key}.pem` is used directly, so tests never
-      depend on public Let's Encrypt issuance.
+    * Static (derived ACME false): a certificate prepared at
+      `/anytls-certs/{fullchain,key}.pem` is used directly. This is the default
+      in ordinary Molecule scenarios and never depends on a public CA.
 -#}
 {%- set _users = [] -%}
 {%- for _name, _pass in naive_proxy_users.items() -%}
