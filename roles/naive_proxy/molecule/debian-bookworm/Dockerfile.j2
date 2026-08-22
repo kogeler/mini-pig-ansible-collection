@@ -1,7 +1,7 @@
 FROM {{ item.image }}
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
-        systemd systemd-sysv python3 ca-certificates curl fuse-overlayfs && \
+        systemd systemd-sysv python3 ca-certificates curl crun fuse-overlayfs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     systemctl mask getty@tty1.service && \

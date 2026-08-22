@@ -1,0 +1,7 @@
+# Intentionally unpinned. `make venv` installs the newest compatible releases
+# from PyPI into molecule/.venv; `make venv-refresh` and `make venv-recreate`
+# are the explicit update paths.
+ansible-core
+ansible-lint
+molecule
+molecule-plugins[podman]

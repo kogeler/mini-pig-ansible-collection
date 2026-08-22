@@ -12,7 +12,7 @@
     # Caddy handles TLS to the upstream and rewrites the Host header so the
     # upstream sees its own hostname. Body/redirect URL rewriting is not done
     # here — pick an upstream whose content does not leak its real domain or
-    # add a response-rewriting layer (see README "Limitations").
+    # add a response-rewriting layer (see the deployment/operations guide).
     reverse_proxy {{ naive_proxy_decoy_upstream_url }} {
         header_up Host {upstream_hostport}
         header_up -X-Forwarded-For

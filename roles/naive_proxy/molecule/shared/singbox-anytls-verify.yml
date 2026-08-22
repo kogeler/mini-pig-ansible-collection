@@ -1,10 +1,10 @@
 ---
 # Verify playbook for the anytls-stress scenario.
 #
-# Focused on the new AnyTLS path: the sing-box server container, its rendered
-# config (deployed static cert + a separately-validated production ACME
-# config), HAProxy SNI routing to the anytls domain, the two-variant client
-# configs, and a real AnyTLS connection carrying iperf3 traffic end to end.
+# Focused on the AnyTLS path: the sing-box server container, real local-Pebble
+# ACME issuance, a separately validated production-provider shape, HAProxy SNI
+# routing, the two client variants, and a real AnyTLS connection carrying
+# iperf3 traffic end to end.
 # The full naive contract stays covered by shared/verify.yml in the default /
 # debian-bookworm scenarios.
 - name: Verify (anytls stress)
@@ -63,7 +63,7 @@
       retries: 20
       delay: 3
 
-    # -- Deployed (static) server config ----------------------------------
+    # -- Deployed Pebble-ACME server config -------------------------------
     - name: Read rendered AnyTLS server config
       ansible.builtin.slurp:
         src: /opt/naive-proxy/anytls.json
@@ -155,11 +155,9 @@
           ALPN change is backward-compatible.
 
     # -- Production ACME server config validity ---------------------------
-    # The molecule deployment uses a static cert, so the ACME config never
-    # runs here. Validate it separately: render the production-shaped config
-    # (mirrors anytls.json.j2's ACME branch) and run `sing-box check` with
-    # the with_acme host binary to prove the working cert-issuance config is
-    # structurally valid and accepted by the build.
+    # The deployed branch runs against a custom Pebble directory. Validate the
+    # normal production-provider shape separately with `sing-box check` so
+    # both provider forms are accepted by the with_acme build.
     - name: Write production-shaped AnyTLS ACME config for validation
       ansible.builtin.copy:
         dest: /tmp/anytls-acme-check.json

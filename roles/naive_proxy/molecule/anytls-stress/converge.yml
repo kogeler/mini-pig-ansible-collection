@@ -61,7 +61,7 @@
         cmd: |
           set -eu
           podman create --replace --name pebble-minica-extract \
-            ghcr.io/letsencrypt/pebble:latest >/dev/null
+            ghcr.io/letsencrypt/pebble:2.10.1 >/dev/null
           podman cp pebble-minica-extract:/test/certs/pebble.minica.pem \
             /etc/ssl/certs/pebble-minica.pem
           podman rm -f pebble-minica-extract >/dev/null

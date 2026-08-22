@@ -2,8 +2,9 @@
 # Copyright © 2026 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-# Refresh only long-running runtime images. The backend image is built locally
-# by the role, while ACME and Pebble are not production runtime services.
+# This opt-in refresh currently owns only the HAProxy and Caddy image subset.
+# The backend is built locally; acme.sh is transient, Pebble is test-only, and
+# the sing-box server image is outside this task's refresh contract.
 
 - name: naive-proxy | utils | runtime image refresh
   tags: ["naive-proxy", "naive_proxy", "naive-proxy-utils", "naive_proxy_utils"]

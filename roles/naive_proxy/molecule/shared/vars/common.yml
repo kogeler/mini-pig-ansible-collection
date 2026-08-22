@@ -2,9 +2,9 @@
 naive_proxy_naive_version: "v150.0.7871.63-1"
 molecule_naive_proxy_domain: "naive.test"
 # Separate FQDN for the sing-box AnyTLS server. Resolves to the same IP(s)
-# as the naive domain; HAProxy tells the two servers apart by SNI. In
-# molecule the AnyTLS server uses a static self-signed cert (no public ACME),
-# so this name never has to resolve inside the instance.
+# as the naive domain; HAProxy tells the two servers apart by SNI. Ordinary
+# scenarios use a static self-signed certificate; anytls-stress issues from
+# local Pebble. No scenario depends on public DNS or a public CA.
 molecule_naive_proxy_anytls_domain: "anytls.test"
 # IP that naive.test resolves to inside the molecule instance (set via
 # molecule.yml etc_hosts and shared/tasks/prepare.yml lineinfile). The
@@ -62,8 +62,8 @@ molecule_naive_proxy_users:
   testuser: "testpass"
 
 # `mp_driver` is intentionally NOT defined here. It is sourced from
-# inventory: `.config/molecule/config.yml` provides `podman` as the
-# default for every podman-driven scenario, and `gha/inventory/hosts.yml`
+# inventory: `shared/base.yml` provides `podman` as the default for every
+# podman-driven scenario, and `gha/inventory/hosts.yml`
 # overrides it to `native` for the gha scenario. Defining `mp_driver` in
 # this vars_files would mask those inventory values — `vars_files`
 # precedence (14) is higher than inventory host_vars (9).

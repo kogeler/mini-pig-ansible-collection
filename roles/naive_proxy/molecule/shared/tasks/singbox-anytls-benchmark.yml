@@ -16,8 +16,8 @@
 #   * `anytls` outbound instead of `naive` (password only, no username, no
 #     cronet — libcronet.so is NOT mounted; the binary never dlopens it
 #     without a naive outbound).
-#   * `tls.certificate_path` points at the role's self-signed AnyTLS server
-#     cert (molecule_mode), the equivalent of trusting a public LE chain.
+#   * `tls.certificate_path` trusts the AnyTLS server certificate issued by
+#     the scenario's local Pebble CA, the test equivalent of a public chain.
 #   * `log.level=debug` so any handshake/auth error surfaces in the journal.
 
 - name: anytls-bench | probe sing-box version banner
@@ -25,7 +25,10 @@
     cmd: "{{ singbox_host_binary_path }} version"
   register: _anytls_version_probe
   changed_when: false
-  failed_when: _anytls_version_probe.rc != 0
+  failed_when: >-
+    _anytls_version_probe.rc != 0 or
+    ('sing-box version ' ~ (singbox_build_version | regex_replace('^v', '')))
+    not in (_anytls_version_probe.stdout | default(''))
 
 - name: anytls-bench | print sing-box version banner
   ansible.builtin.debug:
@@ -42,6 +45,21 @@
       - tshark
     state: present
     update_cache: true
+  when: _anytls_utls_fingerprint | default('') | length > 0
+
+- name: anytls-bench | install unprofiled capture-tool test entrypoints
+  # Debian 13 attaches its AppArmor profile by executable path. In the nested
+  # Molecule systemd container that profile prevents the dynamic loader from
+  # applying glibc RELRO to the capture tools. The same package binaries under
+  # test-only paths stay in the outer container's unconfined crun profile.
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/naive-proxy-test-{{ item | basename }}"
+    remote_src: true
+    mode: "0755"
+  loop:
+    - /usr/bin/tcpdump
+    - /usr/bin/tshark
   when: _anytls_utls_fingerprint | default('') | length > 0
 
 # -- CA the client trusts for the AnyTLS server cert --------------------
@@ -162,7 +180,8 @@
   ansible.builtin.command:
     cmd: >-
       systemd-run --unit={{ _anytls_capture_unit_run }} --collect
-      tcpdump -i any -U -w {{ singbox_anytls_capture_pcap }}
+      /usr/local/bin/naive-proxy-test-tcpdump
+      -i any -U -w {{ singbox_anytls_capture_pcap }}
       tcp port {{ molecule_naive_proxy_listen_port }}
   changed_when: true
   when: _anytls_utls_fingerprint | default('') | length > 0
@@ -297,7 +316,8 @@
 - name: anytls-bench | count all captured AnyTLS ClientHellos
   ansible.builtin.command:
     cmd: >-
-      tshark -r {{ singbox_anytls_capture_pcap }}
+      /usr/local/bin/naive-proxy-test-tshark
+      -r {{ singbox_anytls_capture_pcap }}
       -d tcp.port=={{ molecule_naive_proxy_listen_port }},tls
       -Y 'tls.handshake.type==1 and tls.handshake.extensions_server_name=="{{ molecule_naive_proxy_anytls_domain }}"'
       -T fields -e frame.number
@@ -308,7 +328,8 @@
 - name: anytls-bench | count Firefox-fingerprinted AnyTLS ClientHellos
   ansible.builtin.command:
     cmd: >-
-      tshark -r {{ singbox_anytls_capture_pcap }}
+      /usr/local/bin/naive-proxy-test-tshark
+      -r {{ singbox_anytls_capture_pcap }}
       -d tcp.port=={{ molecule_naive_proxy_listen_port }},tls
       -Y 'tls.handshake.type==1 and tls.handshake.extensions_server_name=="{{ molecule_naive_proxy_anytls_domain }}"
       and tls.handshake.extensions_supported_group==0x0100 and tls.handshake.extension.type==28'

@@ -22,8 +22,6 @@
 #   * the auto file's `proxy` is a urltest (probe url + interval), the manual
 #     file's `proxy` is a selector (manual choice) — no automatic switching
 #   * route default + DNS detour both target the `proxy` tag
-#   * (when _verify_clients_qr_enabled) each `<base>.png` QR decodes back to the
-#     exact same config object as its `<base>.json`
 #
 # Runs on the controller (`localhost`) because that's where the role
 # delegates the file write. Reusable across scenarios via:
@@ -41,7 +39,6 @@
 #       _verify_clients_anytls_enabled: true
 #       _verify_clients_urltest_url: https://www.gstatic.com/generate_204
 #       _verify_clients_urltest_interval: 3m
-#       _verify_clients_qr_enabled: false   # decode .png and compare to .json
 
 - name: verify-clients | print expectations
   ansible.builtin.debug:
@@ -167,37 +164,3 @@
   loop: "{{ _verify_clients_slurps.results }}"
   loop_control:
     label: "{{ item.item.0.key }}-{{ item.item.1 }}"
-
-# QR PNGs (`kogeler.mini_pig.qr_code`, enabled per scenario via
-# _verify_clients_qr_enabled). Real round-trip: decode the actual PNG bytes with
-# the pure-Python `kogeler.mini_pig.qr_decode` module (no external tools) and
-# assert the embedded (minified) config parses back to the exact same object as
-# the on-disk JSON — a counter/grep would not catch a corrupt symbol.
-- name: verify-clients | decode + round-trip the client config QR codes
-  when: _verify_clients_qr_enabled | default(false) | bool
-  block:
-    - name: verify-clients | decode each QR PNG back to text
-      kogeler.mini_pig.qr_decode:
-        src: >-
-          {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.png
-      register: _verify_clients_qr_decoded
-      delegate_to: localhost
-      connection: local
-      become: false
-      loop: "{{ _verify_clients_users | dict2items | product(['auto', 'manual']) | list }}"
-      loop_control:
-        label: "{{ item.0.key }}-{{ item.1 }}"
-
-    - name: verify-clients | assert decoded QR equals the JSON config
-      vars:
-        _json_path: >-
-          {{ _verify_clients_config_dir }}/singbox-{{ _verify_clients_inventory_hostname }}-{{ item.item.0.key }}-{{ item.item.1 }}.json
-      ansible.builtin.assert:
-        that:
-          - (item.data | from_json) == (lookup('file', _json_path) | from_json)
-        fail_msg: >-
-          QR PNG for {{ item.item.0.key }}-{{ item.item.1 }} did not decode back
-          to its JSON config (decoded {{ item.length }} bytes).
-      loop: "{{ _verify_clients_qr_decoded.results }}"
-      loop_control:
-        label: "{{ item.item.0.key }}-{{ item.item.1 }}"

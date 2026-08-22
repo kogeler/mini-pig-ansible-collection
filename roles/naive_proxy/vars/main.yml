@@ -80,7 +80,7 @@ _naive_proxy_acme_renew_timer: "naive-acme-renew.timer"
 _naive_proxy_pebble_name: naive-pebble
 _naive_proxy_pebble_unit: "podman-{{ _naive_proxy_pebble_name }}.service"
 _naive_proxy_pebble_image: "ghcr.io/letsencrypt/pebble"
-_naive_proxy_pebble_image_tag: "latest"
+_naive_proxy_pebble_image_tag: "2.10.1"
 _naive_proxy_pebble_port: 14000
 _naive_proxy_pebble_mgmt_port: 15000
 _naive_proxy_pebble_acme_server: "https://127.0.0.1:{{ _naive_proxy_pebble_port }}/dir"

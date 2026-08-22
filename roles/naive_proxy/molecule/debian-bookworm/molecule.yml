@@ -1,6 +1,6 @@
 ---
 # debian-bookworm scenario: podman-in-podman, Debian bookworm.
-# Shared config in `.config/molecule/config.yml` at the repo root.
+# Shared config is in `../shared/base.yml` and is loaded by the Makefile.
 driver:
   name: podman
 platforms:

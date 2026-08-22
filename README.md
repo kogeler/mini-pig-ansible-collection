@@ -82,7 +82,7 @@ Per-role variables and defaults live under each `roles/<name>/defaults/main.yml`
 
 CI runs `ansible-lint` and Molecule (Podman driver) for every role whose `molecule/<scenario>/` directory contains an `ENABLE_CI` marker. The workflow ([`.github/workflows/molecule.yml`](.github/workflows/molecule.yml)) picks scenarios based on what a PR actually touches; collection-wide changes (deps, lint config, workflow) trigger the full matrix.
 
-Roles with Molecule scenarios today: `iptables`, `naive_proxy`, `telemt`.
+Roles with Molecule scenarios today: `iptables`, `naive_proxy`, `ssl_router`, `telemt`.
 
 Run a scenario locally:
 

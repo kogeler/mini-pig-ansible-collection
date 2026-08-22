@@ -17,7 +17,11 @@
     tag: "{{ _naive_proxy_backend_image_tag }}"
     path: "{{ _naive_proxy_build_dir }}"
     build:
-      extra_args: "--network=host --isolation=chroot"
+      # The Molecule harness runs Buildah inside rootless Podman. Its image
+      # provides crun explicitly; forcing Buildah's chroot isolation bypasses
+      # that runtime and fails while remounting /dev. The default OCI
+      # isolation works both there and on regular production hosts.
+      extra_args: "--network=host"
     state: build
     force: "{{ _naive_proxy_containerfile.changed }}"
   notify: naive-proxy | handlers | restart naive-backend

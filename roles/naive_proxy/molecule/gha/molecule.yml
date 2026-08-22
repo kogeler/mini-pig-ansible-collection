@@ -3,9 +3,8 @@
 # containers). Uses ansible-native configuration — no driver/platforms.
 # Locally, use the default (podman) scenario instead.
 #
-# Shared config (deps, verifier, callbacks_enabled, default playbooks)
-# inherited from `.config/molecule/config.yml` at the repo root. Only
-# the GHA-specific overrides live here.
+# Shared config (dependency, verifier, callbacks, and default playbooks) comes
+# from `../shared/base.yml` through the Makefile. Only GHA overrides live here.
 ansible:
   executor:
     backend: ansible-playbook

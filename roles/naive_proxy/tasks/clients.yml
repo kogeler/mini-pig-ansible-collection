@@ -62,34 +62,11 @@
   loop_control:
     label: "{{ item.0.key }}-{{ item.1 }}"
 
-- name: naive-proxy | clients | render client config QR codes (PNG)
-  kogeler.mini_pig.qr_code:
-    src: "{{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json"
-    dest: "{{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.png"
-    # Encode the compact config — the pretty-printed JSON never fits a single
-    # symbol. The module fails loudly if even the minified form overflows.
-    minify_json: true
-    error_correction: "{{ naive_proxy_client_qr_error_correction }}"
-    box_size: "{{ naive_proxy_client_qr_box_size | int }}"
-    border: "{{ naive_proxy_client_qr_border | int }}"
-    mode: "0600"
-  delegate_to: localhost
-  connection: local
-  become: false
-  when: naive_proxy_client_qr_enabled | bool
-  loop: "{{ (naive_proxy_users | dict2items)
-            | product(['auto', 'manual'])
-            | list }}"
-  loop_control:
-    label: "{{ item.0.key }}-{{ item.1 }}"
-
 - name: naive-proxy | clients | display client config paths
   ansible.builtin.debug:
     msg: >-
       [{{ item.0.key }}] {{ item.1 }}:
-      {{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json{{
-      naive_proxy_client_qr_enabled | bool
-      | ternary(' (+ .png QR)', '') }}
+      {{ naive_proxy_client_config_dir }}/singbox-{{ inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json
   loop: "{{ (naive_proxy_users | dict2items)
             | product(['auto', 'manual'])
             | list }}"

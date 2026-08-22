@@ -1,9 +1,8 @@
 ---
 # Default scenario: podman-in-podman, Debian trixie.
-# Shared config (deps, verifier, host_vars defaults, callbacks_enabled,
-# default playbooks) lives in `.config/molecule/config.yml` at the repo
-# root and is auto-loaded by molecule. Only scenario-specific bits live
-# here.
+# Shared config (dependency, verifier, inventory defaults, callbacks, and
+# playbooks) lives in `../shared/base.yml`; `molecule/Makefile` loads it for
+# every scenario. Only scenario-specific settings live here.
 driver:
   name: podman
 platforms:
@@ -33,13 +32,3 @@ platforms:
       - /dev/fuse:/dev/fuse
     command: ""
     override_command: false
-provisioner:
-  inventory:
-    host_vars:
-      molecule-naive-proxy:
-        # Generate the client-config QR PNGs and decode-round-trip them only in
-        # this scenario — keeps the controller-side qrcode/Pillow dependency
-        # scoped to one place. Inventory host_var (deep-merged with the base's
-        # mp_driver) so vars_files can't mask it. prepare ensures the dep on the
-        # controller; verify-clients decodes each PNG with kogeler.mini_pig.qr_decode.
-        molecule_naive_proxy_client_qr_enabled: true

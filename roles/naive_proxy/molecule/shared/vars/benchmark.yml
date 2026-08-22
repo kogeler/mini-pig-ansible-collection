@@ -5,7 +5,10 @@ naive_client_image: "docker.io/library/ubuntu"
 naive_client_image_tag: "22.04"
 naive_client_socks_port: 1080
 iperf_unit: "podman-naive-iperf-bench.service"
-iperf_image: "docker.io/networkstatic/iperf3"
+# networkstatic publishes only moving `latest` / `multiarch` tags. Pin the
+# current multi-arch latest manifest so a benchmark cannot silently change.
+# Refreshed 2026-08-22.
+iperf_image: "docker.io/networkstatic/iperf3@sha256:25bce1d02f5e1c0acb4a4376815b87059ad730cd9a1c18ce8a9cb9babd7ad05f"
 iperf_container_name: "naive-iperf-bench"
 iperf_port: 5201
 iperf_duration: 30
@@ -13,7 +16,7 @@ iperf_duration: 30
 # client's tun byte counter from inside its netns (/proc/net/dev), to prove the
 # stress traffic actually traversed the tunnel rather than taking a direct
 # bridge route. Read-only; no extra caps.
-iperf_helper_image: "docker.io/library/busybox"
+iperf_helper_image: "docker.io/library/busybox:1.38.0"
 # iperf3 -P value used by both the official-naive benchmark and the
 # sing-box stress benchmark. 16 exercises HAProxy / naive backend H2
 # stream multiplexing under burst CONNECT load — that is the failure

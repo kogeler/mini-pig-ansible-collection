@@ -26,7 +26,8 @@
 # Trigger the acme systemd service to issue cert. Same unit is used by the
 # timer for periodic renewal. Uses --issue which is idempotent:
 # exit 0 = issued, exit 2 = valid cert exists (skip).
-# The unit's ExecStartPost sends SIGHUP to HAProxy to reload the new cert.
+# On a successful issue the unit calls systemctl reload; the HAProxy unit sends
+# USR2 to the container for a seamless certificate reload.
 
 - name: naive-proxy | acme | check if real cert already issued
   ansible.builtin.command:
