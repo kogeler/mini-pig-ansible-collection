@@ -1,0 +1,16 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: true
+  vars_files:
+    - vars/common.yml
+  tasks:
+    - name: Apply ssl_router
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.ssl_router
+      vars:
+        ssl_router_https_port: "{{ molecule_ssl_router_listen_port }}"
+        ssl_router_resolvers:
+          - "127.0.0.1:{{ molecule_ssl_router_dns_port }}"
+        ssl_router_resolver_ipv6: false
+        ssl_router_upstream_map: "{{ molecule_ssl_router_upstream_map }}"

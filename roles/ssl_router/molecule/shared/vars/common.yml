@@ -1,0 +1,30 @@
+---
+molecule_ssl_router_listen_port: 10443
+molecule_ssl_router_dns_port: 53535
+molecule_ssl_router_dns_name: backend.router.test
+molecule_ssl_router_dns_config: /etc/molecule-ssl-router-dns.conf
+molecule_ssl_router_dns_unit: molecule-ssl-router-dns.service
+
+molecule_ssl_router_backends:
+  - name: ip
+    address: "127.0.0.2"
+    port: 19443
+    common_name: ip-backend
+  - name: dns-a
+    address: "127.0.0.3"
+    port: 19444
+    common_name: dns-backend-a
+  - name: dns-b
+    address: "127.0.0.4"
+    port: 19444
+    common_name: dns-backend-b
+
+molecule_ssl_router_upstream_map:
+  ip_backend:
+    regex: "ip\\.router\\.test"
+    host: "127.0.0.2"
+    port: 19443
+  dns_backend:
+    regex: "dns\\.router\\.test"
+    host: "{{ molecule_ssl_router_dns_name }}"
+    port: 19444
