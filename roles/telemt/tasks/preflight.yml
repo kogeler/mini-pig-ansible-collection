@@ -1,0 +1,282 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: telemt | preflight | validate deployment mode
+  ansible.builtin.assert:
+    that:
+      - telemt_deployment_mode in ['direct', 'web']
+    fail_msg: >-
+      telemt_deployment_mode must be either 'direct' or 'web'.
+    quiet: true
+
+- name: telemt | preflight | validate common settings
+  ansible.builtin.assert:
+    that:
+      - telemt_domain is string
+      - telemt_domain | trim | length > 0
+      - telemt_users is mapping
+      - telemt_users | length > 0
+      - telemt_listen_port | int > 0
+      - telemt_listen_port | int <= 65535
+    fail_msg: >-
+      telemt_domain, at least one telemt_users entry, and a listen port in
+      the 1..65535 range are required.
+    quiet: true
+
+- name: telemt | preflight | validate user names and secrets
+  ansible.builtin.assert:
+    that:
+      - item.key is string
+      - item.key | trim | length > 0
+      - item.value is string
+      - item.value is match('^[0-9a-fA-F]{32}$')
+    fail_msg: >-
+      telemt_users['{{ item.key }}'] must be a 32-character hexadecimal
+      secret. Generate one with: openssl rand -hex 16
+    quiet: true
+  loop: "{{ telemt_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: telemt | preflight | validate direct proxy modes
+  ansible.builtin.assert:
+    that:
+      - telemt_modes_classic or telemt_modes_secure or telemt_modes_tls
+    fail_msg: >-
+      Direct mode requires at least one of telemt_modes_classic,
+      telemt_modes_secure, or telemt_modes_tls.
+    quiet: true
+  when: telemt_deployment_mode == 'direct'
+
+- name: telemt | preflight | validate WEB public endpoint
+  ansible.builtin.assert:
+    that:
+      - telemt_listen_port | int == 443
+      - telemt_domain == telemt_domain | lower
+      - telemt_domain is match('^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$')
+      - telemt_web_public_ip is string
+      - telemt_web_public_ip is match('^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$')
+      - (telemt_web_public_ip.split('.') | map('int') | max) <= 255
+      - >-
+        telemt_molecule_mode or not (
+          telemt_web_public_ip.split('.')[0] | int in [0, 10, 127]
+          or (
+            telemt_web_public_ip.split('.')[0] | int == 169
+            and telemt_web_public_ip.split('.')[1] | int == 254
+          )
+          or (
+            telemt_web_public_ip.split('.')[0] | int == 172
+            and telemt_web_public_ip.split('.')[1] | int >= 16
+            and telemt_web_public_ip.split('.')[1] | int <= 31
+          )
+          or (
+            telemt_web_public_ip.split('.')[0] | int == 192
+            and telemt_web_public_ip.split('.')[1] | int == 168
+          )
+          or telemt_web_public_ip.split('.')[0] | int >= 224
+        )
+      - telemt_web_carrier in ['https', 'https-lanes']
+      - telemt_web_default_secret_mode in ['plain', 'dd']
+    fail_msg: >-
+      WEB mode requires port 443, a canonical lowercase FQDN, a concrete IPv4
+      telemt_web_public_ip, carrier https or https-lanes, and a supported
+      default secret mode (plain or dd).
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB Telemt version floor
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (telemt_image_tag is match('^[0-9]+\\.[0-9]+\\.[0-9]+$'))
+        or telemt_image_tag is version('3.5.2', '>=')
+    fail_msg: >-
+      Numeric telemt_image_tag values in WEB mode must be >= 3.5.2. Release
+      3.5.1 introduced WEB; 3.5.2 contains the first follow-up fix and is the
+      role's supported floor. Custom tags are verified from telemt --version
+      after their image is pulled.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB maps
+  ansible.builtin.assert:
+    that:
+      - telemt_web_limits is mapping
+      - telemt_web_timeouts is mapping
+      - (telemt_web_limits.keys() | difference(_telemt_web_limit_keys)) | length == 0
+      - (telemt_web_timeouts.keys() | difference(_telemt_web_timeout_keys)) | length == 0
+      - (telemt_web_limits.values() | map('int') | select('le', 0) | list | length) == 0
+      - (telemt_web_timeouts.values() | map('int') | select('le', 0) | list | length) == 0
+      - telemt_web_haproxy_timeout_margin_secs | int > 0
+    fail_msg: >-
+      WEB limits/timeouts must contain only Telemt 3.5.2-supported keys with
+      positive integer values; the HAProxy timeout margin must be positive.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate https-lanes handler capacity
+  ansible.builtin.assert:
+    that:
+      - telemt_web_limits.max_http_handlers | default(256) | int >= 2
+    fail_msg: >-
+      telemt_web_carrier=https-lanes requires max_http_handlers >= 2.
+    quiet: true
+  when:
+    - telemt_deployment_mode == 'web'
+    - telemt_web_carrier == 'https-lanes'
+
+- name: telemt | preflight | validate WEB profiles container
+  ansible.builtin.assert:
+    that:
+      - telemt_web_profiles is sequence
+      - telemt_web_profiles is not string
+      - telemt_web_profiles is not mapping
+    fail_msg: >-
+      telemt_web_profiles must be a list of profile mappings.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate explicit WEB profiles
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.user is defined
+      - item.user in telemt_users
+      - item.secret_mode | default(telemt_web_default_secret_mode) in ['plain', 'dd']
+      - item.keys() | difference(['user', 'secret_mode', 'max_sessions', 'max_streams', 'max_streams_per_session']) | length == 0
+      - item.max_sessions is not defined or item.max_sessions | int > 0
+      - item.max_streams is not defined or item.max_streams | int > 0
+      - item.max_streams_per_session is not defined or item.max_streams_per_session | int > 0
+    fail_msg: >-
+      Each WEB profile must reference a telemt_users key, use plain/dd,
+      contain only supported keys, and use positive optional limits.
+    quiet: true
+  loop: "{{ telemt_web_profiles }}"
+  loop_control:
+    label: "{{ item.user | default('invalid-profile') }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate unique WEB profile users
+  ansible.builtin.assert:
+    that:
+      - (telemt_web_profiles | map(attribute='user') | list | unique | length) == (telemt_web_profiles | length)
+    fail_msg: >-
+      telemt_web_profiles must not contain duplicate users.
+    quiet: true
+  when:
+    - telemt_deployment_mode == 'web'
+    - telemt_web_profiles | length > 0
+
+- name: telemt | preflight | validate operator-owned WEB decoy
+  vars:
+    _telemt_web_decoy_sources: >-
+      {{
+        [
+          telemt_decoy_site_dir | default('', true),
+          telemt_decoy_index_html | default('', true),
+          telemt_decoy_upstream_url | default('', true)
+        ]
+        | reject('equalto', '')
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - _telemt_web_decoy_sources | length == 1
+    fail_msg: >-
+      WEB mode requires exactly one operator-owned decoy source:
+      telemt_decoy_site_dir, telemt_decoy_index_html, or
+      telemt_decoy_upstream_url. The built-in shared stub is intentionally
+      not accepted in WEB mode.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB decoy upstream origin
+  ansible.builtin.assert:
+    that:
+      - >-
+        telemt_decoy_upstream_url | default('', true) | length == 0
+        or telemt_decoy_upstream_url is match(
+          '^https?://(?:[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?|\[[0-9a-fA-F:]+\])(?::[0-9]{1,5})?$'
+        )
+    fail_msg: >-
+      telemt_decoy_upstream_url in WEB mode must be one fixed http(s) origin
+      without credentials, path, query, or fragment.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate reserved WEB ports
+  vars:
+    _telemt_web_reserved_ports: >-
+      {{
+        {
+          'public': telemt_listen_port | int,
+          'web_listener': _telemt_web_listener_port | int,
+          'web_decoy': _telemt_web_decoy_port | int,
+          'haproxy_tls': _telemt_haproxy_https_port | int,
+          'acme_alpn': _telemt_acme_alpn_port | int,
+          'metrics': telemt_metrics_port | int
+        }
+        | combine(
+            telemt_api_enabled
+            | ternary({'api': telemt_api_port | int}, {})
+          )
+        | combine(
+            telemt_molecule_mode
+            | ternary(
+                {
+                  'haproxy_stats': _telemt_haproxy_stats_port | int,
+                  'pebble': _telemt_pebble_port | int,
+                  'pebble_mgmt': _telemt_pebble_mgmt_port | int
+                },
+                {}
+              )
+          )
+      }}
+    _telemt_web_reserved_port_values: >-
+      {{ _telemt_web_reserved_ports | dict2items | map(attribute='value') | list }}
+  ansible.builtin.assert:
+    that:
+      - (_telemt_web_reserved_port_values | select('lt', 1) | list | length) == 0
+      - (_telemt_web_reserved_port_values | select('gt', 65535) | list | length) == 0
+      - _telemt_web_reserved_port_values | unique | length == _telemt_web_reserved_port_values | length
+    fail_msg: >-
+      WEB public/internal/API/metrics test ports must be unique values in the
+      1..65535 range. Effective map: {{ _telemt_web_reserved_ports }}
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | initialize effective WEB profiles
+  ansible.builtin.set_fact:
+    _telemt_effective_web_profiles: []
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | use explicit WEB profiles
+  ansible.builtin.set_fact:
+    _telemt_effective_web_profiles: "{{ telemt_web_profiles }}"
+  when:
+    - telemt_deployment_mode == 'web'
+    - telemt_web_profiles | length > 0
+
+- name: telemt | preflight | derive default WEB profiles
+  ansible.builtin.set_fact:
+    _telemt_effective_web_profiles: >-
+      {{
+        _telemt_effective_web_profiles
+        + [{'user': item.key, 'secret_mode': telemt_web_default_secret_mode}]
+      }}
+  loop: "{{ telemt_users | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - telemt_deployment_mode == 'web'
+    - telemt_web_profiles | length == 0
+
+- name: telemt | preflight | warn if API is exposed on non-loopback
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: telemt API is published on {{ telemt_api_bind }}:{{ telemt_api_port }}.
+      Make sure this is intentional; the API provides full proxy control.
+  when:
+    - telemt_publish_api
+    - telemt_api_bind not in ['127.0.0.1', '::1']

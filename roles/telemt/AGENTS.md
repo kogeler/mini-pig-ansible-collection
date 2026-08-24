@@ -5,8 +5,8 @@
 1. Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule`
    commands. It injects the role-scoped base config and the `GIT_DIR=/dev/null`
    workaround needed in this collection layout.
-2. Always activate the project's Ansible venv before make/molecule/ansible
-   commands (its path is in your local agent config, not in this repo).
+2. Use the role-local environment created by `make bootstrap`. Make targets
+   select `molecule/.venv` automatically; do not depend on an external venv.
 3. Avoid `make ...-test` during debugging because it destroys the instance at
    the end. Prefer separate `converge`, `idempotence`, and `verify` runs; use
    `destroy` explicitly when you need a clean slate.
@@ -18,10 +18,14 @@
 
 ## What this role does
 
-`telemt` deploys the Rust MTProto Fake-TLS proxy for Telegram in a Podman pod
-managed by systemd. The proxy accepts Telegram MTProto client traffic on the
-public listener and, when Fake-TLS masking is enabled, splices invalid or
-unauthenticated TLS-looking traffic to a Caddy decoy site in the same pod.
+`telemt` has two deployment topologies in one Podman pod managed by systemd:
+
+- `direct` (default) preserves the Rust MTProto/Fake-TLS proxy. Telemt owns the
+  public listener and splices invalid TLS-looking traffic to Caddy.
+- `web` puts HAProxy on public TCP/443. HAProxy routes ACME ALPN, terminates
+  normal TLS, and sends the canonical Host to Telemt's WEB listener. Telemt,
+  not HAProxy, validates capabilities/users and falls back invalid requests to
+  Caddy. Foreign Host values go straight to Caddy.
 
 The Molecule scenario validates the real ACME/TLS-ALPN-01 path with Pebble:
 Caddy requests a certificate from Pebble, Pebble validates the TLS-ALPN-01
@@ -31,7 +35,7 @@ until the Pebble-issued cert replaces Caddy's bootstrap cert.
 ## Architecture
 
 ```text
-Client : telemt_listen_port
+Direct client : telemt_listen_port
     |
     v
 +--- Pod: telemt-pod --------------------------------------------------+
@@ -46,6 +50,19 @@ Client : telemt_listen_port
 |                                                                      |
 |  Pebble (:14000 ACME, :15000 mgmt) - molecule_mode only              |
 +----------------------------------------------------------------------+
+
+WEB client :443
+    |
+    v
++--- Pod: telemt-pod --------------------------------------------------+
+| HAProxy outer TCP                                                     |
+|   |-- ALPN acme-tls/1 -> acme.sh responder (:10443)                   |
+|   `-- default -> HAProxy inner TLS (:8444)                            |
+|                  |-- canonical Host -> Telemt WEB (:18080)            |
+|                  `-- foreign Host -> Caddy HTTP (:18081)              |
+|                                         ^                             |
+| Telemt invalid capability/user --------+                              |
++----------------------------------------------------------------------+
 ```
 
 Internal ports:
@@ -56,6 +73,10 @@ Internal ports:
 | `_telemt_decoy_port` | `8443` | Caddy decoy HTTPS listener inside the pod |
 | `_telemt_pebble_port` | `14000` | Pebble ACME directory, molecule only |
 | `_telemt_pebble_mgmt_port` | `15000` | Pebble management endpoint, molecule only |
+| `_telemt_web_listener_port` | `18080` | Telemt WEB listener on pod loopback |
+| `_telemt_web_decoy_port` | `18081` | WEB-mode Caddy HTTP fallback |
+| `_telemt_haproxy_tls_port` | `8444` | HAProxy inner TLS terminator |
+| `_telemt_acme_alpn_port` | `10443` | acme.sh TLS-ALPN responder |
 | `telemt_metrics_port` | default `9090` | metrics listener |
 | `telemt_api_port` | default `9091` | API listener |
 
@@ -63,6 +84,15 @@ Internal ports:
 
 - The decoy always uses Caddy's ACME issuer path. Production uses the default
   public CA behavior; molecule mode overrides the global ACME CA to Pebble.
+- WEB certificates are owned by acme.sh and mounted into HAProxy. Renewal is
+  driven by `telemt-acme-renew.timer`; the renewal hook reloads HAProxy.
+- Keep the entire canonical Host route pointed at Telemt. Moving credential
+  filtering into HAProxy breaks the upstream WEB fallback semantics and risks
+  exposing secret-bearing paths in access logs.
+- WEB mode deliberately omits `[general.modes]` from `telemt.toml`. Telemt
+  3.5.2 rejects a config where every legacy mode is false; no legacy MTProxy
+  listener is exposed in this topology, and WEB profiles still explicitly use
+  only `plain`/`dd` handshakes.
 - Caddy runs with a read-only rootfs, so both `/data` and `/config` are
   writable bind mounts under `telemt_config_dir`.
 - In molecule mode, Caddy's `acme_ca` is `https://localhost:14000/dir` because
@@ -102,13 +132,14 @@ Internal ports:
 
 ```text
 restart telemt-pod
-  -> stops: telemt, decoy, Pebble (molecule only)
+  -> stops: HAProxy (WEB), telemt, decoy, Pebble (molecule only)
   -> restarts: pod
-  -> notifies: restart Pebble (molecule only), restart decoy, restart telemt
+  -> notifies: Pebble, decoy, telemt, then HAProxy
 
 restart telemt-pebble   molecule-only Pebble unit
 restart telemt-decoy    Caddy decoy container
 restart telemt          telemt proxy container
+restart telemt-haproxy  WEB TLS ingress container
 ```
 
 Each container restart is implemented as stop, polling until every
@@ -126,6 +157,7 @@ source.
 ```text
 roles/telemt/molecule/
 ├── Makefile
+├── requirements-dev.txt # inputs for role-local molecule/.venv
 ├── default/              # podman-in-podman, Debian trixie
 │   ├── molecule.yml
 │   ├── Dockerfile.j2
@@ -134,11 +166,19 @@ roles/telemt/molecule/
 │   ├── molecule.yml
 │   ├── inventory/hosts.yml
 │   └── ENABLE_CI
+├── web/                  # WEB + HAProxy, Debian trixie
+├── web-lanes/            # WEB https-lanes carrier
+├── web-bookworm/         # WEB regression on Debian 12
+├── gha-web/              # WEB on native GitHub Actions runner
 └── shared/
     ├── base.yml          # loaded with `molecule -c molecule/shared/base.yml`
     ├── prepare.yml
     ├── converge.yml
     ├── verify.yml
+    ├── web-converge.yml
+    ├── web-verify.yml
+    ├── transition.yml
+    ├── files/web_flow.py # deterministic full WEB protocol client
     ├── tasks/
     │   ├── prepare.yml
     │   ├── converge-telemt.yml
@@ -160,10 +200,17 @@ molecule -c molecule/shared/base.yml verify -s <scenario>
 Run from `roles/telemt/molecule`:
 
 ```bash
+make bootstrap
 make help
+make lint
 make default-podman-converge
 make default-podman-idempotence
 make default-podman-verify
+make web-podman-converge
+make web-podman-idempotence
+make web-podman-verify
+make web-podman-transition
+make web-lanes-podman-e2e
 make gha-native-converge
 make gha-native-idempotence
 make gha-native-verify
@@ -205,6 +252,12 @@ because `/etc/hosts` in the molecule container is a bind mount that
 10. optional `mtp_ping` performs a real Fake-TLS handshake to Telegram and
     increments Alice's authenticated user counter
 
+WEB verify separately checks Pebble certificate issuance through HAProxy,
+HTTP/2 ALPN, canonical and foreign Host camouflage, wrong/malformed
+capabilities, and complete create/uplink/downlink/delete flows for both plain
+and DD secrets. `transition.yml` checks the live `web -> direct -> web`
+service and listener transition.
+
 `mtp_ping` is opt-in because it needs internet egress to Telegram DCs on 443:
 
 ```bash
@@ -230,6 +283,10 @@ Important:
 - `telemt_publish_api`, `telemt_publish_metrics` - publish host loopback ports
 - `telemt_apparmor_profile` - AppArmor profile name passed to every container,
   default `unconfined` (see "Important role behavior")
+- `telemt_deployment_mode` - `direct` (default) or `web`
+- `telemt_web_public_ip` - required concrete IPv4 for WEB relay/KDF
+- `telemt_web_profiles` - WEB user profiles and `plain`/`dd` secret modes
+- one WEB decoy source: site directory, index file, or upstream URL
 
 Internal variables use the `_telemt_*` prefix.
 
@@ -239,10 +296,13 @@ Internal variables use the `_telemt_*` prefix.
 podman exec molecule-telemt systemctl status podman-telemt.service --no-pager
 podman exec molecule-telemt journalctl -xeu podman-telemt.service --no-pager -n 200
 podman exec molecule-telemt journalctl -xeu podman-telemt-decoy.service --no-pager -n 200
+podman exec molecule-telemt journalctl -xeu podman-telemt-haproxy.service --no-pager -n 200
+podman exec molecule-telemt journalctl -xeu telemt-acme-renew.service --no-pager -n 200
 podman exec molecule-telemt podman ps --all
 podman exec molecule-telemt podman logs --tail 100 telemt
 podman exec molecule-telemt podman logs --tail 100 telemt-decoy
 podman exec molecule-telemt podman logs --tail 100 telemt-pebble
+podman exec molecule-telemt podman logs --tail 100 telemt-haproxy
 podman exec molecule-telemt ss -ltnp
 ```
 

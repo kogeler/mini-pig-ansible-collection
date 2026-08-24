@@ -12,3 +12,6 @@ __pycache__/
 
 # Role-local Molecule development environments
 roles/naive_proxy/molecule/.venv/
+roles/telemt/molecule/.venv/
+
+tmp/

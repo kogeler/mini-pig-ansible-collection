@@ -1,0 +1,46 @@
+---
+- name: Reset WEB preflight rejection marker
+  ansible.builtin.set_fact:
+    _web_preflight_rejected: false
+
+- name: Exercise WEB preflight rejection
+  block:
+    - name: Apply invalid WEB configuration
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.telemt
+      vars:
+        telemt_deployment_mode: web
+        telemt_domain: "{{ molecule_telemt_domain }}"
+        telemt_listen_port: "{{ _web_preflight_case.listen_port | default(443) }}"
+        telemt_web_public_ip: "127.0.0.1"
+        telemt_image_tag: "{{ _web_preflight_case.image_tag | default('3.5.2') }}"
+        telemt_users: "{{ molecule_telemt_users }}"
+        telemt_web_profiles: >-
+          {{
+            _web_preflight_case.profiles
+            | default([{'user': 'alice', 'secret_mode': 'plain'}])
+          }}
+        telemt_decoy_index_html: index.html
+        telemt_decoy_site_dir: "{{ _web_preflight_case.site_dir | default('') }}"
+        telemt_molecule_mode: true
+
+    - name: Fail when invalid WEB configuration was accepted
+      ansible.builtin.fail:
+        msg: "WEB preflight case {{ _web_preflight_case.name }} was accepted"
+  rescue:
+    - name: Record WEB preflight rejection
+      ansible.builtin.set_fact:
+        _web_preflight_rejected: true
+
+    - name: Assert WEB preflight failed for the expected reason
+      ansible.builtin.assert:
+        that:
+          - (ansible_failed_result | to_json) is search(_web_preflight_case.error)
+        fail_msg: >-
+          WEB preflight case {{ _web_preflight_case.name }} failed for an
+          unexpected reason: {{ ansible_failed_result.msg }}
+
+- name: Assert invalid WEB configuration was rejected
+  ansible.builtin.assert:
+    that:
+      - _web_preflight_rejected

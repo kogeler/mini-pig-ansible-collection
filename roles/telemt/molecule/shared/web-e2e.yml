@@ -1,0 +1,3 @@
+---
+- name: Run WEB E2E verification
+  ansible.builtin.import_playbook: web-verify.yml

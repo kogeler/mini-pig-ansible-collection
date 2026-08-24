@@ -1,0 +1,22 @@
+---
+ansible:
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+        - --inventory=inventory/
+  env:
+    ANSIBLE_FORCE_COLOR: "true"
+  cfg:
+    privilege_escalation:
+      become: "true"
+  playbooks:
+    converge: ../shared/web-converge.yml
+    verify: ../shared/web-verify.yml
+scenario:
+  test_sequence:
+    - prepare
+    - converge
+    - idempotence
+    - verify

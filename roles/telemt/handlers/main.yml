@@ -1,21 +1,53 @@
 ---
-
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: stop telemt containers before restarting telemt-pod
+- name: telemt | handlers | stop containers before pod restart
   listen: restart telemt-pod
   ansible.builtin.systemd:
     name: "{{ item }}"
+    daemon_reload: true
     state: stopped
   loop: >-
     {{
-      [_telemt_systemd_unit_name, _telemt_decoy_systemd_unit_name]
+      ([_telemt_haproxy_systemd_unit_name] if telemt_deployment_mode == 'web' else [])
+      + [_telemt_systemd_unit_name, _telemt_decoy_systemd_unit_name]
       + ([_telemt_pebble_systemd_unit_name] if telemt_molecule_mode else [])
     }}
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: restart telemt-pod
+- name: telemt | handlers | wait for pod child cgroups
+  listen: restart telemt-pod
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ item }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  loop: >-
+    {{
+      ([_telemt_haproxy_systemd_unit_name] if telemt_deployment_mode == 'web' else [])
+      + [_telemt_systemd_unit_name, _telemt_decoy_systemd_unit_name]
+      + ([_telemt_pebble_systemd_unit_name] if telemt_molecule_mode else [])
+    }}
+  register: _telemt_pod_child_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _telemt_pod_child_cgroup_procs.rc != 0
+    or (_telemt_pod_child_cgroup_procs.stdout | trim | length == 0)
+  when: not ansible_check_mode
+
+- name: telemt | handlers | restart pod
+  listen: restart telemt-pod
   ansible.builtin.systemd:
     name: "{{ _telemt_pod_systemd_unit_name }}"
     enabled: true
@@ -26,30 +58,18 @@
     - restart telemt-pebble
     - restart telemt-decoy
     - restart telemt
+    - restart telemt-haproxy
 
-- name: stop telemt-pebble before restart
+- name: telemt | handlers | stop Pebble
   listen: restart telemt-pebble
   ansible.builtin.systemd:
     name: "{{ _telemt_pebble_systemd_unit_name }}"
+    daemon_reload: true
     state: stopped
-  ignore_errors: "{{ ansible_check_mode }}"
   when: telemt_molecule_mode
-
-- name: stop telemt-decoy before restart
-  listen: restart telemt-decoy
-  ansible.builtin.systemd:
-    name: "{{ _telemt_decoy_systemd_unit_name }}"
-    state: stopped
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: stop telemt before restart
-  listen: restart telemt
-  ansible.builtin.systemd:
-    name: "{{ _telemt_systemd_unit_name }}"
-    state: stopped
-  ignore_errors: "{{ ansible_check_mode }}"
-
-- name: wait for telemt-pebble cgroup to be released
+- name: telemt | handlers | wait for Pebble cgroup
   listen: restart telemt-pebble
   ansible.builtin.command:
     argv:
@@ -75,7 +95,25 @@
     - telemt_molecule_mode
     - not ansible_check_mode
 
-- name: wait for telemt-decoy cgroup to be released
+- name: telemt | handlers | start Pebble
+  listen: restart telemt-pebble
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pebble_systemd_unit_name }}"
+    enabled: true
+    daemon_reload: true
+    state: started
+  when: telemt_molecule_mode
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | stop decoy
+  listen: restart telemt-decoy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_decoy_systemd_unit_name }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | wait for decoy cgroup
   listen: restart telemt-decoy
   ansible.builtin.command:
     argv:
@@ -99,7 +137,24 @@
     or (_telemt_decoy_cgroup_procs.stdout | trim | length == 0)
   when: not ansible_check_mode
 
-- name: wait for telemt cgroup to be released
+- name: telemt | handlers | start decoy
+  listen: restart telemt-decoy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_decoy_systemd_unit_name }}"
+    enabled: true
+    daemon_reload: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | stop Telemt
+  listen: restart telemt
+  ansible.builtin.systemd:
+    name: "{{ _telemt_systemd_unit_name }}"
+    daemon_reload: true
+    state: stopped
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | wait for Telemt cgroup
   listen: restart telemt
   ansible.builtin.command:
     argv:
@@ -123,30 +178,56 @@
     or (_telemt_cgroup_procs.stdout | trim | length == 0)
   when: not ansible_check_mode
 
-- name: start telemt-pebble after restart
-  listen: restart telemt-pebble
-  ansible.builtin.systemd:
-    name: "{{ _telemt_pebble_systemd_unit_name }}"
-    enabled: true
-    daemon_reload: true
-    state: started
-  ignore_errors: "{{ ansible_check_mode }}"
-  when: telemt_molecule_mode
-
-- name: start telemt-decoy after restart
-  listen: restart telemt-decoy
-  ansible.builtin.systemd:
-    name: "{{ _telemt_decoy_systemd_unit_name }}"
-    enabled: true
-    daemon_reload: true
-    state: started
-  ignore_errors: "{{ ansible_check_mode }}"
-
-- name: start telemt after restart
+- name: telemt | handlers | start Telemt
   listen: restart telemt
   ansible.builtin.systemd:
     name: "{{ _telemt_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
     state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | stop HAProxy
+  listen: restart telemt-haproxy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_haproxy_systemd_unit_name }}"
+    daemon_reload: true
+    state: stopped
+  when: telemt_deployment_mode == 'web'
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | handlers | wait for HAProxy cgroup
+  listen: restart telemt-haproxy
+  ansible.builtin.command:
+    argv:
+      - find
+      - "/sys/fs/cgroup/system.slice/{{ _telemt_haproxy_systemd_unit_name }}"
+      - -name
+      - cgroup.procs
+      - -type
+      - f
+      - -exec
+      - cat
+      - "{}"
+      - +
+  register: _telemt_haproxy_cgroup_procs
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 1
+  until: >-
+    _telemt_haproxy_cgroup_procs.rc != 0
+    or (_telemt_haproxy_cgroup_procs.stdout | trim | length == 0)
+  when:
+    - telemt_deployment_mode == 'web'
+    - not ansible_check_mode
+
+- name: telemt | handlers | start HAProxy
+  listen: restart telemt-haproxy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_haproxy_systemd_unit_name }}"
+    enabled: true
+    daemon_reload: true
+    state: started
+  when: telemt_deployment_mode == 'web'
   ignore_errors: "{{ ansible_check_mode }}"

@@ -27,13 +27,15 @@ ExecStart=/usr/bin/podman container run \
         --replace \
         --name {{ _telemt_container_name }} \
         --pull=never \
+{% if telemt_read_only_rootfs %}
         --read-only \
+{% endif %}
         --security-opt=no-new-privileges \
 {% if telemt_apparmor_profile %}
         --security-opt=apparmor={{ telemt_apparmor_profile }} \
 {% endif %}
         --cap-drop=ALL \
-{% if telemt_listen_port | int < 1024 %}
+{% if telemt_deployment_mode == 'direct' and telemt_listen_port | int < 1024 %}
         --cap-add=NET_BIND_SERVICE \
 {% endif %}
 {% if telemt_tmpfs_enabled %}
