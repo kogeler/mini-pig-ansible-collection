@@ -1,0 +1,48 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: telemt | healthchecks | wait for public listener
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ telemt_listen_port }}"
+    state: started
+    timeout: 60
+
+- name: telemt | healthchecks | verify target WEB vhost falls back through Telemt
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ telemt_listen_port }}/"
+    headers:
+      Host: "{{ telemt_domain }}"
+    validate_certs: false
+    use_proxy: false
+    return_content: true
+    status_code: 200
+  register: _telemt_web_target_decoy
+  retries: 15
+  delay: 2
+  until: _telemt_web_target_decoy.status == 200
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | healthchecks | verify foreign WEB vhost reaches decoy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ telemt_listen_port }}/"
+    headers:
+      Host: camouflage.invalid
+    validate_certs: false
+    use_proxy: false
+    return_content: true
+    status_code: 200
+  register: _telemt_web_foreign_decoy
+  retries: 15
+  delay: 2
+  until: _telemt_web_foreign_decoy.status == 200
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | healthchecks | persist successful deployment mode
+  ansible.builtin.copy:
+    content: "{{ telemt_deployment_mode }}\n"
+    dest: "{{ _telemt_mode_marker_path }}"
+    owner: root
+    group: root
+    mode: "0644"

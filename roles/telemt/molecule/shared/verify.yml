@@ -139,8 +139,8 @@
           - "'tls_domain = \"' ~ molecule_telemt_domain ~ '\"' in _telemt_toml"
           - "'mask = true' in _telemt_toml"
           - "'mask_host = \"127.0.0.1\"' in _telemt_toml"
-          - "'alice = \"' ~ molecule_telemt_users.alice ~ '\"' in _telemt_toml"
-          - "'bob = \"' ~ molecule_telemt_users.bob ~ '\"' in _telemt_toml"
+          - "'\"alice\" = \"' ~ molecule_telemt_users.alice ~ '\"' in _telemt_toml"
+          - "'\"bob\" = \"' ~ molecule_telemt_users.bob ~ '\"' in _telemt_toml"
 
     # -- Prometheus metrics ---------------------------------------------------
 
@@ -235,12 +235,10 @@
           Decoy splice did not return content. Got status={{ _decoy_response.status }}
           body={{ _decoy_response.content | default('<empty>') | truncate(300) }}
 
-    # -- Bad-payload probe drives the connection counter ---------------------
-    # Send a junk TLS-ish ClientHello at the listener and assert the
-    # connections counter visibly increased. This proves the listener
-    # is parsing connections (not just bound). No native module sends
-    # arbitrary bytes over a TCP socket — `wait_for` only checks port
-    # state, `uri` is HTTP-only — so this stays as a `shell:` task.
+    # -- Vanilla-TLS probe drives the connection counter ---------------------
+    # Telemt 3.5.2 drops a truncated TLS record before incrementing the public
+    # connection counter. A complete vanilla HTTPS request is deterministic:
+    # it is accepted by Telemt, counted, and then spliced to the decoy.
 
     - name: Capture connections counter before garbage probe
       containers.podman.podman_container_exec:
@@ -254,13 +252,13 @@
       register: _metrics_before_garbage
       changed_when: false
 
-    - name: Garbage connection probe (drives telemt_connections_total)
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail +e
-          printf '\x16\x03\x01\x00\x05garbage' | timeout 3 nc 127.0.0.1 {{ molecule_telemt_listen_port }} >/dev/null 2>&1
-          exit 0
-        executable: /bin/bash
+    - name: Vanilla TLS probe (drives telemt_connections_total)
+      ansible.builtin.uri:
+        url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
+        validate_certs: false
+        use_proxy: false
+        return_content: false
+        status_code: 200
       changed_when: false
 
     - name: Settle window before re-scrape
@@ -295,8 +293,8 @@
         that:
           - (_conn_total_after | float) > (_conn_total_before | float)
         fail_msg: >-
-          telemt_connections_total did not advance after the decoy GET +
-          garbage probe. Before={{ _conn_total_before }}, After={{ _conn_total_after }}.
+          telemt_connections_total did not advance after a complete vanilla
+          TLS request. Before={{ _conn_total_before }}, After={{ _conn_total_after }}.
 
     # -- Real Fake-TLS handshake via mtp_ping (opt-in) -----------------------
     # mtp_ping runs through the proxy under test and out to Telegram's

@@ -1,0 +1,15 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: telemt | install | install packages
+  ansible.builtin.apt:
+    name:
+      - podman
+      - catatonit
+      - runc
+      - uidmap
+      - slirp4netns
+      - nftables
+    update_cache: true
+    install_recommends: false

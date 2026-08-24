@@ -3,13 +3,23 @@
 [general]
 use_middle_proxy = {{ telemt_use_middle_proxy | lower }}
 
+{% if telemt_deployment_mode == 'direct' %}
 [general.modes]
 classic = {{ telemt_modes_classic | lower }}
 secure = {{ telemt_modes_secure | lower }}
 tls = {{ telemt_modes_tls | lower }}
 
+{% else %}
+# Telemt 3.5.x still validates that one legacy mode is enabled globally, even
+# when every listener is WEB. Omitting general.modes keeps the upstream default
+# (`tls = true`) without exposing an MTProxy listener; WEB profiles continue to
+# restrict inner handshakes to plain/dd.
+[general.links]
+show = "*"
+
+{% endif %}
 [server]
-port = {{ telemt_listen_port }}
+port = {{ _telemt_web_listener_port if telemt_deployment_mode == 'web' else telemt_listen_port }}
 metrics_listen = "0.0.0.0:{{ telemt_metrics_port }}"
 
 {% if telemt_api_enabled %}
@@ -22,21 +32,82 @@ whitelist = {{ telemt_api_whitelist | to_json }}
 
 {% endif %}
 [[server.listeners]]
+{% if telemt_deployment_mode == 'web' %}
+ip = "127.0.0.1"
+port = {{ _telemt_web_listener_port }}
+transport = "web"
+proxy_protocol = false
+reuse_allow = false
+web_client_ip_source = "x_forwarded_for"
+web_trusted_proxy_cidrs = {{ _telemt_web_trusted_proxy_cidrs | to_json }}
+
+[web]
+enabled = true
+carrier = {{ telemt_web_carrier | to_json }}
+
+{% if telemt_web_limits | length > 0 %}
+[web.limits]
+{% for key, value in telemt_web_limits | dictsort %}
+{{ key }} = {{ value | int }}
+{% endfor %}
+
+{% endif %}
+{% if telemt_web_timeouts | length > 0 %}
+[web.timeouts]
+{% for key, value in telemt_web_timeouts | dictsort %}
+{{ key }} = {{ value | int }}
+{% endfor %}
+
+{% endif %}
+[[web.vhosts]]
+host = {{ telemt_domain | to_json }}
+public_addr = {{ (telemt_web_public_ip ~ ':443') | to_json }}
+
+[web.vhosts.decoy]
+mode = "http_upstream"
+upstream = {{ ('http://127.0.0.1:' ~ _telemt_web_decoy_port) | to_json }}
+
+{% if telemt_web_profiles | length > 0 %}
+{% for profile in telemt_web_profiles %}
+[[web.vhosts.profiles]]
+user = {{ profile.user | to_json }}
+secret_mode = {{ profile.secret_mode | to_json }}
+{% if profile.max_sessions is defined %}
+max_sessions = {{ profile.max_sessions | int }}
+{% endif %}
+{% if profile.max_streams is defined %}
+max_streams = {{ profile.max_streams | int }}
+{% endif %}
+{% if profile.max_streams_per_session is defined %}
+max_streams_per_session = {{ profile.max_streams_per_session | int }}
+{% endif %}
+
+{% endfor %}
+{% else %}
+{% for name, secret in telemt_users | dictsort %}
+[[web.vhosts.profiles]]
+user = {{ name | to_json }}
+secret_mode = {{ telemt_web_default_secret_mode | to_json }}
+
+{% endfor %}
+{% endif %}
+{% else %}
 ip = "0.0.0.0"
 
 {% if telemt_modes_tls %}
 [censorship]
-tls_domain = "{{ telemt_domain }}"
+tls_domain = {{ telemt_domain | to_json }}
 mask = {{ telemt_tls_mask | lower }}
 {% if telemt_tls_mask %}
 mask_host = "127.0.0.1"
-mask_port = {{ _telemt_decoy_port }}
+mask_port = {{ _telemt_direct_decoy_port }}
 {% endif %}
 tls_emulation = {{ telemt_tls_emulation | lower }}
-tls_front_dir = "{{ telemt_tls_front_dir }}"
+tls_front_dir = {{ telemt_tls_front_dir | to_json }}
 
 {% endif %}
+{% endif %}
 [access.users]
-{% for name, secret in telemt_users.items() %}
-{{ name }} = "{{ secret }}"
+{% for name, secret in telemt_users | dictsort %}
+{{ name | to_json }} = {{ secret | to_json }}
 {% endfor %}

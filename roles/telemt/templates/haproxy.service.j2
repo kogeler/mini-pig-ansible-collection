@@ -1,0 +1,58 @@
+[Unit]
+Description=Podman container-{{ _telemt_haproxy_container_name }}.service
+Requires={{ _telemt_pod_systemd_unit_name }}
+Wants={{ _telemt_decoy_systemd_unit_name }} {{ _telemt_systemd_unit_name }}
+After=network-online.target {{ _telemt_pod_systemd_unit_name }} {{ _telemt_decoy_systemd_unit_name }} {{ _telemt_systemd_unit_name }}
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Type=notify
+NotifyAccess=all
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=70
+Delegate=yes
+KillMode=mixed
+ExecStartPre=/bin/rm \
+        -f %t/%n.ctr-id
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ telemt_haproxy_image }}:{{ telemt_haproxy_image_tag }} \
+        || /usr/bin/podman pull {{ telemt_haproxy_image }}:{{ telemt_haproxy_image_tag }}'
+ExecStart=/usr/bin/podman container run \
+        --cidfile=%t/%n.ctr-id \
+        --cgroups=split \
+        --log-driver=passthrough \
+        --sdnotify=conmon \
+        --replace \
+        --name {{ _telemt_haproxy_container_name }} \
+        --pull=never \
+{% if telemt_read_only_rootfs %}
+        --read-only \
+{% endif %}
+        --security-opt=no-new-privileges \
+{% if telemt_apparmor_profile %}
+        --security-opt=apparmor={{ telemt_apparmor_profile }} \
+{% endif %}
+        --cap-drop=ALL \
+{% if telemt_listen_port | int < 1024 %}
+        --cap-add=NET_BIND_SERVICE \
+{% endif %}
+        --volume {{ _telemt_haproxy_config_path }}:/usr/local/etc/haproxy/haproxy.cfg:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --volume {{ _telemt_certs_dir }}:/certs:ro{% if telemt_selinux_relabel %},Z{% endif %} \
+        --pod={{ _telemt_pod_name }} \
+        {{ telemt_haproxy_image }}:{{ telemt_haproxy_image_tag }}
+ExecReload=/usr/bin/podman kill \
+        --signal=USR2 \
+        {{ _telemt_haproxy_container_name }}
+ExecStop=/usr/bin/podman stop \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm \
+        -f \
+        --ignore -t 10 \
+        --cidfile=%t/%n.ctr-id
+
+[Install]
+WantedBy=multi-user.target

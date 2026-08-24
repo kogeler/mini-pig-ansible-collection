@@ -1,10 +1,18 @@
 # {{ ansible_managed }}
 
+{% if telemt_deployment_mode == 'web' %}
+{
+    auto_https off
+    http_port {{ _telemt_web_decoy_port }}
+}
+
+:{{ _telemt_web_decoy_port }} {
+{% else %}
 {
 {% if telemt_decoy_acme_email %}
     email {{ telemt_decoy_acme_email }}
 {% endif %}
-    https_port {{ _telemt_decoy_port }}
+    https_port {{ _telemt_direct_decoy_port }}
 {% if telemt_molecule_mode %}
     acme_ca {{ _telemt_pebble_acme_server }}
     acme_ca_root /etc/caddy/pebble-root.pem
@@ -17,12 +25,10 @@
             disable_http_challenge
         }
     }
+{% endif %}
 {% if telemt_decoy_upstream_url | default('', true) | length > 0 %}
-    # Reverse-proxy mode: forward unauthenticated traffic to a remote decoy.
-    # Caddy handles TLS to the upstream and rewrites the Host header so the
-    # upstream sees its own hostname. Body/redirect URL rewriting is not done
-    # here — pick an upstream whose content does not leak its real domain or
-    # add a response-rewriting layer (see README "Limitations").
+    # Fixed-origin reverse proxy. Do not leak the original forwarded address
+    # or public hostname to the decoy application.
     reverse_proxy {{ telemt_decoy_upstream_url }} {
         header_up Host {upstream_hostport}
         header_up -X-Forwarded-For

@@ -1,0 +1,174 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+# A mode switch can leave a previously enabled ingress unit behind. Stop the
+# inactive branch before handlers restart the desired topology and contend for
+# the same public port.
+- name: telemt | services | stop WEB-only services in direct mode
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  loop:
+    - "{{ _telemt_acme_renew_timer_name }}"
+    - "{{ _telemt_haproxy_systemd_unit_name }}"
+  register: _telemt_inactive_web_services
+  failed_when: false
+  when: telemt_deployment_mode == 'direct'
+
+# Direct-mode Caddy needs Pebble's private HTTPS-root in Molecule. WEB mode
+# terminates TLS in HAProxy and acme.sh uses --insecure against Pebble, so it
+# deliberately has no such trust mount.
+- name: telemt | services | start pod early for direct Molecule ACME
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pod_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | start Pebble early for direct Molecule ACME
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pebble_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | wait for direct-mode Pebble
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ _telemt_pebble_port }}/dir"
+    validate_certs: false
+    return_content: false
+  register: _telemt_pebble_dir
+  until: _telemt_pebble_dir.status == 200
+  retries: 30
+  delay: 2
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - not ansible_check_mode
+
+- name: telemt | services | inspect direct-mode Pebble root
+  ansible.builtin.stat:
+    path: "{{ _telemt_pebble_root_cert_path }}"
+  register: _telemt_pebble_root_stat
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+
+- name: telemt | services | extract current Pebble root candidate
+  containers.podman.podman_container_copy:
+    container: "{{ _telemt_pebble_name }}"
+    src: /test/certs/pebble.minica.pem
+    dest: "{{ _telemt_pebble_root_cert_path }}.candidate"
+    from_container: true
+  register: _telemt_pebble_candidate_cp
+  retries: 5
+  delay: 2
+  until: _telemt_pebble_candidate_cp is success
+  changed_when: false
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - not ansible_check_mode
+
+- name: telemt | services | read Pebble root candidate
+  ansible.builtin.slurp:
+    src: "{{ _telemt_pebble_root_cert_path }}.candidate"
+  register: _telemt_pebble_root_candidate
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - not ansible_check_mode
+
+- name: telemt | services | read trusted Pebble root
+  ansible.builtin.slurp:
+    src: "{{ _telemt_pebble_root_cert_path }}"
+  register: _telemt_pebble_root_current
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - _telemt_pebble_root_stat.stat.exists | default(false)
+    - _telemt_pebble_root_stat.stat.isreg | default(false)
+    - not ansible_check_mode
+
+- name: telemt | services | remove invalid Pebble root bind source
+  ansible.builtin.file:
+    path: "{{ _telemt_pebble_root_cert_path }}"
+    state: absent
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - _telemt_pebble_root_stat.stat.exists | default(false)
+    - not (_telemt_pebble_root_stat.stat.isreg | default(false))
+
+- name: telemt | services | install trusted Pebble root
+  ansible.builtin.copy:
+    content: "{{ _telemt_pebble_root_candidate.content | b64decode }}"
+    dest: "{{ _telemt_pebble_root_cert_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - telemt_molecule_mode
+    - telemt_deployment_mode == 'direct'
+    - not ansible_check_mode
+    - >-
+      (not (_telemt_pebble_root_stat.stat.exists | default(false))) or
+      (not (_telemt_pebble_root_stat.stat.isreg | default(false))) or
+      (_telemt_pebble_root_current.content | default('') != _telemt_pebble_root_candidate.content)
+  notify: restart telemt-decoy
+
+- name: telemt | services | flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: telemt | services | start pod
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pod_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | start Pebble
+  ansible.builtin.systemd:
+    name: "{{ _telemt_pebble_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: telemt_molecule_mode
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | start decoy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_decoy_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | start Telemt
+  ansible.builtin.systemd:
+    name: "{{ _telemt_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: telemt | services | start HAProxy
+  ansible.builtin.systemd:
+    name: "{{ _telemt_haproxy_systemd_unit_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: telemt_deployment_mode == 'web'
+  ignore_errors: "{{ ansible_check_mode }}"

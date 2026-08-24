@@ -1,0 +1,59 @@
+---
+# Copyright © 2026 kogeler
+# SPDX-License-Identifier: Apache-2.0
+
+- name: telemt | links | display WEB proxy link
+  vars:
+    _telemt_web_link_secret: >-
+      {{
+        ('dd' if item.secret_mode == 'dd' else '')
+        ~ telemt_users[item.user]
+      }}
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.user }}]
+      tg://webproxy?server={{ telemt_domain }}&secret={{ _telemt_web_link_secret }}
+  register: _telemt_web_link_debug
+  loop: "{{ _telemt_effective_web_profiles }}"
+  loop_control:
+    label: "{{ item.user }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | links | display direct TLS proxy link
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.0.key }}@{{ item.1.key }}]
+      tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret=ee{{ item.0.value }}{{ telemt_domain.encode('utf-8').hex() }}
+  register: _telemt_tls_link_debug
+  loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}@{{ item.1.key }}"
+  when:
+    - telemt_deployment_mode == 'direct'
+    - telemt_modes_tls
+
+- name: telemt | links | display direct secure proxy link
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.0.key }}@{{ item.1.key }}]
+      tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret=dd{{ item.0.value }}
+  register: _telemt_secure_link_debug
+  loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}@{{ item.1.key }}"
+  when:
+    - telemt_deployment_mode == 'direct'
+    - telemt_modes_secure
+
+- name: telemt | links | display direct classic proxy link
+  ansible.builtin.debug:
+    msg: >-
+      [{{ item.0.key }}@{{ item.1.key }}]
+      tg://proxy?server={{ item.1.value }}&port={{ telemt_listen_port }}&secret={{ item.0.value }}
+  register: _telemt_classic_link_debug
+  loop: "{{ (telemt_users | dict2items) | product(((telemt_link_endpoints | default({}, true)) or {'default': telemt_domain}) | dict2items) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}@{{ item.1.key }}"
+  when:
+    - telemt_deployment_mode == 'direct'
+    - telemt_modes_classic

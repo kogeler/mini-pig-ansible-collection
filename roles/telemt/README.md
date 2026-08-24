@@ -1,15 +1,23 @@
 # telemt
 
-Ansible role for deploying [telemt](https://github.com/telemt/telemt) — a Rust MTProxy for Telegram — in a Podman container managed by systemd.
+Ansible role for deploying [telemt](https://github.com/telemt/telemt) — a Rust
+MTProxy for Telegram — in Podman containers managed by systemd.
 
-By default, the role starts telemt in **Fake TLS** mode (`tls = true`), which is the recommended anti-censorship deployment.
+The default `direct` deployment preserves the historical Fake TLS setup. The
+optional `web` deployment uses the WEB transport introduced in Telemt 3.5,
+with HAProxy terminating public TLS and Caddy serving camouflage traffic.
 
 ## Requirements
 
 - Debian-based OS (apt)
 - Root access (systemd unit deployed system-wide)
+- A canonical FQDN resolving to the server
+- WEB mode additionally requires public TCP/443, a concrete public IPv4, and
+  one operator-owned decoy source
 
 ## Quick start
+
+### Direct Fake TLS
 
 ```yaml
 - hosts: proxy
@@ -20,6 +28,47 @@ By default, the role starts telemt in **Fake TLS** mode (`tls = true`), which is
         telemt_users:
           main: "0123456789abcdef0123456789abcdef"
 ```
+
+### WEB + HAProxy
+
+```yaml
+- hosts: proxy
+  roles:
+    - role: kogeler.mini_pig.telemt
+      vars:
+        telemt_deployment_mode: web
+        telemt_domain: "proxy.example.org"
+        telemt_web_public_ip: "203.0.113.10"
+        telemt_acme_email: "admin@example.org"
+        telemt_decoy_site_dir: "{{ playbook_dir }}/files/decoy"
+        telemt_users:
+          alice: "0123456789abcdef0123456789abcdef"
+          bob: "fedcba9876543210fedcba9876543210"
+        telemt_web_profiles:
+          - user: alice
+            secret_mode: plain
+          - user: bob
+            secret_mode: dd
+```
+
+The WEB topology is deliberately split into two HAProxy listeners:
+
+```text
+Internet :443
+    -> HAProxy TCP/ALPN router
+       |-- acme-tls/1 -> acme.sh challenge responder
+       `-- TLS -> HAProxy inner TLS terminator
+                    |-- Host proxy.example.org -> Telemt WEB :18080
+                    `-- any other Host -> Caddy :18081
+
+Telemt WEB invalid capability/user -> Caddy :18081
+```
+
+HAProxy only separates ACME, the canonical host, and foreign hosts. For the
+canonical host, the complete request goes to Telemt. Telemt validates the WEB
+capability/user and sends invalid traffic to its fallback upstream, Caddy.
+This keeps credential decisions out of HAProxy and prevents it from logging
+user secrets.
 
 Generate user secrets (any of these commands produces a valid 32-char hex string):
 
@@ -51,7 +100,8 @@ The role applies hardening by default — no manual `telemt_extra_args` required
 |---|---|---|
 | `telemt_enabled` | `true` | Enable/disable the role |
 | `telemt_image` | `ghcr.io/telemt/telemt` | Container image |
-| `telemt_image_tag` | `latest` | Image tag |
+| `telemt_image_tag` | `3.5.2` | Image tag; WEB mode requires 3.5.2 or newer |
+| `telemt_deployment_mode` | `direct` | `direct` or `web` topology |
 
 ### Paths
 
@@ -65,6 +115,26 @@ The role applies hardening by default — no manual `telemt_extra_args` required
 | Variable | Default | Description |
 |---|---|---|
 | `telemt_listen_port` | `443` | Main proxy listen port (published via pod) |
+| `telemt_web_public_ip` | `""` | Concrete public IPv4 used by WEB; required in WEB mode |
+
+### WEB transport
+
+| Variable | Default | Description |
+|---|---|---|
+| `telemt_web_carrier` | `https` | Telemt WEB carrier (`https` or `https-lanes`) |
+| `telemt_web_default_secret_mode` | `dd` | Profile mode when `telemt_web_profiles` is empty |
+| `telemt_web_profiles` | `[]` | Per-user WEB profiles; secrets support `plain` and `dd`, not Fake TLS `ee` |
+| `telemt_web_limits` | `{}` | Allowlisted positive `[web.limits]` overrides |
+| `telemt_web_timeouts` | `{}` | Allowlisted positive `[web.timeouts]` overrides |
+| `telemt_web_haproxy_timeout_margin_secs` | `10` | Margin added to WEB long polling for HAProxy timeouts |
+| `telemt_haproxy_image_tag` | `3.4.3-alpine` | Pinned HAProxy runtime |
+| `telemt_acme_image_tag` | `3.1.4` | Pinned acme.sh runtime |
+| `telemt_acme_email` | `""` | ACME account email |
+| `telemt_acme_server` | `letsencrypt` | acme.sh CA selector |
+
+WEB profiles may override `max_sessions`, `max_streams`, and
+`max_streams_per_session`. Every profile must reference a unique key in
+`telemt_users`.
 
 ### Proxy modes
 
@@ -74,7 +144,8 @@ The role applies hardening by default — no manual `telemt_extra_args` required
 | `telemt_modes_secure` | `false` | Enable secure (`dd` prefix) mode |
 | `telemt_modes_tls` | `true` | Enable Fake TLS (`ee` prefix) mode |
 
-At least one mode must be enabled.
+At least one legacy mode must be enabled in `direct` deployment. WEB profiles
+are configured separately.
 
 ### Domain
 
@@ -148,10 +219,11 @@ When `telemt_tls_mask` is enabled, connections without a valid secret are TCP-sp
 | Variable | Default | Description |
 |---|---|---|
 | `telemt_decoy_image` | `docker.io/library/caddy` | Caddy container image |
-| `telemt_decoy_image_tag` | `latest` | Caddy image tag |
+| `telemt_decoy_image_tag` | `2.11.4-alpine` | Pinned Caddy image tag |
 | `telemt_decoy_domain` | `""` | Domain for Let's Encrypt cert (defaults to `telemt_domain`) |
 | `telemt_decoy_acme_email` | `""` | ACME email for Let's Encrypt (optional) |
 | `telemt_decoy_index_html` | `""` | Path to custom `index.html` for decoy site. When empty, the role uses its built-in stub page. Ignored when `telemt_decoy_upstream_url` is set |
+| `telemt_decoy_site_dir` | `""` | Complete operator-owned static site directory; recommended for WEB mode |
 | `telemt_decoy_upstream_url` | `""` | When set (e.g. `https://example.com`), Caddy reverse-proxies splice-spliced unauthenticated traffic to this URL instead of serving a local static page. Caddy terminates HTTPS on the upstream side and rewrites the `Host` header to the upstream hostname. Absolute URLs and `Location` redirects from the upstream are not rewritten |
 | `telemt_molecule_mode` | `false` | When true, deploys [Pebble](https://github.com/letsencrypt/pebble) (test ACME CA) into the pod and points Caddy at it via `acme_ca`. Caddy issues a real ACME cert through the same TLS-ALPN-01-through-splice path that production uses, so molecule scenarios exercise the full ACME chain. Never enable in production |
 
@@ -207,7 +279,7 @@ telemt_users:
 ### Custom image tag
 
 ```yaml
-telemt_image_tag: "3.3.24"
+telemt_image_tag: "3.5.2"
 telemt_domain: "example.org"
 telemt_users:
   main: "0123456789abcdef0123456789abcdef"
@@ -274,7 +346,7 @@ proxy-2.example.com
 ```yaml
 # group_vars/proxy.yml
 telemt_domain: "cdn.example.org"
-telemt_image_tag: "3.3.24"
+telemt_image_tag: "3.5.2"
 telemt_publish_metrics: true
 telemt_users:
   alice: "0123456789abcdef0123456789abcdef"
@@ -293,6 +365,10 @@ systemctl status podman-telemt.service
 # Decoy status
 systemctl status podman-telemt-decoy.service
 
+# WEB ingress and certificate renewal (WEB mode)
+systemctl status podman-telemt-haproxy.service
+systemctl status telemt-acme-renew.timer
+
 # Logs
 journalctl -u podman-telemt.service -f
 
@@ -306,7 +382,13 @@ the service again.
 
 ## Proxy links
 
-The role prints ready-to-use `tg://proxy` links for each user and each enabled mode at the end of the play. By default `server=` is set to `telemt_domain`. Set `telemt_link_endpoints` to a map of `label: ip` to emit one link per user per endpoint — the SNI embedded in the Fake TLS secret remains `telemt_domain`, only the connect address changes.
+The role prints ready-to-use links at the end of the play. Direct mode emits
+`tg://proxy`; WEB mode emits `tg://webproxy?server=<domain>&secret=<secret>`.
+WEB links intentionally omit `port` because the protocol uses HTTPS/443.
+
+In direct mode, `server=` defaults to `telemt_domain`. Set
+`telemt_link_endpoints` to a map of `label: ip` to emit one link per user per
+endpoint — the SNI embedded in the Fake TLS secret remains `telemt_domain`.
 
 | Mode | Secret format |
 |---|---|
@@ -344,12 +426,44 @@ ok: [proxy-1] => (item=main@backup) =>
 
 Send the link to Telegram users — they can open it directly to add the proxy.
 
+## Local development and tests
+
+The Molecule directory owns its Python environment. No external Ansible venv
+or bare `molecule` command is required:
+
+```bash
+cd roles/telemt/molecule
+make bootstrap
+make lint
+
+# Direct regression
+make default-podman-converge
+make default-podman-idempotence
+make default-podman-verify
+
+# WEB + HAProxy, including deterministic plain/DD protocol flows
+make web-podman-converge
+make web-podman-idempotence
+make web-podman-verify
+make web-podman-transition
+
+# https-lanes and Debian 12 coverage
+make web-lanes-podman-test
+make web-bookworm-podman-test
+```
+
+Use `make help` for native GitHub Actions and maintenance targets. The WEB
+verify flow checks certificate issuance through Pebble, ALPN, decoy routing,
+wrong/malformed capabilities, session creation, uplink/downlink, and deletion
+for both `plain` and `dd` profiles.
+
 ## Idempotency
 
 The role is fully idempotent:
 
 - Systemd units and config are templated — changes trigger a restart via handlers.
-- Pod unit changes cascade to dependent containers (decoy and telemt).
+- Pod unit changes cascade to dependent containers (decoy, Telemt, and HAProxy
+  in WEB mode).
 - `flush_handlers` prevents double restart on first deploy.
 - Repeated runs with unchanged variables produce no `changed` tasks.
 - The container is not recreated unless the unit file or config changes.

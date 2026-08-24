@@ -7,7 +7,13 @@
 
 telemt_enabled: true
 telemt_image: ghcr.io/telemt/telemt
-telemt_image_tag: latest
+telemt_image_tag: "3.5.2"
+
+# Deployment topology. `direct` preserves the role's historical behaviour:
+# Telemt owns the public listener and splices masking traffic to TLS-Caddy.
+# `web` makes HAProxy the public TLS owner and places Telemt's WEB listener
+# behind it on pod loopback.
+telemt_deployment_mode: direct
 
 # -- Paths --------------------------------------------------------------------
 
@@ -24,6 +30,10 @@ telemt_container_config_path: /run/telemt/config.toml
 telemt_pod_network: ""
 
 telemt_listen_port: 443
+
+# WEB client links always use public HTTPS port 443. This is the concrete
+# public IPv4 used by Telemt's relay/KDF destination tuple, not a hostname.
+telemt_web_public_ip: ""
 
 # -- Container options ---------------------------------------------------------
 
@@ -60,6 +70,22 @@ telemt_rust_log: ""
 telemt_modes_classic: false
 telemt_modes_secure: false
 telemt_modes_tls: true
+
+# -- WEB transport ------------------------------------------------------------
+# WEB is selected only by telemt_deployment_mode=web. Legacy telemt_modes_*
+# remain direct-mode settings and are intentionally ignored by this branch.
+
+telemt_web_carrier: https
+telemt_web_default_secret_mode: dd
+# Optional list of {user, secret_mode, max_sessions?, max_streams?,
+# max_streams_per_session?}. Empty exposes every telemt_users entry with the
+# default secret mode. Telemt WEB supports only `plain` and `dd`; FakeTLS
+# `ee` secrets are a direct-mode feature.
+telemt_web_profiles: []
+# Allowlisted Telemt [web.limits] and [web.timeouts] overrides. Empty maps use
+# the defaults from the pinned Telemt release.
+telemt_web_limits: {}
+telemt_web_timeouts: {}
 
 # -- General proxy config ------------------------------------------------------
 
@@ -119,7 +145,7 @@ telemt_publish_metrics: false
 # TLS-ALPN-01 challenge passes through telemt TCP-splice to Caddy on localhost.
 
 telemt_decoy_image: docker.io/library/caddy
-telemt_decoy_image_tag: latest
+telemt_decoy_image_tag: "2.11.4-alpine"
 # Domain for Let's Encrypt certificate. Defaults to telemt_domain if empty.
 telemt_decoy_domain: ""
 # ACME email for Let's Encrypt notifications (optional)
@@ -128,6 +154,11 @@ telemt_decoy_acme_email: ""
 # When empty, the role uses its built-in files/index.html.
 # Ignored when telemt_decoy_upstream_url is set.
 telemt_decoy_index_html: ""
+
+# Path on the controller to a complete operator-owned static site directory.
+# WEB mode requires one of this, telemt_decoy_index_html, or
+# telemt_decoy_upstream_url so installations do not share one probeable stub.
+telemt_decoy_site_dir: ""
 
 # When non-empty, Caddy reverse-proxies all unauthenticated traffic
 # (i.e. the splice-spliced "wrong-secret" stream) to the given URL
@@ -138,6 +169,26 @@ telemt_decoy_index_html: ""
 # pick a static-style upstream whose content does not leak its real
 # domain. When set, telemt_decoy_index_html is ignored.
 telemt_decoy_upstream_url: ""
+
+# -- WEB TLS termination / ACME ----------------------------------------------
+
+telemt_haproxy_image: docker.io/library/haproxy
+telemt_haproxy_image_tag: "3.4.3-alpine"
+telemt_acme_image: docker.io/neilpang/acme.sh
+telemt_acme_image_tag: "3.1.4"
+telemt_acme_email: ""
+telemt_acme_server: letsencrypt
+
+# HAProxy HTTP client/server timeout is derived from Telemt's effective
+# long_poll_secs (25 by default) plus this margin.
+telemt_web_haproxy_timeout_margin_secs: 10
+telemt_haproxy_timeout_connect: "5s"
+telemt_haproxy_global_maxconn: 0
+telemt_haproxy_cpu_policy: performance
+telemt_haproxy_ssl_cache_size: 40000
+telemt_haproxy_h2_frontend_rxbuf: "6m"
+telemt_haproxy_h2_initial_window_size: 1048576
+telemt_haproxy_h2_max_frame_size: 0
 
 # -- Molecule testing mode ----------------------------------------------------
 # Deploys Pebble (Let's Encrypt's test ACME CA) as an additional container

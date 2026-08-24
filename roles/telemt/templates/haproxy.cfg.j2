@@ -1,0 +1,97 @@
+# {{ ansible_managed }}
+
+global
+    log stdout format raw local0
+{% if telemt_haproxy_global_maxconn | int > 0 %}
+    maxconn {{ telemt_haproxy_global_maxconn }}
+{% endif %}
+{% if telemt_haproxy_cpu_policy %}
+    cpu-policy {{ telemt_haproxy_cpu_policy }}
+{% endif %}
+{% if telemt_haproxy_ssl_cache_size | int > 0 %}
+    tune.ssl.cachesize {{ telemt_haproxy_ssl_cache_size }}
+{% endif %}
+{% if telemt_haproxy_h2_frontend_rxbuf | string | trim | length > 0 %}
+    tune.h2.fe.rxbuf {{ telemt_haproxy_h2_frontend_rxbuf | string | trim }}
+{% endif %}
+{% if telemt_haproxy_h2_initial_window_size | int > 0 %}
+    tune.h2.fe.initial-window-size {{ telemt_haproxy_h2_initial_window_size | int }}
+{% endif %}
+{% if telemt_haproxy_h2_max_frame_size | int > 0 %}
+    tune.h2.max-frame-size {{ telemt_haproxy_h2_max_frame_size | int }}
+{% endif %}
+
+defaults
+    log global
+    mode http
+    option httplog
+    timeout connect {{ telemt_haproxy_timeout_connect }}
+    timeout client {{ _telemt_haproxy_http_timeout_secs }}s
+    timeout server {{ _telemt_haproxy_http_timeout_secs }}s
+    timeout http-request 10s
+    timeout http-keep-alive {{ telemt_web_timeouts.http_idle_secs | default(75) | int }}s
+
+# Inspect the original ClientHello before TLS termination so TLS-ALPN-01 can
+# be routed to the transient acme.sh responder on the same public port.
+frontend public_tls
+    bind *:{{ telemt_listen_port }}
+    mode tcp
+    no log
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    acl acme_alpn req.ssl_alpn acme-tls/1
+    use_backend be_acme if acme_alpn
+    default_backend be_https
+
+backend be_acme
+    mode tcp
+    no log
+    server acme 127.0.0.1:{{ _telemt_acme_alpn_port }}
+
+backend be_https
+    mode tcp
+    no log
+    # Preserve the original source across the loopback TCP hop. The internal
+    # frontend restores it with accept-proxy before setting X-Forwarded-For.
+    server local_https 127.0.0.1:{{ _telemt_haproxy_https_port }} send-proxy-v2
+
+frontend web_https
+    bind 127.0.0.1:{{ _telemt_haproxy_https_port }} accept-proxy ssl alpn h2,http/1.1
+    ssl-f-use crt /certs/fullchain.pem key /certs/key.pem
+    mode http
+    no log
+
+    acl telemt_host hdr(host) -i {{ telemt_domain }} {{ telemt_domain }}:443
+    use_backend be_telemt_web if telemt_host
+    default_backend be_decoy
+
+backend be_telemt_web
+    mode http
+    no log
+    option http-keep-alive
+    http-reuse safe
+    retries 0
+    timeout connect {{ telemt_haproxy_timeout_connect }}
+    timeout server {{ _telemt_haproxy_http_timeout_secs }}s
+    http-request set-header Host {{ telemt_domain }}
+    http-request del-header X-Forwarded-For
+    http-request set-header X-Forwarded-For %[src]
+    server telemt 127.0.0.1:{{ _telemt_web_listener_port }} check
+
+backend be_decoy
+    mode http
+    no log
+    option http-keep-alive
+    server caddy 127.0.0.1:{{ _telemt_web_decoy_port }} check
+
+{% if telemt_molecule_mode %}
+# Test-only loopback stats. It deliberately exposes counters but no request
+# headers, paths, capabilities, or bearer credentials.
+listen molecule_stats
+    bind 127.0.0.1:{{ _telemt_haproxy_stats_port }}
+    mode http
+    no log
+    stats enable
+    stats uri /stats
+    stats show-node
+{% endif %}

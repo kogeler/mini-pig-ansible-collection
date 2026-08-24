@@ -1,0 +1,41 @@
+[Unit]
+Description=ACME certificate issue/renewal for telemt WEB
+Requires={{ _telemt_pod_systemd_unit_name }}
+Wants={{ _telemt_haproxy_systemd_unit_name }}{% if telemt_molecule_mode %} {{ _telemt_pebble_systemd_unit_name }}{% endif %}
+After={{ _telemt_pod_systemd_unit_name }} {{ _telemt_haproxy_systemd_unit_name }}{% if telemt_molecule_mode %} {{ _telemt_pebble_systemd_unit_name }}{% endif %}
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sh -c '\
+        /usr/bin/podman image exists {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
+        || /usr/bin/podman pull {{ telemt_acme_image }}:{{ telemt_acme_image_tag }}'
+ExecStart=/bin/sh -c '\
+        /usr/bin/podman run --rm \
+        --cgroups=split \
+        --log-driver=passthrough \
+        --pod={{ _telemt_pod_name }} \
+        --volume {{ _telemt_certs_dir }}:/certs \
+        --volume {{ _telemt_acme_data_dir }}:/acme.sh \
+        {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
+        --issue -d {{ telemt_domain }} \
+        --alpn --tlsport {{ _telemt_acme_alpn_port }} \
+{% if telemt_molecule_mode %}
+        --server {{ _telemt_pebble_acme_server }} \
+        --insecure \
+        --force \
+{% else %}
+        --server {{ telemt_acme_server }} \
+{% endif %}
+{% if telemt_acme_email %}
+        --accountemail {{ telemt_acme_email }} \
+{% endif %}
+        --cert-file /certs/cert.pem \
+        --key-file /certs/key.pem \
+        --fullchain-file /certs/fullchain.pem \
+        --reloadcmd true; \
+        rc=$$?; \
+        if [ "$$rc" -eq 0 ]; then \
+            /bin/systemctl reload {{ _telemt_haproxy_systemd_unit_name }} || exit $$?; \
+        fi; \
+        exit $$rc'
+SuccessExitStatus=0 2
