@@ -19,10 +19,10 @@ ExecStart=/usr/bin/podman pod create \
         --publish {{ telemt_metrics_bind }}:{{ telemt_metrics_port }}:{{ telemt_metrics_port }} \
 {% endif %}
 {% if telemt_molecule_mode %}
-        --publish {{ _telemt_pebble_port }}:{{ _telemt_pebble_port }} \
-        --publish {{ _telemt_pebble_mgmt_port }}:{{ _telemt_pebble_mgmt_port }} \
+        --publish 127.0.0.1:{{ _telemt_pebble_host_port }}:{{ _telemt_pebble_port }} \
+        --publish 127.0.0.1:{{ _telemt_pebble_mgmt_host_port }}:{{ _telemt_pebble_mgmt_port }} \
 {% endif %}
-        --publish {{ telemt_listen_port }}:{{ telemt_listen_port }}
+        --publish {% if telemt_listen_bind | length > 0 %}{{ telemt_listen_bind }}:{% endif %}{{ telemt_listen_port }}:{{ telemt_listen_port }}
 ExecStop=/usr/bin/podman pod stop \
         --ignore {{ _telemt_pod_name }}
 ExecStopPost=/usr/bin/podman pod rm \

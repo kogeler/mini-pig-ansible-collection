@@ -45,7 +45,7 @@
 
 - name: telemt | services | wait for direct-mode Pebble
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ _telemt_pebble_port }}/dir"
+    url: "https://127.0.0.1:{{ _telemt_pebble_host_port }}/dir"
     validate_certs: false
     return_content: false
   register: _telemt_pebble_dir
@@ -126,7 +126,7 @@
       (not (_telemt_pebble_root_stat.stat.exists | default(false))) or
       (not (_telemt_pebble_root_stat.stat.isreg | default(false))) or
       (_telemt_pebble_root_current.content | default('') != _telemt_pebble_root_candidate.content)
-  notify: restart telemt-decoy
+  notify: "{{ _telemt_restart_decoy_handler }}"
 
 - name: telemt | services | flush handlers
   ansible.builtin.meta: flush_handlers

@@ -24,6 +24,7 @@ platforms:
       - NET_ADMIN
     etc_hosts:
       telemt.test: "127.0.0.1"
+      web.telemt.test: "127.0.0.1"
     devices:
       - /dev/fuse:/dev/fuse
     command: ""

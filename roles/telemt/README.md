@@ -7,6 +7,10 @@ The default `direct` deployment preserves the historical Fake TLS setup. The
 optional `web` deployment uses the WEB transport introduced in Telemt 3.5,
 with HAProxy terminating public TLS and Caddy serving camouflage traffic.
 
+The default identities are intentionally different: direct uses `telemt` and
+`/opt/telemt`, while WEB uses `telemt-web` and `/opt/telemt_web`. This lets the
+two topologies coexist on one host once their published sockets are distinct.
+
 ## Requirements
 
 - Debian-based OS (apt)
@@ -70,6 +74,73 @@ capability/user and sends invalid traffic to its fallback upstream, Caddy.
 This keeps credential decisions out of HAProxy and prevents it from logging
 user secrets.
 
+## Colocated deployments
+
+The role does not inspect other deployments or fail preflight because a host
+port, name, or directory is already in use. The inventory is the source of
+truth. For every instance on the same host, make these values unique:
+
+| Scope | Variables that must not collide |
+|---|---|
+| Runtime and systemd identity | `telemt_instance_name` |
+| Persistent files, certificates, and rendered units' bind sources | `telemt_config_dir` |
+| Public listener | The `(telemt_listen_bind, telemt_listen_port)` socket tuple |
+| Public DNS and certificates | `telemt_domain` (and `telemt_decoy_domain` when explicitly set) |
+| Published API | `(telemt_api_bind, telemt_api_port)` when `telemt_publish_api: true` |
+| Published metrics | `(telemt_metrics_bind, telemt_metrics_port)` when `telemt_publish_metrics: true` |
+
+`telemt_web_public_ip` must identify the public IPv4 that reaches that WEB
+instance, but it does not bind a host socket. `telemt_pod_network`, image
+names, ACME server, and ACME email may be shared.
+
+WEB links always use TCP/443, so `telemt_listen_port` remains `443` in WEB
+mode. A direct + WEB pair can use direct port `9443` and WEB port `443`, as in
+this example. Two WEB instances need different host IPv4 addresses and
+corresponding `telemt_listen_bind` values so each can own port 443.
+
+```yaml
+- hosts: proxy
+  tasks:
+    - name: Deploy direct instance
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.telemt
+      vars:
+        telemt_domain: direct.example.org
+        telemt_listen_port: 9443
+        telemt_users:
+          main: "0123456789abcdef0123456789abcdef"
+
+    - name: Deploy colocated WEB instance
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.telemt
+      vars:
+        telemt_deployment_mode: web
+        telemt_domain: web.example.org
+        telemt_web_public_ip: "203.0.113.10"
+        telemt_decoy_site_dir: "{{ playbook_dir }}/files/web-decoy"
+        telemt_users:
+          main: "fedcba9876543210fedcba9876543210"
+```
+
+The defaults distinguish one direct instance from one WEB instance. For a
+second instance of the same mode, explicitly set both a unique
+`telemt_instance_name` and a unique `telemt_config_dir`, in addition to the
+network values above.
+
+Existing direct deployments keep their historical names. Existing WEB
+deployments created before the isolated defaults can retain their old identity
+during an in-place upgrade with:
+
+```yaml
+telemt_deployment_mode: web
+telemt_instance_name: telemt
+telemt_config_dir: /opt/telemt
+```
+
+That compatibility override cannot coexist with the default direct instance.
+To adopt the new WEB identity instead, stop the old generic WEB units before
+the first deployment; the role deliberately does not discover or remove them.
+
 Generate user secrets (any of these commands produces a valid 32-char hex string):
 
 ```bash
@@ -102,12 +173,13 @@ The role applies hardening by default — no manual `telemt_extra_args` required
 | `telemt_image` | `ghcr.io/telemt/telemt` | Container image |
 | `telemt_image_tag` | `3.5.2` | Image tag; WEB mode requires 3.5.2 or newer |
 | `telemt_deployment_mode` | `direct` | `direct` or `web` topology |
+| `telemt_instance_name` | `telemt` (direct), `telemt-web` (WEB) | Prefix for pod, container, systemd, handler, and ACME identities; unique per colocated instance |
 
 ### Paths
 
 | Variable | Default | Description |
 |---|---|---|
-| `telemt_config_dir` | `/opt/telemt` | Host directory for config file |
+| `telemt_config_dir` | `/opt/telemt` (direct), `/opt/telemt_web` (WEB) | Isolated host directory for configuration, state, and certificates |
 | `telemt_container_config_path` | `/run/telemt/config.toml` | Config path inside container |
 
 ### Network
@@ -115,7 +187,8 @@ The role applies hardening by default — no manual `telemt_extra_args` required
 | Variable | Default | Description |
 |---|---|---|
 | `telemt_listen_port` | `443` | Main proxy listen port (published via pod) |
-| `telemt_web_public_ip` | `""` | Concrete public IPv4 used by WEB; required in WEB mode |
+| `telemt_listen_bind` | `""` | Optional host IPv4 for the public publish; empty binds all host addresses |
+| `telemt_web_public_ip` | `""` | Public IPv4 used in WEB relay/KDF data; required in WEB mode and not a host bind setting |
 
 ### WEB transport
 
@@ -355,6 +428,16 @@ telemt_users:
 
 ## Service management
 
+Default service identities are:
+
+| Component | Direct | WEB |
+|---|---|---|
+| Pod | `podman-telemt-pod.service` | `podman-telemt-web-pod.service` |
+| Telemt | `podman-telemt.service` | `podman-telemt-web.service` |
+| Decoy | `podman-telemt-decoy.service` | `podman-telemt-web-decoy.service` |
+| HAProxy | — | `podman-telemt-web-haproxy.service` |
+| ACME timer | — | `telemt-web-acme-renew.timer` |
+
 ```bash
 # Pod status
 systemctl status podman-telemt-pod.service
@@ -365,9 +448,9 @@ systemctl status podman-telemt.service
 # Decoy status
 systemctl status podman-telemt-decoy.service
 
-# WEB ingress and certificate renewal (WEB mode)
-systemctl status podman-telemt-haproxy.service
-systemctl status telemt-acme-renew.timer
+# WEB ingress and certificate renewal
+systemctl status podman-telemt-web-haproxy.service
+systemctl status telemt-web-acme-renew.timer
 
 # Logs
 journalctl -u podman-telemt.service -f
@@ -436,26 +519,31 @@ cd roles/telemt/molecule
 make bootstrap
 make lint
 
-# Direct regression
+# Direct + WEB on one Debian host, including idempotence and isolation
 make default-podman-converge
 make default-podman-idempotence
 make default-podman-verify
 
-# WEB + HAProxy, including deterministic plain/DD protocol flows
-make web-podman-converge
-make web-podman-idempotence
-make web-podman-verify
-make web-podman-transition
-
-# https-lanes and Debian 12 coverage
-make web-lanes-podman-test
-make web-bookworm-podman-test
+# The same combined deployment on a native GitHub Actions runner
+make gha-native-converge
+make gha-native-idempotence
+make gha-native-verify
 ```
 
-Use `make help` for native GitHub Actions and maintenance targets. The WEB
-verify flow checks certificate issuance through Pebble, ALPN, decoy routing,
+Use `make help` for maintenance targets. Both scenarios deploy direct and WEB
+with their mode-derived default identities on the same machine. Converge
+checks that applying either topology does not restart the other, and
+idempotence covers the complete combined deployment.
+
+The WEB verify flow checks certificate issuance through Pebble, ALPN, decoy routing,
 wrong/malformed capabilities, session creation, uplink/downlink, and deletion
-for both `plain` and `dd` profiles.
+for both `plain` and `dd` profiles. It also performs a valid inner MTProxy
+handshake and requires a nonce-matched Telegram `resPQ` for each profile. This
+is not opt-in: both `default` and `gha` require real egress from Telemt to
+Telegram middle proxies. `req_pq` is a pre-authentication
+exchange, so the probe does not require a Telegram account, API ID, or API
+hash. Verify exercises both public listeners and both internal health paths
+while all direct and WEB units remain active.
 
 ## Idempotency
 

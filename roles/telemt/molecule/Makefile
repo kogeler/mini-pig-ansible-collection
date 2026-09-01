@@ -5,11 +5,7 @@
 ##
 ## Scenario targets:
 ##   default-podman-<action>
-##   web-podman-<action>
-##   web-lanes-podman-<action>
-##   web-bookworm-podman-<action>
 ##   gha-native-<action>
-##   gha-web-native-<action>
 
 PYTHON ?= python3
 
@@ -21,7 +17,6 @@ VENV_PYTHON := $(VENV_DIR)/bin/python
 VENV_READY := $(VENV_DIR)/.ready
 REQUIREMENTS := $(THIS_DIR)requirements-dev.txt
 VERSION_AUDIT := $(THIS_DIR)scripts/version_audit.py
-SCENARIO_PLAYBOOK := $(THIS_DIR)scripts/run_scenario_playbook.py
 
 MOLECULE ?= $(VENV_DIR)/bin/molecule
 ANSIBLE_LINT ?= $(VENV_DIR)/bin/ansible-lint
@@ -47,17 +42,11 @@ help:
 	@echo "  lint                   run ansible-lint for this role"
 	@echo "  versions               compare runtime pins with upstream"
 	@echo "  versions-check         fail when a maintained pin is stale"
-	@echo "  ci-podman              clean test of every Podman scenario"
-	@echo "  web-podman-transition  run mode-transition checks on a live web instance"
-	@echo "  web-lanes-podman-e2e   run browser/Telegram E2E on a live web-lanes instance"
+	@echo "  ci-podman              clean test of the default Podman scenario"
 	@echo ""
 	@echo "Scenarios x drivers:"
-	@echo "  default-podman-<action>          direct/FakeTLS regression"
-	@echo "  web-podman-<action>              WEB https + HAProxy"
-	@echo "  web-lanes-podman-<action>        WEB https-lanes/browser E2E"
-	@echo "  web-bookworm-podman-<action>     WEB on Debian 12"
-	@echo "  gha-native-<action>              direct native CI runner"
-	@echo "  gha-web-native-<action>          WEB native CI runner"
+	@echo "  default-podman-<action>  direct + WEB on Debian trixie"
+	@echo "  gha-native-<action>      direct + WEB on the native CI runner"
 	@echo ""
 	@echo "Actions: test create converge verify idempotence destroy login reset prepare check"
 
@@ -109,37 +98,9 @@ versions-check: $(VENV_READY)
 
 ci-podman: lint versions-check
 	$(MAKE) default-podman-test
-	$(MAKE) web-podman-test
-	$(MAKE) web-lanes-podman-test
-	$(MAKE) web-bookworm-podman-test
-
-.PHONY: web-podman-transition web-lanes-podman-e2e
-web-podman-transition: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(VENV_PYTHON) $(SCENARIO_PLAYBOOK) \
-		--base-config molecule/shared/base.yml \
-		--scenario-config molecule/web/molecule.yml \
-		--playbook molecule/shared/transition.yml
-
-web-lanes-podman-e2e: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(VENV_PYTHON) $(SCENARIO_PLAYBOOK) \
-		--base-config molecule/shared/base.yml \
-		--scenario-config molecule/web-lanes/molecule.yml \
-		--playbook molecule/shared/web-e2e.yml
 
 default-podman-%: $(VENV_READY) _guard
 	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s default
 
-web-podman-%: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s web
-
-web-lanes-podman-%: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s web-lanes
-
-web-bookworm-podman-%: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s web-bookworm
-
 gha-native-%: $(VENV_READY) _guard
 	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s gha
-
-gha-web-native-%: $(VENV_READY) _guard
-	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s gha-web

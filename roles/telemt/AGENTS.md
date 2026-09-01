@@ -13,8 +13,9 @@
 4. Do not pipe Molecule output through `tail`. Redirect full logs to `/tmp`,
    then inspect them with `rg`, `grep`, `sed`, or `less`.
 5. Prefer native Ansible modules over `shell`/`command`. For this role,
-   legitimate command/shell cases are raw-byte TCP probes (`printf | nc`) and
-   rescue-only diagnostics such as `journalctl`.
+   legitimate command/shell cases are one-shot image/config validation,
+   raw-byte TCP probes (`printf | nc`), and rescue-only diagnostics such as
+   `journalctl`.
 
 ## What this role does
 
@@ -27,6 +28,12 @@
   not HAProxy, validates capabilities/users and falls back invalid requests to
   Caddy. Foreign Host values go straight to Caddy.
 
+Default direct resources use instance name `telemt` and `/opt/telemt`.
+Default WEB resources use `telemt-web` and `/opt/telemt_web`. Do not replace
+these mode-derived defaults with static names: direct + WEB coexistence is a
+tested contract. Same-mode multi-instance deployments must override both
+`telemt_instance_name` and `telemt_config_dir`.
+
 The Molecule scenario validates the real ACME/TLS-ALPN-01 path with Pebble:
 Caddy requests a certificate from Pebble, Pebble validates the TLS-ALPN-01
 challenge through telemt's TCP splice, and verify polls the served certificate
@@ -38,7 +45,7 @@ until the Pebble-issued cert replaces Caddy's bootstrap cert.
 Direct client : telemt_listen_port
     |
     v
-+--- Pod: telemt-pod --------------------------------------------------+
++--- Pod: telemt-pod (direct default) --------------------------------+
 |                                                                      |
 |  telemt (:telemt_listen_port)                                        |
 |    |-- valid MTProto/Fake-TLS secret --> Telegram middle proxies     |
@@ -54,7 +61,7 @@ Direct client : telemt_listen_port
 WEB client :443
     |
     v
-+--- Pod: telemt-pod --------------------------------------------------+
++--- Pod: telemt-web-pod (WEB default) -------------------------------+
 | HAProxy outer TCP                                                     |
 |   |-- ALPN acme-tls/1 -> acme.sh responder (:10443)                   |
 |   `-- default -> HAProxy inner TLS (:8444)                            |
@@ -73,6 +80,8 @@ Internal ports:
 | `_telemt_decoy_port` | `8443` | Caddy decoy HTTPS listener inside the pod |
 | `_telemt_pebble_port` | `14000` | Pebble ACME directory, molecule only |
 | `_telemt_pebble_mgmt_port` | `15000` | Pebble management endpoint, molecule only |
+| `_telemt_pebble_host_port` | direct `14000`, WEB `14010` | host-side Pebble mapping in molecule only |
+| `_telemt_pebble_mgmt_host_port` | direct `15000`, WEB `15010` | host-side Pebble management mapping in molecule only |
 | `_telemt_web_listener_port` | `18080` | Telemt WEB listener on pod loopback |
 | `_telemt_web_decoy_port` | `18081` | WEB-mode Caddy HTTP fallback |
 | `_telemt_haproxy_tls_port` | `8444` | HAProxy inner TLS terminator |
@@ -85,7 +94,15 @@ Internal ports:
 - The decoy always uses Caddy's ACME issuer path. Production uses the default
   public CA behavior; molecule mode overrides the global ACME CA to Pebble.
 - WEB certificates are owned by acme.sh and mounted into HAProxy. Renewal is
-  driven by `telemt-acme-renew.timer`; the renewal hook reloads HAProxy.
+  driven by `<instance>-acme-renew.timer`; the renewal hook reloads that
+  instance's HAProxy.
+- Pod, container, systemd, ACME, and handler identities derive from
+  `telemt_instance_name`; config, Caddy state, ACME state, and certificates
+  derive from `telemt_config_dir`. WEB defaults add `web-`/`_web` isolation.
+- The role intentionally does not discover other deployments or check their
+  live sockets. Colocated inventories must keep `telemt_instance_name`,
+  `telemt_config_dir`, canonical domains, public socket tuples, and any
+  published API/metrics socket tuples unique.
 - Keep the entire canonical Host route pointed at Telemt. Moving credential
   filtering into HAProxy breaks the upstream WEB fallback semantics and risks
   exposing secret-bearing paths in access logs.
@@ -103,7 +120,7 @@ Internal ports:
   starts the pod and Pebble before handler flush, copies
   `/test/certs/pebble.minica.pem` from the running Pebble container to a
   candidate file, compares content against the trusted host file, and updates
-  `/opt/telemt/pebble-root.pem` only when it changed. This prevents stale CA
+    `<telemt_config_dir>/pebble-root.pem` only when it changed. This prevents stale CA
   files when a Pebble image changes and preserves idempotence.
 - If Podman ever creates `pebble-root.pem` as a directory because the bind
   source was missing, the role removes that invalid bind source before
@@ -131,16 +148,19 @@ Internal ports:
 ## Handler cascade
 
 ```text
-restart telemt-pod
+restart <instance> pod
   -> stops: HAProxy (WEB), telemt, decoy, Pebble (molecule only)
   -> restarts: pod
   -> notifies: Pebble, decoy, telemt, then HAProxy
 
-restart telemt-pebble   molecule-only Pebble unit
-restart telemt-decoy    Caddy decoy container
-restart telemt          telemt proxy container
-restart telemt-haproxy  WEB TLS ingress container
+restart <instance> pebble   molecule-only Pebble unit
+restart <instance> decoy    Caddy decoy container
+restart <instance>          telemt proxy container
+restart <instance> haproxy  WEB TLS ingress container
 ```
+
+Handler topics must remain instance-scoped. Static `restart telemt-*` listener
+names can make one role inclusion consume another instance's notifications.
 
 Each container restart is implemented as stop, polling until every
 `cgroup.procs` in the unit's cgroup tree is empty or the tree is gone, then
@@ -166,33 +186,32 @@ roles/telemt/molecule/
 │   ├── molecule.yml
 │   ├── inventory/hosts.yml
 │   └── ENABLE_CI
-├── web/                  # WEB + HAProxy, Debian trixie
-├── web-lanes/            # WEB https-lanes carrier
-├── web-bookworm/         # WEB regression on Debian 12
-├── gha-web/              # WEB on native GitHub Actions runner
 └── shared/
     ├── base.yml          # loaded with `molecule -c molecule/shared/base.yml`
     ├── prepare.yml
     ├── converge.yml
     ├── verify.yml
-    ├── web-converge.yml
     ├── web-verify.yml
-    ├── transition.yml
-    ├── files/web_flow.py # deterministic full WEB protocol client
+    ├── files/web_flow.py # WEB/MTProxy wire probe with Telegram req_pq/resPQ
     ├── tasks/
     │   ├── prepare.yml
     │   ├── converge-telemt.yml
+    │   ├── converge-web.yml
+    │   ├── verify-coexistence.yml
     │   └── wait-services.yml
     └── vars/common.yml
 ```
+
+Both scenarios deploy direct and WEB on the same host. The common converge
+play applies direct after WEB has loaded its handlers and compares systemd
+activation timestamps in both directions. This makes namespace and handler
+isolation part of idempotence instead of mutating the host during verify.
 
 Scenarios are included in the repository CI matrix when their directory has an
 `ENABLE_CI` marker. The workflow runs:
 
 ```bash
-molecule -c molecule/shared/base.yml converge -s <scenario>
-molecule -c molecule/shared/base.yml idempotence -s <scenario>
-molecule -c molecule/shared/base.yml verify -s <scenario>
+molecule -c molecule/shared/base.yml test -s <scenario>
 ```
 
 ## Make targets
@@ -206,11 +225,6 @@ make lint
 make default-podman-converge
 make default-podman-idempotence
 make default-podman-verify
-make web-podman-converge
-make web-podman-idempotence
-make web-podman-verify
-make web-podman-transition
-make web-lanes-podman-e2e
 make gha-native-converge
 make gha-native-idempotence
 make gha-native-verify
@@ -233,10 +247,10 @@ scenario applies the role directly to the GitHub Actions runner VM with
 - Do not put `mp_driver` in `shared/vars/common.yml`; `vars_files` precedence
   would mask inventory overrides and break the native scenario.
 
-The shared prepare task writes `telemt.test` to `/etc/hosts` only when
-`mp_driver != 'podman'`. Podman scenarios use `etc_hosts` in `molecule.yml`
-because `/etc/hosts` in the molecule container is a bind mount that
-`lineinfile` cannot atomically replace.
+The shared prepare task writes the direct and WEB test domains to `/etc/hosts`
+when `mp_driver != 'podman'`. The Podman scenario uses `etc_hosts` in
+`molecule.yml` because `/etc/hosts` in the molecule container is a bind mount
+that `lineinfile` cannot atomically replace.
 
 ## What verify checks
 
@@ -251,20 +265,26 @@ because `/etc/hosts` in the molecule container is a bind mount that
 9. a raw garbage TCP probe increments `telemt_connections_total`
 10. optional `mtp_ping` performs a real Fake-TLS handshake to Telegram and
     increments Alice's authenticated user counter
+11. direct and WEB units, config paths, listeners, and health endpoints remain
+    simultaneously active
 
-WEB verify separately checks Pebble certificate issuance through HAProxy,
+The WEB portion checks Pebble certificate issuance through HAProxy,
 HTTP/2 ALPN, canonical and foreign Host camouflage, wrong/malformed
 capabilities, and complete create/uplink/downlink/delete flows for both plain
-and DD secrets. `transition.yml` checks the live `web -> direct -> web`
-service and listener transition.
+and DD secrets. For each profile, the Python wire probe also performs a valid
+inner MTProxy handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and
+requires a matching `resPQ` from Telegram. This check is mandatory in both
+`default` and `gha`, so both environments must provide Telegram egress.
 
-`mtp_ping` is opt-in because it needs internet egress to Telegram DCs on 443:
+The separate direct-mode `mtp_ping` check remains opt-in because it builds and
+runs an Erlang test image:
 
 ```bash
 MP_RUN_MTP_PING=1 make default-podman-verify
 ```
 
-The default is off in CI.
+Only that direct-mode Erlang check is off in CI; the Python WEB Telegram probes
+in both scenarios have no skip variable.
 
 ## Key variables
 
@@ -276,6 +296,9 @@ Required:
 Important:
 
 - `telemt_listen_port` - public proxy listener, default `443`
+- `telemt_listen_bind` - optional concrete host IPv4 for the public publish
+- `telemt_instance_name` - runtime/systemd namespace; unique per instance
+- `telemt_config_dir` - persistent state namespace; unique per instance
 - `telemt_modes_tls` - default `true`; Fake-TLS mode
 - `telemt_tls_mask` - default `true`; invalid traffic splices to decoy
 - `telemt_link_endpoints` - optional map of labels to advertised server IPs
@@ -294,15 +317,16 @@ Internal variables use the `_telemt_*` prefix.
 
 ```bash
 podman exec molecule-telemt systemctl status podman-telemt.service --no-pager
+podman exec molecule-telemt systemctl status podman-telemt-web.service --no-pager
 podman exec molecule-telemt journalctl -xeu podman-telemt.service --no-pager -n 200
 podman exec molecule-telemt journalctl -xeu podman-telemt-decoy.service --no-pager -n 200
-podman exec molecule-telemt journalctl -xeu podman-telemt-haproxy.service --no-pager -n 200
-podman exec molecule-telemt journalctl -xeu telemt-acme-renew.service --no-pager -n 200
+podman exec molecule-telemt journalctl -xeu podman-telemt-web-haproxy.service --no-pager -n 200
+podman exec molecule-telemt journalctl -xeu telemt-web-acme-renew.service --no-pager -n 200
 podman exec molecule-telemt podman ps --all
 podman exec molecule-telemt podman logs --tail 100 telemt
 podman exec molecule-telemt podman logs --tail 100 telemt-decoy
 podman exec molecule-telemt podman logs --tail 100 telemt-pebble
-podman exec molecule-telemt podman logs --tail 100 telemt-haproxy
+podman exec molecule-telemt podman logs --tail 100 telemt-web-haproxy
 podman exec molecule-telemt ss -ltnp
 ```
 

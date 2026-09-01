@@ -5,16 +5,19 @@
   vars_files:
     - vars/common.yml
   vars:
-    _web_carrier: "{{ molecule_telemt_web_carrier | default('https') }}"
+    _web_carrier: "{{ molecule_telemt_web_carrier }}"
+    _web_config_dir: /opt/telemt_web
+    _web_instance_name: telemt-web
   tasks:
     - name: Wait for common runtime services
       ansible.builtin.import_tasks: tasks/wait-services.yml
       vars:
         molecule_telemt_listen_port: 443
+        molecule_telemt_instance_name: "{{ _web_instance_name }}"
 
     - name: Wait for HAProxy service
       ansible.builtin.systemd:
-        name: podman-telemt-haproxy.service
+        name: "podman-{{ _web_instance_name }}-haproxy.service"
       register: _haproxy_service
       until: _haproxy_service.status.ActiveState == 'active'
       retries: 20
@@ -22,35 +25,35 @@
 
     - name: Read deployment mode marker
       ansible.builtin.slurp:
-        src: /opt/telemt/deployment-mode
+        src: "{{ _web_config_dir }}/deployment-mode"
       register: _mode_marker
 
     - name: Read rendered WEB configs
       ansible.builtin.slurp:
         src: "{{ item }}"
       loop:
-        - /opt/telemt/telemt.toml
-        - /opt/telemt/haproxy.cfg
-        - /opt/telemt/Caddyfile
+        - "{{ _web_config_dir }}/telemt.toml"
+        - "{{ _web_config_dir }}/haproxy.cfg"
+        - "{{ _web_config_dir }}/Caddyfile"
       register: _web_configs
 
     - name: Assert WEB topology is rendered safely
       vars:
-        _telemt_toml: "{{ _web_configs.results[0].content | b64decode }}"
-        _haproxy_cfg: "{{ _web_configs.results[1].content | b64decode }}"
-        _caddyfile: "{{ _web_configs.results[2].content | b64decode }}"
+        _web_telemt_toml: "{{ _web_configs.results[0].content | b64decode }}"
+        _web_haproxy_cfg: "{{ _web_configs.results[1].content | b64decode }}"
+        _web_caddyfile: "{{ _web_configs.results[2].content | b64decode }}"
       ansible.builtin.assert:
         that:
           - (_mode_marker.content | b64decode | trim) == 'web'
-          - "'transport = \"web\"' in _telemt_toml"
-          - "'ip = \"127.0.0.1\"' in _telemt_toml"
-          - "'proxy_protocol = false' in _telemt_toml"
-          - "'public_addr = \"127.0.0.1:443\"' in _telemt_toml"
-          - "'carrier = \"' ~ _web_carrier ~ '\"' in _telemt_toml"
-          - "'send-proxy-v2' in _haproxy_cfg"
-          - "'accept-proxy ssl alpn h2,http/1.1' in _haproxy_cfg"
-          - "'server telemt 127.0.0.1:18080' in _haproxy_cfg"
-          - "'auto_https off' in _caddyfile"
+          - "'transport = \"web\"' in _web_telemt_toml"
+          - "'ip = \"127.0.0.1\"' in _web_telemt_toml"
+          - "'proxy_protocol = false' in _web_telemt_toml"
+          - "'public_addr = \"127.0.0.1:443\"' in _web_telemt_toml"
+          - "'carrier = \"' ~ _web_carrier ~ '\"' in _web_telemt_toml"
+          - "'send-proxy-v2' in _web_haproxy_cfg"
+          - "'accept-proxy ssl alpn h2,http/1.1' in _web_haproxy_cfg"
+          - "'server telemt 127.0.0.1:18080' in _web_haproxy_cfg"
+          - "'auto_https off' in _web_caddyfile"
 
     - name: Verify fail-fast WEB preflight cases
       ansible.builtin.include_tasks: tasks/expect-web-preflight-failure.yml
@@ -79,29 +82,11 @@
           - (_mode_marker.content | b64decode | trim) == 'web'
           - _haproxy_service.status.ActiveState == 'active'
 
-    - name: Validate deployed HAProxy config
-      ansible.builtin.command:
-        argv:
-          - podman
-          - run
-          - --rm
-          - --volume
-          - /opt/telemt/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-          - --volume
-          - /opt/telemt/certs:/certs:ro
-          - docker.io/library/haproxy:3.4.3-alpine
-          - haproxy
-          - -c
-          - -f
-          - /usr/local/etc/haproxy/haproxy.cfg
-      register: _haproxy_check
-      changed_when: false
-
     - name: Wait for Pebble-issued public certificate
       community.crypto.get_certificate:
         host: 127.0.0.1
         port: 443
-        server_name: "{{ molecule_telemt_domain }}"
+        server_name: "{{ molecule_telemt_web_domain }}"
       register: _web_certificate
       until:
         - _web_certificate.cert is defined
@@ -117,7 +102,7 @@
           - -connect
           - 127.0.0.1:443
           - -servername
-          - "{{ molecule_telemt_domain }}"
+          - "{{ molecule_telemt_web_domain }}"
           - -alpn
           - h2
       register: _web_alpn
@@ -126,11 +111,11 @@
         _web_alpn.rc != 0
         or 'ALPN protocol: h2' not in (_web_alpn.stdout ~ _web_alpn.stderr)
 
-    - name: Run full public WEB flow for plain profile
+    - name: Run mandatory Telegram WEB E2E for plain profile
       ansible.builtin.script:
         cmd: >-
           files/web_flow.py
-          --host {{ molecule_telemt_domain }}
+          --host {{ molecule_telemt_web_domain }}
           --secret {{ molecule_telemt_users.alice }}
           --secret-mode plain
           --carrier {{ _web_carrier }}
@@ -139,11 +124,11 @@
       changed_when: false
       no_log: true
 
-    - name: Run full public WEB flow for DD profile
+    - name: Run mandatory Telegram WEB E2E for DD profile
       ansible.builtin.script:
         cmd: >-
           files/web_flow.py
-          --host {{ molecule_telemt_domain }}
+          --host {{ molecule_telemt_web_domain }}
           --secret {{ molecule_telemt_users.bob }}
           --secret-mode dd
           --carrier {{ _web_carrier }}
@@ -154,7 +139,7 @@
 
     - name: Read emitted WEB links
       ansible.builtin.slurp:
-        src: /opt/telemt/molecule-web-link-debug.json
+        src: "{{ _web_config_dir }}/molecule-web-link-debug.json"
       register: _web_links_raw
 
     - name: Assert WEB links omit port and FakeTLS mode
@@ -163,7 +148,10 @@
       ansible.builtin.assert:
         that:
           - _web_links | length == 2
-          - "'[alice] tg://webproxy?server=' ~ molecule_telemt_domain ~ '&secret=' ~ molecule_telemt_users.alice in _web_links"
-          - "'[bob] tg://webproxy?server=' ~ molecule_telemt_domain ~ '&secret=dd' ~ molecule_telemt_users.bob in _web_links"
+          - "'[alice] tg://webproxy?server=' ~ molecule_telemt_web_domain ~ '&secret=' ~ molecule_telemt_users.alice in _web_links"
+          - "'[bob] tg://webproxy?server=' ~ molecule_telemt_web_domain ~ '&secret=dd' ~ molecule_telemt_users.bob in _web_links"
           - "(_web_links | join(' ')).find('&port=') == -1"
           - "(_web_links | join(' ')).find('&secret=ee') == -1"
+
+    - name: Verify colocated direct and WEB deployments
+      ansible.builtin.import_tasks: tasks/verify-coexistence.yml

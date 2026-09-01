@@ -1,0 +1,90 @@
+---
+- name: Inspect colocated direct and WEB services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+  loop:
+    - podman-telemt-pod.service
+    - podman-telemt-pebble.service
+    - podman-telemt-decoy.service
+    - podman-telemt.service
+    - podman-telemt-web-pod.service
+    - podman-telemt-web-pebble.service
+    - podman-telemt-web-decoy.service
+    - podman-telemt-web.service
+    - podman-telemt-web-haproxy.service
+    - telemt-web-acme-renew.timer
+  register: _coexistence_services
+
+- name: Read isolated deployment mode markers
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - /opt/telemt/deployment-mode
+    - /opt/telemt_web/deployment-mode
+  register: _coexistence_markers
+
+- name: Wait for both public listeners
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    timeout: 60
+  loop:
+    - "{{ molecule_telemt_listen_port }}"
+    - 443
+
+- name: Probe direct decoy beside WEB
+  ansible.builtin.uri:
+    url: "https://{{ molecule_telemt_domain }}:{{ molecule_telemt_listen_port }}/"
+    validate_certs: false
+    use_proxy: false
+    status_code: 200
+  register: _coexistence_direct_decoy
+
+- name: Probe WEB decoy beside direct
+  ansible.builtin.uri:
+    url: "https://{{ molecule_telemt_web_domain }}/"
+    validate_certs: false
+    use_proxy: false
+    return_content: true
+    status_code: 200
+  register: _coexistence_web_decoy
+
+- name: Probe direct readiness inside its pod
+  containers.podman.podman_container_exec:
+    name: telemt-decoy
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "5"
+      - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health/ready"
+  register: _coexistence_direct_ready
+  changed_when: false
+
+- name: Probe WEB readiness inside its pod
+  containers.podman.podman_container_exec:
+    name: telemt-web-decoy
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "5"
+      - "http://127.0.0.1:{{ molecule_telemt_api_port }}/v1/health/ready"
+  register: _coexistence_web_ready
+  changed_when: false
+
+- name: Assert direct and WEB deployments are isolated and healthy
+  ansible.builtin.assert:
+    that:
+      - >-
+        _coexistence_services.results
+        | map(attribute='status.ActiveState')
+        | unique
+        | list == ['active']
+      - (_coexistence_markers.results[0].content | b64decode | trim) == 'direct'
+      - (_coexistence_markers.results[1].content | b64decode | trim) == 'web'
+      - _coexistence_direct_decoy.status == 200
+      - _coexistence_web_decoy.status == 200
+      - "'The site is under construction.' in _coexistence_web_decoy.content"
+      - ((_coexistence_direct_ready.stdout | from_json).data.ready | default(false)) | bool
+      - ((_coexistence_web_ready.stdout | from_json).data.ready | default(false)) | bool

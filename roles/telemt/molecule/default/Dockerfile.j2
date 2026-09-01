@@ -4,13 +4,11 @@ FROM {{ item.image }}
 # the moment a child container starts. Trixie does not pull nftables in
 # transitively as a podman dep, so install it explicitly.
 #
-# crun: ad-hoc `podman run` (used by verify to launch the mtp_ping image
-# in the existing pod's netns) requires a runtime that supports
-# `--cgroups=disabled`. Trixie's stock runc rejects that flag, and the
-# default systemd cgroup manager fails to create a transient scope from
-# inside this container. Installing crun makes that explicit verify path
-# work; containers.conf keeps normal role services on runc +
-# `--cgroups=split`.
+# crun: one-shot image/config probes and the optional mtp_ping check require a
+# runtime that supports `--cgroups=disabled`. Trixie's stock runc rejects that
+# flag, and the default systemd cgroup manager cannot create a transient scope
+# from inside this container. Normal role services remain on runc +
+# `--cgroups=split` through containers.conf.
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
         systemd systemd-sysv python3 ca-certificates curl fuse-overlayfs nftables crun && \

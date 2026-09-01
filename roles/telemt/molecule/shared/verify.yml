@@ -516,3 +516,5 @@
           ansible.builtin.fail:
             msg: >-
               Reverse-proxy decoy mode test failed; see diagnostics above.
+- name: Verify colocated WEB deployment
+  ansible.builtin.import_playbook: web-verify.yml

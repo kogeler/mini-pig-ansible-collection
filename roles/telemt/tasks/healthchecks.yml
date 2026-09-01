@@ -4,14 +4,14 @@
 
 - name: telemt | healthchecks | wait for public listener
   ansible.builtin.wait_for:
-    host: 127.0.0.1
+    host: "{{ _telemt_public_healthcheck_host }}"
     port: "{{ telemt_listen_port }}"
     state: started
     timeout: 60
 
 - name: telemt | healthchecks | verify target WEB vhost falls back through Telemt
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ telemt_listen_port }}/"
+    url: "https://{{ _telemt_public_healthcheck_host }}:{{ telemt_listen_port }}/"
     headers:
       Host: "{{ telemt_domain }}"
     validate_certs: false
@@ -26,7 +26,7 @@
 
 - name: telemt | healthchecks | verify foreign WEB vhost reaches decoy
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ telemt_listen_port }}/"
+    url: "https://{{ _telemt_public_healthcheck_host }}:{{ telemt_listen_port }}/"
     headers:
       Host: camouflage.invalid
     validate_certs: false

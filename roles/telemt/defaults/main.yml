@@ -15,9 +15,17 @@ telemt_image_tag: "3.5.2"
 # behind it on pod loopback.
 telemt_deployment_mode: direct
 
+# Stable identity used for pod/container/systemd names. Historical direct-mode
+# names stay unchanged; WEB mode gets its own namespace so both defaults can be
+# deployed on the same host. Override this with a unique value when deploying
+# more than one instance of the same mode.
+telemt_instance_name: "{{ 'telemt-web' if telemt_deployment_mode == 'web' else 'telemt' }}"
+
 # -- Paths --------------------------------------------------------------------
 
-telemt_config_dir: /opt/telemt
+# Keep the historical direct path while isolating WEB state, certificates, and
+# rendered configuration from a colocated direct deployment.
+telemt_config_dir: "{{ '/opt/telemt_web' if telemt_deployment_mode == 'web' else '/opt/telemt' }}"
 # Path inside the container where config.toml is mounted
 telemt_container_config_path: /run/telemt/config.toml
 
@@ -30,6 +38,10 @@ telemt_container_config_path: /run/telemt/config.toml
 telemt_pod_network: ""
 
 telemt_listen_port: 443
+# Optional concrete host IPv4 for the public port. Empty preserves podman's
+# historical all-addresses publish. Set this when colocated instances use the
+# same public port on different host addresses.
+telemt_listen_bind: ""
 
 # WEB client links always use public HTTPS port 443. This is the concrete
 # public IPv4 used by Telemt's relay/KDF destination tuple, not a hostname.

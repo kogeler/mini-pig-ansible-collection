@@ -40,7 +40,7 @@
     group: root
     mode: preserve
   when: telemt_decoy_site_dir | default('', true) | length > 0
-  notify: restart telemt-decoy
+  notify: "{{ _telemt_restart_decoy_handler }}"
 
 - name: telemt | config | copy decoy index
   ansible.builtin.copy:
@@ -52,7 +52,7 @@
   when:
     - telemt_decoy_site_dir | default('', true) | length == 0
     - telemt_decoy_upstream_url | default('', true) | length == 0
-  notify: restart telemt-decoy
+  notify: "{{ _telemt_restart_decoy_handler }}"
 
 - name: telemt | config | render Caddyfile
   ansible.builtin.template:
@@ -61,7 +61,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart telemt-decoy
+  notify: "{{ _telemt_restart_decoy_handler }}"
 
 - name: telemt | config | render Telemt config
   ansible.builtin.template:
@@ -74,7 +74,7 @@
     # the container, as in the historical direct deployment.
     mode: "0644"
   diff: false
-  notify: restart telemt
+  notify: "{{ _telemt_restart_telemt_handler }}"
 
 - name: telemt | config | check WEB bootstrap certificate
   ansible.builtin.stat:
@@ -131,23 +131,23 @@
     group: root
     mode: "0644"
   when: telemt_deployment_mode == 'web'
-  notify: restart telemt-haproxy
+  notify: "{{ _telemt_restart_haproxy_handler }}"
 
 - name: telemt | config | validate HAProxy config
   ansible.builtin.command:
-    argv:
-      - podman
-      - run
-      - --rm
-      - --volume
-      - "{{ _telemt_haproxy_config_path }}:/usr/local/etc/haproxy/haproxy.cfg:ro"
-      - --volume
-      - "{{ _telemt_certs_dir }}:/certs:ro"
-      - "{{ telemt_haproxy_image }}:{{ telemt_haproxy_image_tag }}"
-      - haproxy
-      - -c
-      - -f
-      - /usr/local/etc/haproxy/haproxy.cfg
+    argv: >-
+      {{
+        ['podman', 'run', '--rm']
+        + _telemt_podman_probe_args
+        + [
+            '--volume',
+            _telemt_haproxy_config_path ~ ':/usr/local/etc/haproxy/haproxy.cfg:ro',
+            '--volume',
+            _telemt_certs_dir ~ ':/certs:ro',
+            telemt_haproxy_image ~ ':' ~ telemt_haproxy_image_tag,
+            'haproxy', '-c', '-f', '/usr/local/etc/haproxy/haproxy.cfg'
+          ]
+      }}
   changed_when: false
   when:
     - telemt_deployment_mode == 'web'
@@ -160,7 +160,7 @@
     owner: root
     group: root
     mode: "0600"
-  notify: restart telemt-pod
+  notify: "{{ _telemt_restart_pod_handler }}"
 
 - name: telemt | config | render decoy systemd unit
   ansible.builtin.template:
@@ -169,7 +169,7 @@
     owner: root
     group: root
     mode: "0600"
-  notify: restart telemt-decoy
+  notify: "{{ _telemt_restart_decoy_handler }}"
 
 - name: telemt | config | render Telemt systemd unit
   ansible.builtin.template:
@@ -178,7 +178,7 @@
     owner: root
     group: root
     mode: "0600"
-  notify: restart telemt
+  notify: "{{ _telemt_restart_telemt_handler }}"
 
 - name: telemt | config | render HAProxy systemd unit
   ansible.builtin.template:
@@ -188,7 +188,7 @@
     group: root
     mode: "0600"
   when: telemt_deployment_mode == 'web'
-  notify: restart telemt-haproxy
+  notify: "{{ _telemt_restart_haproxy_handler }}"
 
 - name: telemt | config | render ACME systemd units
   ansible.builtin.template:
@@ -210,7 +210,7 @@
     group: root
     mode: "0644"
   when: telemt_molecule_mode
-  notify: restart telemt-pebble
+  notify: "{{ _telemt_restart_pebble_handler }}"
 
 - name: telemt | config | render Pebble systemd unit
   ansible.builtin.template:
@@ -220,4 +220,4 @@
     group: root
     mode: "0600"
   when: telemt_molecule_mode
-  notify: restart telemt-pebble
+  notify: "{{ _telemt_restart_pebble_handler }}"
