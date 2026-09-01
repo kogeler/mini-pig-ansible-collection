@@ -32,17 +32,17 @@
 
 - name: telemt | image | read actual WEB-capable Telemt version
   ansible.builtin.command:
-    argv:
-      - podman
-      - run
-      - --rm
-      - --pull=never
-      - "{{ telemt_image }}:{{ telemt_image_tag }}"
-      - --version
+    argv: >-
+      {{
+        ['podman', 'run', '--rm', '--pull=never']
+        + _telemt_podman_probe_args
+        + [telemt_image ~ ':' ~ telemt_image_tag, '--version']
+      }}
   register: _telemt_actual_version_output
   changed_when: false
   when:
     - telemt_deployment_mode == 'web'
+    - not (telemt_image_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$'))
     - not ansible_check_mode
 
 - name: telemt | image | enforce actual WEB-capable Telemt version
@@ -63,4 +63,5 @@
     quiet: true
   when:
     - telemt_deployment_mode == 'web'
+    - not (telemt_image_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$'))
     - not ansible_check_mode

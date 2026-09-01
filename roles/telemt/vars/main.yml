@@ -3,12 +3,25 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-_telemt_container_name: telemt
+_telemt_container_name: "{{ telemt_instance_name }}"
 _telemt_systemd_unit_name: "podman-{{ _telemt_container_name }}.service"
-_telemt_pod_name: telemt-pod
+_telemt_pod_name: "{{ telemt_instance_name }}-pod"
 _telemt_pod_systemd_unit_name: "podman-{{ _telemt_pod_name }}.service"
 
-_telemt_decoy_container_name: telemt-decoy
+# Nested Podman cannot create transient systemd scopes for validation
+# containers. Molecule's Podman image provides crun for these one-shot probes;
+# native hosts keep Podman's normal runtime and cgroup handling.
+_telemt_podman_probe_args: >-
+  {{
+    ['--runtime=crun', '--cgroups=disabled']
+    if (
+      telemt_molecule_mode
+      and (ansible_facts.get('virtualization_type', '')) == 'podman'
+    )
+    else []
+  }}
+
+_telemt_decoy_container_name: "{{ telemt_instance_name }}-decoy"
 _telemt_decoy_systemd_unit_name: "podman-{{ _telemt_decoy_container_name }}.service"
 _telemt_decoy_domain: "{{ telemt_decoy_domain if telemt_decoy_domain else telemt_domain }}"
 _telemt_decoy_data_dir: "{{ telemt_config_dir }}/caddy-data"
@@ -23,7 +36,7 @@ _telemt_decoy_port: >-
 
 # -- WEB ingress ---------------------------------------------------------------
 _telemt_web_listener_port: 18080
-_telemt_haproxy_container_name: telemt-haproxy
+_telemt_haproxy_container_name: "{{ telemt_instance_name }}-haproxy"
 _telemt_haproxy_systemd_unit_name: "podman-{{ _telemt_haproxy_container_name }}.service"
 _telemt_haproxy_https_port: 8444
 _telemt_haproxy_stats_port: 19999
@@ -31,9 +44,37 @@ _telemt_haproxy_config_path: "{{ telemt_config_dir }}/haproxy.cfg"
 _telemt_certs_dir: "{{ telemt_config_dir }}/certs"
 _telemt_acme_data_dir: "{{ telemt_config_dir }}/acme-data"
 _telemt_acme_alpn_port: 10443
-_telemt_acme_renew_unit_name: telemt-acme-renew.service
-_telemt_acme_renew_timer_name: telemt-acme-renew.timer
+_telemt_acme_renew_unit_name: "{{ telemt_instance_name }}-acme-renew.service"
+_telemt_acme_renew_timer_name: "{{ telemt_instance_name }}-acme-renew.timer"
 _telemt_mode_marker_path: "{{ telemt_config_dir }}/deployment-mode"
+_telemt_public_healthcheck_host: >-
+  {{ telemt_listen_bind
+     if telemt_listen_bind not in ['', '0.0.0.0']
+     else '127.0.0.1' }}
+
+# Handler names must be scoped as carefully as unit names. Exact names are
+# notified instead of shared `listen` topics so repeated role inclusions cannot
+# consume each other's notifications.
+_telemt_restart_pod_handler:
+  - "telemt | handlers | stop containers before pod restart | {{ telemt_instance_name }}"
+  - "telemt | handlers | wait for pod child cgroups | {{ telemt_instance_name }}"
+  - "telemt | handlers | restart pod | {{ telemt_instance_name }}"
+_telemt_restart_pebble_handler:
+  - "telemt | handlers | stop Pebble | {{ telemt_instance_name }}"
+  - "telemt | handlers | wait for Pebble cgroup | {{ telemt_instance_name }}"
+  - "telemt | handlers | start Pebble | {{ telemt_instance_name }}"
+_telemt_restart_decoy_handler:
+  - "telemt | handlers | stop decoy | {{ telemt_instance_name }}"
+  - "telemt | handlers | wait for decoy cgroup | {{ telemt_instance_name }}"
+  - "telemt | handlers | start decoy | {{ telemt_instance_name }}"
+_telemt_restart_telemt_handler:
+  - "telemt | handlers | stop Telemt | {{ telemt_instance_name }}"
+  - "telemt | handlers | wait for Telemt cgroup | {{ telemt_instance_name }}"
+  - "telemt | handlers | start Telemt | {{ telemt_instance_name }}"
+_telemt_restart_haproxy_handler:
+  - "telemt | handlers | stop HAProxy | {{ telemt_instance_name }}"
+  - "telemt | handlers | wait for HAProxy cgroup | {{ telemt_instance_name }}"
+  - "telemt | handlers | start HAProxy | {{ telemt_instance_name }}"
 _telemt_web_trusted_proxy_cidrs:
   - 127.0.0.1/32
 _telemt_web_limit_keys:
@@ -89,12 +130,18 @@ _telemt_haproxy_http_timeout_secs: >-
      + (telemt_web_haproxy_timeout_margin_secs | int) }}
 
 # -- Pebble (molecule mode only) ----------------------------------------------
-_telemt_pebble_name: telemt-pebble
+_telemt_pebble_name: "{{ telemt_instance_name }}-pebble"
 _telemt_pebble_systemd_unit_name: "podman-{{ _telemt_pebble_name }}.service"
 _telemt_pebble_image: ghcr.io/letsencrypt/pebble
 _telemt_pebble_image_tag: "2.10.1"
 _telemt_pebble_port: 14000
 _telemt_pebble_mgmt_port: 15000
+# Pebble lives inside each pod on the same fixed ports. Only its host-side test
+# mappings need distinct values when direct and WEB molecule deployments coexist.
+_telemt_pebble_host_port: >-
+  {{ 14010 if telemt_deployment_mode == 'web' else _telemt_pebble_port }}
+_telemt_pebble_mgmt_host_port: >-
+  {{ 15010 if telemt_deployment_mode == 'web' else _telemt_pebble_mgmt_port }}
 # Caddy in the same pod-netns hits localhost — Pebble's leaf cert is for
 # `localhost`, so anything else (telemt.test, 127.0.0.1) would fail SNI.
 _telemt_pebble_acme_server: "https://localhost:{{ _telemt_pebble_port }}/dir"

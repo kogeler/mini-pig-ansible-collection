@@ -7,6 +7,8 @@
 # via molecule.yml `etc_hosts` (podman) and prepare.yml lineinfile
 # (gha-native fallback).
 molecule_telemt_domain: "telemt.test"
+molecule_telemt_web_domain: "web.telemt.test"
+molecule_telemt_web_carrier: https
 
 # Listen port for the proxy (host-side, published from the pod). 9443
 # avoids the in-pod collision with the decoy's hardcoded 8443

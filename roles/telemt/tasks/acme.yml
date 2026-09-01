@@ -4,7 +4,7 @@
 
 - name: telemt | acme | wait for Pebble
   ansible.builtin.uri:
-    url: "https://localhost:{{ _telemt_pebble_port }}/dir"
+    url: "https://127.0.0.1:{{ _telemt_pebble_host_port }}/dir"
     validate_certs: false
     return_content: false
   register: _telemt_web_pebble_ready

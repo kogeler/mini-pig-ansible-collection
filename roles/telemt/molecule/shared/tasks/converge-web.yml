@@ -1,0 +1,43 @@
+---
+- name: Apply Telemt WEB role with molecule overrides
+  ansible.builtin.include_role:
+    name: kogeler.mini_pig.telemt
+  vars:
+    telemt_deployment_mode: web
+    telemt_domain: "{{ molecule_telemt_web_domain }}"
+    telemt_listen_port: 443
+    telemt_web_public_ip: "127.0.0.1"
+    telemt_users: "{{ molecule_telemt_users }}"
+    telemt_web_carrier: "{{ molecule_telemt_web_carrier }}"
+    telemt_web_profiles:
+      - user: alice
+        secret_mode: plain
+        max_sessions: 4
+        max_streams: 16
+        max_streams_per_session: 4
+      - user: bob
+        secret_mode: dd
+        max_sessions: 4
+        max_streams: 16
+        max_streams_per_session: 4
+    telemt_web_timeouts:
+      long_poll_secs: 1
+    telemt_web_haproxy_timeout_margin_secs: 3
+    telemt_decoy_index_html: index.html
+    telemt_molecule_mode: true
+    # The direct deployment owns the host API and metrics sockets. WEB keeps
+    # the same listeners inside its isolated pod for health verification.
+    telemt_api_enabled: true
+    telemt_publish_api: false
+    telemt_api_port: "{{ molecule_telemt_api_port }}"
+    telemt_publish_metrics: false
+    telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"
+
+- name: Persist emitted WEB proxy-link output for verify
+  ansible.builtin.copy:
+    content: |
+      {{ _telemt_web_link_debug.results | default([]) | map(attribute='msg') | list | to_nice_json }}
+    dest: /opt/telemt_web/molecule-web-link-debug.json
+    owner: root
+    group: root
+    mode: "0600"

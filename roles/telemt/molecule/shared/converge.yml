@@ -1,8 +1,110 @@
 ---
-- name: Converge
+- name: Converge direct and WEB deployments
   hosts: all
   vars_files:
     - vars/common.yml
   tasks:
-    - name: Apply telemt
+    - name: Inspect services present before converge
+      ansible.builtin.service_facts:
+
+    - name: Record whether direct was already deployed
+      ansible.builtin.set_fact:
+        _direct_was_present: >-
+          {{ 'podman-telemt.service' in ansible_facts.services }}
+
+    - name: Capture existing direct services before WEB deployment
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - podman-telemt-pod.service
+        - podman-telemt-pebble.service
+        - podman-telemt-decoy.service
+        - podman-telemt.service
+      register: _direct_services_before_web
+      when: _direct_was_present | bool
+
+    - name: Apply colocated WEB deployment
+      ansible.builtin.import_tasks: tasks/converge-web.yml
+
+    - name: Capture existing direct services after WEB deployment
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - podman-telemt-pod.service
+        - podman-telemt-pebble.service
+        - podman-telemt-decoy.service
+        - podman-telemt.service
+      register: _direct_services_after_web
+      when: _direct_was_present | bool
+
+    - name: Assert WEB deployment did not restart direct services
+      ansible.builtin.assert:
+        that:
+          - >-
+            _direct_services_before_web.results
+            | map(attribute='status.ActiveEnterTimestampMonotonic')
+            | list
+            ==
+            _direct_services_after_web.results
+            | map(attribute='status.ActiveEnterTimestampMonotonic')
+            | list
+      when: _direct_was_present | bool
+
+    - name: Capture WEB services before direct deployment
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - podman-telemt-web-pod.service
+        - podman-telemt-web-pebble.service
+        - podman-telemt-web-decoy.service
+        - podman-telemt-web.service
+        - podman-telemt-web-haproxy.service
+      register: _web_services_before_direct
+
+    # Loading direct after WEB catches cross-instance handler notifications as
+    # well as ordinary resource-name collisions in a single Ansible play.
+    - name: Apply direct deployment beside WEB
       ansible.builtin.import_tasks: tasks/converge-telemt.yml
+
+    - name: Capture WEB services after direct deployment
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - podman-telemt-web-pod.service
+        - podman-telemt-web-pebble.service
+        - podman-telemt-web-decoy.service
+        - podman-telemt-web.service
+        - podman-telemt-web-haproxy.service
+      register: _web_services_after_direct
+
+    - name: Inspect direct services after combined deployment
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - podman-telemt-pod.service
+        - podman-telemt-pebble.service
+        - podman-telemt-decoy.service
+        - podman-telemt.service
+      register: _direct_services_after_converge
+
+    - name: Assert direct deployment did not restart WEB services
+      ansible.builtin.assert:
+        that:
+          - >-
+            _web_services_before_direct.results
+            | map(attribute='status.ActiveEnterTimestampMonotonic')
+            | list
+            ==
+            _web_services_after_direct.results
+            | map(attribute='status.ActiveEnterTimestampMonotonic')
+            | list
+          - >-
+            _web_services_after_direct.results
+            | map(attribute='status.ActiveState')
+            | unique
+            | list == ['active']
+          - >-
+            _direct_services_after_converge.results
+            | map(attribute='status.ActiveState')
+            | unique
+            | list == ['active']

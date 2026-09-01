@@ -1,7 +1,7 @@
 ---
 - name: Wait for pod service to become active
   ansible.builtin.systemd:
-    name: podman-telemt-pod.service
+    name: "podman-{{ molecule_telemt_instance_name | default('telemt') }}-pod.service"
   register: _pod_svc
   until: _pod_svc.status.ActiveState == 'active'
   retries: 20
@@ -9,7 +9,7 @@
 
 - name: Wait for pebble service to become active
   ansible.builtin.systemd:
-    name: podman-telemt-pebble.service
+    name: "podman-{{ molecule_telemt_instance_name | default('telemt') }}-pebble.service"
   register: _pebble_svc
   until: _pebble_svc.status.ActiveState == 'active'
   retries: 20
@@ -17,7 +17,7 @@
 
 - name: Wait for decoy service to become active
   ansible.builtin.systemd:
-    name: podman-telemt-decoy.service
+    name: "podman-{{ molecule_telemt_instance_name | default('telemt') }}-decoy.service"
   register: _decoy_svc
   until: _decoy_svc.status.ActiveState == 'active'
   retries: 20
@@ -25,7 +25,7 @@
 
 - name: Wait for telemt service to become active
   ansible.builtin.systemd:
-    name: podman-telemt.service
+    name: "podman-{{ molecule_telemt_instance_name | default('telemt') }}.service"
   register: _telemt_svc
   until: _telemt_svc.status.ActiveState == 'active'
   retries: 40
@@ -47,7 +47,7 @@
 
 - name: Wait for telemt /v1/health to return ok
   containers.podman.podman_container_exec:
-    name: telemt-decoy
+    name: "{{ molecule_telemt_instance_name | default('telemt') }}-decoy"
     argv:
       - curl
       - -fsS
@@ -62,7 +62,7 @@
 
 - name: Wait for telemt /v1/health/ready to flip to true
   containers.podman.podman_container_exec:
-    name: telemt-decoy
+    name: "{{ molecule_telemt_instance_name | default('telemt') }}-decoy"
     argv:
       - curl
       - -fsS

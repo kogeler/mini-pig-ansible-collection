@@ -1,8 +1,8 @@
 [Unit]
 Description=ACME certificate issue/renewal for telemt WEB
 Requires={{ _telemt_pod_systemd_unit_name }}
-Wants={{ _telemt_haproxy_systemd_unit_name }}{% if telemt_molecule_mode %} {{ _telemt_pebble_systemd_unit_name }}{% endif %}
-After={{ _telemt_pod_systemd_unit_name }} {{ _telemt_haproxy_systemd_unit_name }}{% if telemt_molecule_mode %} {{ _telemt_pebble_systemd_unit_name }}{% endif %}
+Wants={{ _telemt_haproxy_systemd_unit_name }}{{ (' ' ~ _telemt_pebble_systemd_unit_name) if telemt_molecule_mode else '' }}
+After={{ _telemt_pod_systemd_unit_name }} {{ _telemt_haproxy_systemd_unit_name }}{{ (' ' ~ _telemt_pebble_systemd_unit_name) if telemt_molecule_mode else '' }}
 
 [Service]
 Type=oneshot

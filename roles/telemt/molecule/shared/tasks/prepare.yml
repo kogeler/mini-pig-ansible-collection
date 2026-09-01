@@ -5,11 +5,16 @@
 - name: Ensure telemt domain resolves to loopback
   ansible.builtin.lineinfile:
     path: /etc/hosts
-    line: "127.0.0.1 {{ molecule_telemt_domain }}"
-    regexp: '^127\.0\.0\.1\s+{{ molecule_telemt_domain | regex_escape }}\s*$'
+    line: "127.0.0.1 {{ item }}"
+    regexp: '^127\.0\.0\.1\s+{{ item | regex_escape }}\s*$'
     state: present
+  loop:
+    - "{{ molecule_telemt_domain }}"
+    - "{{ molecule_telemt_web_domain }}"
   when: mp_driver != 'podman'
 
+# python3-cryptography supplies AES-CTR for the mandatory WEB req_pq/resPQ
+# probe; using the distro package keeps the Molecule target free of pip state.
 - name: Install verify-side dependencies
   ansible.builtin.apt:
     name:

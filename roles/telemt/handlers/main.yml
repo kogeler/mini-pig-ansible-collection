@@ -2,8 +2,7 @@
 # Copyright © 2025 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
-- name: telemt | handlers | stop containers before pod restart
-  listen: restart telemt-pod
+- name: "telemt | handlers | stop containers before pod restart | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ item }}"
     daemon_reload: true
@@ -16,8 +15,7 @@
     }}
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | wait for pod child cgroups
-  listen: restart telemt-pod
+- name: "telemt | handlers | wait for pod child cgroups | {{ telemt_instance_name }}"
   ansible.builtin.command:
     argv:
       - find
@@ -46,22 +44,22 @@
     or (_telemt_pod_child_cgroup_procs.stdout | trim | length == 0)
   when: not ansible_check_mode
 
-- name: telemt | handlers | restart pod
-  listen: restart telemt-pod
+- name: "telemt | handlers | restart pod | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_pod_systemd_unit_name }}"
     enabled: true
     daemon_reload: true
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"
-  notify:
-    - restart telemt-pebble
-    - restart telemt-decoy
-    - restart telemt
-    - restart telemt-haproxy
+  notify: >-
+    {{
+      _telemt_restart_pebble_handler
+      + _telemt_restart_decoy_handler
+      + _telemt_restart_telemt_handler
+      + _telemt_restart_haproxy_handler
+    }}
 
-- name: telemt | handlers | stop Pebble
-  listen: restart telemt-pebble
+- name: "telemt | handlers | stop Pebble | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_pebble_systemd_unit_name }}"
     daemon_reload: true
@@ -69,8 +67,7 @@
   when: telemt_molecule_mode
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | wait for Pebble cgroup
-  listen: restart telemt-pebble
+- name: "telemt | handlers | wait for Pebble cgroup | {{ telemt_instance_name }}"
   ansible.builtin.command:
     argv:
       - find
@@ -95,8 +92,7 @@
     - telemt_molecule_mode
     - not ansible_check_mode
 
-- name: telemt | handlers | start Pebble
-  listen: restart telemt-pebble
+- name: "telemt | handlers | start Pebble | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_pebble_systemd_unit_name }}"
     enabled: true
@@ -105,16 +101,14 @@
   when: telemt_molecule_mode
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | stop decoy
-  listen: restart telemt-decoy
+- name: "telemt | handlers | stop decoy | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_decoy_systemd_unit_name }}"
     daemon_reload: true
     state: stopped
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | wait for decoy cgroup
-  listen: restart telemt-decoy
+- name: "telemt | handlers | wait for decoy cgroup | {{ telemt_instance_name }}"
   ansible.builtin.command:
     argv:
       - find
@@ -137,8 +131,7 @@
     or (_telemt_decoy_cgroup_procs.stdout | trim | length == 0)
   when: not ansible_check_mode
 
-- name: telemt | handlers | start decoy
-  listen: restart telemt-decoy
+- name: "telemt | handlers | start decoy | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_decoy_systemd_unit_name }}"
     enabled: true
@@ -146,16 +139,14 @@
     state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | stop Telemt
-  listen: restart telemt
+- name: "telemt | handlers | stop Telemt | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_systemd_unit_name }}"
     daemon_reload: true
     state: stopped
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | wait for Telemt cgroup
-  listen: restart telemt
+- name: "telemt | handlers | wait for Telemt cgroup | {{ telemt_instance_name }}"
   ansible.builtin.command:
     argv:
       - find
@@ -178,8 +169,7 @@
     or (_telemt_cgroup_procs.stdout | trim | length == 0)
   when: not ansible_check_mode
 
-- name: telemt | handlers | start Telemt
-  listen: restart telemt
+- name: "telemt | handlers | start Telemt | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_systemd_unit_name }}"
     enabled: true
@@ -187,8 +177,7 @@
     state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | stop HAProxy
-  listen: restart telemt-haproxy
+- name: "telemt | handlers | stop HAProxy | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_haproxy_systemd_unit_name }}"
     daemon_reload: true
@@ -196,8 +185,7 @@
   when: telemt_deployment_mode == 'web'
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: telemt | handlers | wait for HAProxy cgroup
-  listen: restart telemt-haproxy
+- name: "telemt | handlers | wait for HAProxy cgroup | {{ telemt_instance_name }}"
   ansible.builtin.command:
     argv:
       - find
@@ -222,8 +210,7 @@
     - telemt_deployment_mode == 'web'
     - not ansible_check_mode
 
-- name: telemt | handlers | start HAProxy
-  listen: restart telemt-haproxy
+- name: "telemt | handlers | start HAProxy | {{ telemt_instance_name }}"
   ansible.builtin.systemd:
     name: "{{ _telemt_haproxy_systemd_unit_name }}"
     enabled: true
