@@ -2,17 +2,37 @@
 
 ## Rules for AI agents running Molecule
 
-1. Use the Makefile wrapper at `molecule/Makefile`, not bare `molecule`
-   commands. It injects the role-scoped base config and the `GIT_DIR=/dev/null`
-   workaround needed in this collection layout.
-2. Use the role-local environment created by `make bootstrap`. Make targets
-   select `molecule/.venv` automatically; do not depend on an external venv.
-3. Avoid `make ...-test` during debugging because it destroys the instance at
-   the end. Prefer separate `converge`, `idempotence`, and `verify` runs; use
-   `destroy` explicitly when you need a clean slate.
-4. Do not pipe Molecule output through `tail`. Redirect full logs to `/tmp`,
-   then inspect them with `rg`, `grep`, `sed`, or `less`.
-5. Prefer native Ansible modules over `shell`/`command`. For this role,
+1. Every operation on a Molecule scenario MUST go through a target in
+   `molecule/Makefile`, invoked from `roles/telemt/molecule`. This includes
+   setup, execution, diagnostics, recovery, cleanup, and instance removal.
+   Agents MUST NOT run bare `molecule`, `ansible-playbook`, or `ansible`
+   against Molecule inventory; run `podman exec/inspect/rm` against a Molecule
+   instance; edit files under the instance's `/opt`; or invoke `systemctl`
+   inside the instance.
+2. If the Makefile does not expose a required operation, extend the automation
+   first and then use the new target. Add a reusable lifecycle or diagnostic
+   operation, parameterized across a scenario/driver where practical. Do not
+   add a one-off target tied to one failed run, ephemeral inventory path,
+   container ID, runtime file, or service mutation.
+3. Never repair or normalize a partially executed scenario out of band. Use
+   the Makefile `destroy`/`create` lifecycle, or rerun a suitable existing
+   Makefile action. A result obtained after manual runtime mutation is invalid
+   and must be repeated from a clean instance.
+4. Use the role-local environment created by `make bootstrap`. Make targets
+   select `molecule/.venv` automatically; do not activate or call its binaries
+   directly and do not depend on an external venv.
+5. Use `make default-podman-test` for a clean default-scenario validation; its
+   Molecule sequence owns destroy, create, prepare, converge, idempotence,
+   verify, and final destroy. Separate Makefile `converge`, `idempotence`, and
+   `verify` actions are allowed while developing, but the final result must be
+   reproduced by the clean `test` target.
+6. `login` is available for human investigation, not as an agent bypass for
+   unautomated commands. When agents need additional state or logs, add a
+   reusable diagnostic task/action behind the Makefile wrapper.
+7. Do not pipe Make/Molecule output through `tail`. Save the complete Make
+   target output under `/tmp`, then inspect that log with `rg`, `grep`, `sed`,
+   or `less` without interacting with the scenario directly.
+8. Prefer native Ansible modules over `shell`/`command`. For this role,
    legitimate command/shell cases are one-shot image/config validation,
    raw-byte TCP probes (`printf | nc`), and rescue-only diagnostics such as
    `journalctl`.
@@ -23,7 +43,8 @@
 
 - `direct` (default) preserves the Rust MTProto/Fake-TLS proxy. Telemt owns the
   public listener and splices invalid TLS-looking traffic to Caddy.
-- `web` puts HAProxy on public TCP/443. HAProxy routes ACME ALPN, terminates
+- `web` exposes HAProxy through a local ingress that external TCP/443 reaches
+  directly or through L4 forwarding. HAProxy routes ACME ALPN, terminates
   normal TLS, and sends the canonical Host to Telemt's WEB listener. Telemt,
   not HAProxy, validates capabilities/users and falls back invalid requests to
   Caddy. Foreign Host values go straight to Caddy.
@@ -60,9 +81,10 @@ Direct client : telemt_listen_port
 
 WEB client :443
     |
+    | optional L4 SNI forwarding / DNAT
     v
 +--- Pod: telemt-web-pod (WEB default) -------------------------------+
-| HAProxy outer TCP                                                     |
+| HAProxy outer TCP (:telemt_listen_port)                               |
 |   |-- ALPN acme-tls/1 -> acme.sh responder (:10443)                   |
 |   `-- default -> HAProxy inner TLS (:8444)                            |
 |                  |-- canonical Host -> Telemt WEB (:18080)            |
@@ -76,7 +98,7 @@ Internal ports:
 
 | Name | Port | Purpose |
 |------|------|---------|
-| `telemt_listen_port` | default `443`, molecule `9443` | public proxy listener |
+| `telemt_listen_port` | default `443`, direct molecule `9443` | local ingress published by Podman; WEB may receive forwarded public TCP/443 |
 | `_telemt_decoy_port` | `8443` | Caddy decoy HTTPS listener inside the pod |
 | `_telemt_pebble_port` | `14000` | Pebble ACME directory, molecule only |
 | `_telemt_pebble_mgmt_port` | `15000` | Pebble management endpoint, molecule only |
@@ -96,6 +118,21 @@ Internal ports:
 - WEB certificates are owned by acme.sh and mounted into HAProxy. Renewal is
   driven by `<instance>-acme-renew.timer`; the renewal hook reloads that
   instance's HAProxy.
+- WEB links always use the external endpoint on TCP/443. `telemt_listen_port`
+  is the local ingress and may differ when L4 passthrough preserves the TLS
+  ClientHello and ACME ALPN traffic. `public_addr` is a separate declared
+  relay tuple; Telemt does not compare it with DNS or the ingress destination.
+- HAProxy always overwrites `X-Forwarded-For` with the source address of its
+  incoming TCP connection. Direct ingress or source-preserving DNAT exposes
+  the client address. A connection-proxying SNI router exposes only the router
+  address, so every client behind it shares WEB per-IP limits and Telemt's
+  source-policy identity. Do not claim that the role can reconstruct a source
+  address absent from the incoming connection.
+- `telemt_web_public_ip` is deliberately singular. Telemt 3.5.2 stores one
+  `SocketAddr` per WEB vhost and rejects duplicate vhosts for the same host.
+  Every session for that vhost receives the same declared value because no
+  original-destination signal reaches Telemt. A list would not provide a
+  per-connection selection mechanism.
 - Pod, container, systemd, ACME, and handler identities derive from
   `telemt_instance_name`; config, Caddy state, ACME state, and certificates
   derive from `telemt_config_dir`. WEB defaults add `web-`/`_web` isolation.
@@ -197,6 +234,7 @@ roles/telemt/molecule/
     │   ├── prepare.yml
     │   ├── converge-telemt.yml
     │   ├── converge-web.yml
+    │   ├── verify-web-carrier.yml
     │   ├── verify-coexistence.yml
     │   └── wait-services.yml
     └── vars/common.yml
@@ -268,13 +306,14 @@ that `lineinfile` cannot atomically replace.
 11. direct and WEB units, config paths, listeners, and health endpoints remain
     simultaneously active
 
-The WEB portion checks Pebble certificate issuance through HAProxy,
-HTTP/2 ALPN, canonical and foreign Host camouflage, wrong/malformed
-capabilities, and complete create/uplink/downlink/delete flows for both plain
-and DD secrets. For each profile, the Python wire probe also performs a valid
-inner MTProxy handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and
-requires a matching `resPQ` from Telegram. This check is mandatory in both
-`default` and `gha`, so both environments must provide Telegram egress.
+The WEB portion checks Pebble certificate issuance through HAProxy, canonical
+and foreign Host camouflage, wrong/malformed capabilities, and complete
+create/uplink/downlink/delete flows. It deploys `https-lanes` and `https`
+sequentially in the same scenario and runs both plain and DD profiles over
+negotiated HTTP/2 for each carrier. Every combination performs a valid inner
+MTProxy handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and requires
+a matching `resPQ` from Telegram. These checks are mandatory in both `default`
+and `gha`, so both environments must provide Telegram egress.
 
 The separate direct-mode `mtp_ping` check remains opt-in because it builds and
 runs an Erlang test image:
@@ -295,8 +334,9 @@ Required:
 
 Important:
 
-- `telemt_listen_port` - public proxy listener, default `443`
-- `telemt_listen_bind` - optional concrete host IPv4 for the public publish
+- `telemt_listen_port` - local proxy ingress, default `443`; direct links also
+  advertise it, while WEB links always use external TCP/443
+- `telemt_listen_bind` - optional concrete host IPv4 for the local publish
 - `telemt_instance_name` - runtime/systemd namespace; unique per instance
 - `telemt_config_dir` - persistent state namespace; unique per instance
 - `telemt_modes_tls` - default `true`; Fake-TLS mode
@@ -307,31 +347,28 @@ Important:
 - `telemt_apparmor_profile` - AppArmor profile name passed to every container,
   default `unconfined` (see "Important role behavior")
 - `telemt_deployment_mode` - `direct` (default) or `web`
-- `telemt_web_public_ip` - required concrete IPv4 for WEB relay/KDF
+- `telemt_web_public_ip` - required stable declared IPv4 for the WEB relay tuple
 - `telemt_web_profiles` - WEB user profiles and `plain`/`dd` secret modes
 - one WEB decoy source: site directory, index file, or upstream URL
 
 Internal variables use the `_telemt_*` prefix.
 
-## Debug commands for podman scenario
+## Molecule diagnostics
 
 ```bash
-podman exec molecule-telemt systemctl status podman-telemt.service --no-pager
-podman exec molecule-telemt systemctl status podman-telemt-web.service --no-pager
-podman exec molecule-telemt journalctl -xeu podman-telemt.service --no-pager -n 200
-podman exec molecule-telemt journalctl -xeu podman-telemt-decoy.service --no-pager -n 200
-podman exec molecule-telemt journalctl -xeu podman-telemt-web-haproxy.service --no-pager -n 200
-podman exec molecule-telemt journalctl -xeu telemt-web-acme-renew.service --no-pager -n 200
-podman exec molecule-telemt podman ps --all
-podman exec molecule-telemt podman logs --tail 100 telemt
-podman exec molecule-telemt podman logs --tail 100 telemt-decoy
-podman exec molecule-telemt podman logs --tail 100 telemt-pebble
-podman exec molecule-telemt podman logs --tail 100 telemt-web-haproxy
-podman exec molecule-telemt ss -ltnp
+cd roles/telemt/molecule
+make default-podman-converge 2>&1 | tee /tmp/telemt-converge.log
+make default-podman-idempotence 2>&1 | tee /tmp/telemt-idempotence.log
+make default-podman-verify 2>&1 | tee /tmp/telemt-verify.log
+make default-podman-destroy 2>&1 | tee /tmp/telemt-destroy.log
 ```
 
-For the `gha` native scenario, run the same commands directly on the runner VM
-without the outer `podman exec molecule-telemt`.
+The scenario's verify tasks and rescue blocks must collect the service state,
+journal excerpts, container state, and listener information needed to diagnose
+failures. If existing output is insufficient, extend those diagnostics (or add
+a reusable Makefile-backed diagnostic action) and rerun through Make. The same
+rule applies to the `gha` native scenario: agents must not execute diagnostic
+or repair commands directly on the runner.
 
 ## Validated technical decisions
 

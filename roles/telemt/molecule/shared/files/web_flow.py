@@ -7,15 +7,14 @@ import argparse
 import base64
 import hashlib
 import hmac
-import http.client
 import os
 import re
 import secrets
-import ssl
 import struct
 import sys
 import time
 
+import httpx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 FRAME_OPEN = 0x01
@@ -43,7 +42,7 @@ RESERVED_HEADER_PREFIXES = {
 
 
 def request(
-    connection: http.client.HTTPSConnection,
+    connection: httpx.Client,
     method: str,
     path: str,
     host: str,
@@ -53,10 +52,17 @@ def request(
 ) -> tuple[int, dict[str, str], bytes]:
     request_headers = {"Host": host, "Cookie": ""}
     request_headers.update(headers or {})
-    connection.request(method, path, body=body, headers=request_headers)
-    response = connection.getresponse()
-    response_headers = {key.lower(): value for key, value in response.getheaders()}
-    return response.status, response_headers, response.read()
+    response = connection.request(
+        method,
+        path,
+        content=body,
+        headers=request_headers,
+    )
+    assert response.http_version == "HTTP/2", (
+        f"public WEB request negotiated {response.http_version}, expected HTTP/2"
+    )
+    response_headers = {key.lower(): value for key, value in response.headers.items()}
+    return response.status_code, response_headers, response.content
 
 
 def frame(kind: int, stream_id: int, payload: bytes = b"") -> bytes:
@@ -238,7 +244,7 @@ class WebCarrier:
 
     def __init__(
         self,
-        connection: http.client.HTTPSConnection,
+        connection: httpx.Client,
         host: str,
         carrier: str,
         session: str,
@@ -434,12 +440,12 @@ def main() -> None:
         .decode("ascii")
     )
 
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    context.set_alpn_protocols(["http/1.1"])
-    connection = http.client.HTTPSConnection(
-        args.host, 443, context=context, timeout=15
+    connection = httpx.Client(
+        base_url=f"https://{args.host}:443",
+        http2=True,
+        verify=False,
+        timeout=15,
+        trust_env=False,
     )
     session = ""
     try:
@@ -521,7 +527,7 @@ def main() -> None:
 
     print(
         "WEB Telegram E2E passed: "
-        f"carrier={args.carrier}, mode={args.secret_mode}, "
+        f"http=HTTP/2, carrier={args.carrier}, mode={args.secret_mode}, "
         f"dc={TELEGRAM_DC_ID}, response=resPQ, rejected_streams=2"
     )
 

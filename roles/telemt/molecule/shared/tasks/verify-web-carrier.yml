@@ -1,0 +1,60 @@
+---
+- name: Deploy WEB carrier {{ _web_carrier_under_test }}
+  ansible.builtin.include_tasks: converge-web.yml
+  vars:
+    molecule_telemt_web_carrier: "{{ _web_carrier_under_test }}"
+
+- name: Apply WEB carrier handlers | {{ _web_carrier_under_test }}
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for WEB carrier runtime | {{ _web_carrier_under_test }}
+  ansible.builtin.include_tasks: wait-services.yml
+  vars:
+    molecule_telemt_listen_port: 443
+    molecule_telemt_instance_name: telemt-web
+
+- name: Wait for WEB carrier HAProxy | {{ _web_carrier_under_test }}
+  ansible.builtin.systemd:
+    name: podman-telemt-web-haproxy.service
+  register: _carrier_haproxy_service
+  until: _carrier_haproxy_service.status.ActiveState == 'active'
+  retries: 20
+  delay: 3
+
+- name: Read WEB carrier configuration | {{ _web_carrier_under_test }}
+  ansible.builtin.slurp:
+    src: /opt/telemt_web/telemt.toml
+  register: _carrier_telemt_config
+
+- name: Assert WEB carrier is active | {{ _web_carrier_under_test }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        'carrier = "' ~ _web_carrier_under_test ~ '"'
+        in (_carrier_telemt_config.content | b64decode)
+
+- name: Run Telegram E2E for plain profile | {{ _web_carrier_under_test }}
+  ansible.builtin.script:
+    cmd: >-
+      files/web_flow.py
+      --host {{ molecule_telemt_web_domain }}
+      --secret {{ molecule_telemt_users.alice }}
+      --secret-mode plain
+      --carrier {{ _web_carrier_under_test }}
+      --decoy-marker "The site is under construction."
+  register: _carrier_plain_flow
+  changed_when: false
+  no_log: true
+
+- name: Run Telegram E2E for DD profile | {{ _web_carrier_under_test }}
+  ansible.builtin.script:
+    cmd: >-
+      files/web_flow.py
+      --host {{ molecule_telemt_web_domain }}
+      --secret {{ molecule_telemt_users.bob }}
+      --secret-mode dd
+      --carrier {{ _web_carrier_under_test }}
+      --decoy-marker "The site is under construction."
+  register: _carrier_dd_flow
+  changed_when: false
+  no_log: true

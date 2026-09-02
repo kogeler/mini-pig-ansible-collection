@@ -55,17 +55,46 @@
           - "'server telemt 127.0.0.1:18080' in _web_haproxy_cfg"
           - "'auto_https off' in _web_caddyfile"
 
+    - name: Accept forwarded WEB ingress with an independent declared relay IP
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.telemt
+        tasks_from: preflight.yml
+      vars:
+        telemt_deployment_mode: web
+        telemt_domain: "{{ molecule_telemt_web_domain }}"
+        telemt_listen_port: 8443
+        telemt_web_public_ip: "10.20.30.40"
+        telemt_users: "{{ molecule_telemt_users }}"
+        telemt_decoy_index_html: index.html
+
     - name: Verify fail-fast WEB preflight cases
       ansible.builtin.include_tasks: tasks/expect-web-preflight-failure.yml
       loop:
-        - name: non-standard-public-port
-          listen_port: 8443
-          error: WEB mode requires port 443
+        - name: invalid-domain
+          domain: Web.telemt.test
+          error: telemt_domain must be a canonical lowercase FQDN
+        - name: invalid-public-ip
+          public_ip: 999.0.0.1
+          error: telemt_web_public_ip must be a concrete IPv4 address
+        - name: unspecified-public-ip
+          public_ip: 0.0.0.0
+          error: telemt_web_public_ip must be a concrete IPv4 address
+        - name: unsupported-public-ip-list
+          public_ip:
+            - 127.0.0.1
+            - 127.0.0.2
+          error: telemt_web_public_ip must be one string
+        - name: unsupported-carrier
+          carrier: websocket
+          error: telemt_web_carrier must be either
+        - name: unsupported-default-secret-mode
+          default_secret_mode: ee
+          error: telemt_web_default_secret_mode must be either
         - name: unsupported-ee-profile
           profiles:
             - user: alice
               secret_mode: ee
-          error: Each WEB profile must reference
+          error: secret_mode must be 'plain' or 'dd'
         - name: ambiguous-decoy-source
           site_dir: /tmp/duplicate-decoy
           error: WEB mode requires exactly one operator-owned decoy source
@@ -111,31 +140,23 @@
         _web_alpn.rc != 0
         or 'ALPN protocol: h2' not in (_web_alpn.stdout ~ _web_alpn.stderr)
 
-    - name: Run mandatory Telegram WEB E2E for plain profile
-      ansible.builtin.script:
-        cmd: >-
-          files/web_flow.py
-          --host {{ molecule_telemt_web_domain }}
-          --secret {{ molecule_telemt_users.alice }}
-          --secret-mode plain
-          --carrier {{ _web_carrier }}
-          --decoy-marker "The site is under construction."
-      register: _web_plain_flow
-      changed_when: false
-      no_log: true
+    - name: Gather virtualization facts for carrier redeployments
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - virtual
 
-    - name: Run mandatory Telegram WEB E2E for DD profile
-      ansible.builtin.script:
-        cmd: >-
-          files/web_flow.py
-          --host {{ molecule_telemt_web_domain }}
-          --secret {{ molecule_telemt_users.bob }}
-          --secret-mode dd
-          --carrier {{ _web_carrier }}
-          --decoy-marker "The site is under construction."
-      register: _web_dd_flow
-      changed_when: false
-      no_log: true
+    # The loop ends on the scenario default so a verify run does not leave
+    # runtime state that would make a later idempotence run report changes.
+    - name: Verify every supported WEB carrier over HTTP/2
+      ansible.builtin.include_tasks: tasks/verify-web-carrier.yml
+      loop:
+        - https-lanes
+        - https
+      loop_control:
+        loop_var: _web_carrier_under_test
+        label: "{{ _web_carrier_under_test }}"
 
     - name: Read emitted WEB links
       ansible.builtin.slurp:
