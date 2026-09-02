@@ -10,9 +10,15 @@
         name: kogeler.mini_pig.telemt
       vars:
         telemt_deployment_mode: web
-        telemt_domain: "{{ molecule_telemt_web_domain }}"
+        telemt_domain: >-
+          {{ _web_preflight_case.domain | default(molecule_telemt_web_domain) }}
         telemt_listen_port: "{{ _web_preflight_case.listen_port | default(443) }}"
-        telemt_web_public_ip: "127.0.0.1"
+        telemt_web_public_ip: >-
+          {{ _web_preflight_case.public_ip | default('127.0.0.1') }}
+        telemt_web_carrier: >-
+          {{ _web_preflight_case.carrier | default('https') }}
+        telemt_web_default_secret_mode: >-
+          {{ _web_preflight_case.default_secret_mode | default('dd') }}
         telemt_image_tag: "{{ _web_preflight_case.image_tag | default('3.5.2') }}"
         telemt_users: "{{ molecule_telemt_users }}"
         telemt_web_profiles: >-

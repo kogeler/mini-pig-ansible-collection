@@ -14,7 +14,8 @@
   when: mp_driver != 'podman'
 
 # python3-cryptography supplies AES-CTR for the mandatory WEB req_pq/resPQ
-# probe; using the distro package keeps the Molecule target free of pip state.
+# probe. httpx + h2 exercise both carriers over the production HTTP/2 path;
+# distro packages keep the Molecule target free of pip state.
 - name: Install verify-side dependencies
   ansible.builtin.apt:
     name:
@@ -23,6 +24,8 @@
       - ca-certificates
       - netcat-openbsd
       - python3-cryptography
+      - python3-h2
+      - python3-httpx
     update_cache: true
     state: present
 

@@ -10,20 +10,58 @@
       telemt_deployment_mode must be either 'direct' or 'web'.
     quiet: true
 
-- name: telemt | preflight | validate common settings
+- name: telemt | preflight | validate instance name
   ansible.builtin.assert:
     that:
       - telemt_instance_name is string
       - telemt_instance_name is match('^[a-z0-9][a-z0-9_.-]{0,62}$')
+    fail_msg: >-
+      telemt_instance_name must be a lowercase, filesystem-safe identifier
+      matching ^[a-z0-9][a-z0-9_.-]{0,62}$.
+    quiet: true
+
+- name: telemt | preflight | validate config directory
+  ansible.builtin.assert:
+    that:
       - telemt_config_dir is string
       - telemt_config_dir.startswith('/')
       - telemt_config_dir != '/'
+    fail_msg: >-
+      telemt_config_dir must be an absolute path other than '/'.
+    quiet: true
+
+- name: telemt | preflight | validate domain
+  ansible.builtin.assert:
+    that:
       - telemt_domain is string
       - telemt_domain | trim | length > 0
+    fail_msg: >-
+      telemt_domain must be a non-empty string.
+    quiet: true
+
+- name: telemt | preflight | validate users container
+  ansible.builtin.assert:
+    that:
       - telemt_users is mapping
       - telemt_users | length > 0
+    fail_msg: >-
+      telemt_users must be a non-empty mapping of user names to secrets.
+    quiet: true
+
+- name: telemt | preflight | validate local ingress port
+  ansible.builtin.assert:
+    that:
       - telemt_listen_port | int > 0
       - telemt_listen_port | int <= 65535
+    fail_msg: >-
+      telemt_listen_port must be in the 1..65535 range. In WEB mode this is
+      the local Podman ingress port; public TCP/443 may be forwarded to it by
+      an L4 load balancer or DNAT.
+    quiet: true
+
+- name: telemt | preflight | validate local ingress bind
+  ansible.builtin.assert:
+    that:
       - telemt_listen_bind is string
       - >-
         telemt_listen_bind | length == 0 or (
@@ -31,11 +69,7 @@
           and (telemt_listen_bind.split('.') | map('int') | max) <= 255
         )
     fail_msg: >-
-      telemt_instance_name must be a lowercase, filesystem-safe identifier of
-      at most 63 characters; telemt_config_dir must be an absolute non-root
-      path; telemt_domain, at least one telemt_users entry, and a listen port
-      in the 1..65535 range are required; telemt_listen_bind must be empty or
-      a concrete IPv4 address.
+      telemt_listen_bind must be empty or a concrete local IPv4 address.
     quiet: true
 
 - name: telemt | preflight | validate user names and secrets
@@ -63,39 +97,56 @@
     quiet: true
   when: telemt_deployment_mode == 'direct'
 
-- name: telemt | preflight | validate WEB public endpoint
+- name: telemt | preflight | validate WEB domain
   ansible.builtin.assert:
     that:
-      - telemt_listen_port | int == 443
       - telemt_domain == telemt_domain | lower
       - telemt_domain is match('^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$')
+    fail_msg: >-
+      telemt_domain must be a canonical lowercase FQDN in WEB mode, for
+      example proxy.example.org.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB public IP type
+  ansible.builtin.assert:
+    that:
       - telemt_web_public_ip is string
+    fail_msg: >-
+      telemt_web_public_ip must be one string containing the declared IPv4
+      written to the WEB vhost public_addr. Telemt accepts one public_addr per
+      vhost and cannot select an address from a list for each connection.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB public IPv4
+  ansible.builtin.assert:
+    that:
       - telemt_web_public_ip is match('^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$')
       - (telemt_web_public_ip.split('.') | map('int') | max) <= 255
-      - >-
-        telemt_molecule_mode or not (
-          telemt_web_public_ip.split('.')[0] | int in [0, 10, 127]
-          or (
-            telemt_web_public_ip.split('.')[0] | int == 169
-            and telemt_web_public_ip.split('.')[1] | int == 254
-          )
-          or (
-            telemt_web_public_ip.split('.')[0] | int == 172
-            and telemt_web_public_ip.split('.')[1] | int >= 16
-            and telemt_web_public_ip.split('.')[1] | int <= 31
-          )
-          or (
-            telemt_web_public_ip.split('.')[0] | int == 192
-            and telemt_web_public_ip.split('.')[1] | int == 168
-          )
-          or telemt_web_public_ip.split('.')[0] | int >= 224
-        )
+      - telemt_web_public_ip != '0.0.0.0'
+    fail_msg: >-
+      telemt_web_public_ip must be a concrete IPv4 address other than 0.0.0.0.
+      Telemt does not compare it with DNS or the connection destination.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB carrier
+  ansible.builtin.assert:
+    that:
       - telemt_web_carrier in ['https', 'https-lanes']
+    fail_msg: >-
+      telemt_web_carrier must be either 'https' or 'https-lanes'.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB default secret mode
+  ansible.builtin.assert:
+    that:
       - telemt_web_default_secret_mode in ['plain', 'dd']
     fail_msg: >-
-      WEB mode requires port 443, a canonical lowercase FQDN, a concrete IPv4
-      telemt_web_public_ip, carrier https or https-lanes, and a supported
-      default secret mode (plain or dd).
+      telemt_web_default_secret_mode must be either 'plain' or 'dd'. Fake TLS
+      'ee' secrets are not supported by Telegram WEB proxy links.
     quiet: true
   when: telemt_deployment_mode == 'web'
 
@@ -113,19 +164,45 @@
     quiet: true
   when: telemt_deployment_mode == 'web'
 
-- name: telemt | preflight | validate WEB maps
+- name: telemt | preflight | validate WEB limits and timeouts containers
   ansible.builtin.assert:
     that:
       - telemt_web_limits is mapping
       - telemt_web_timeouts is mapping
+    fail_msg: >-
+      telemt_web_limits and telemt_web_timeouts must be mappings.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB limits and timeouts keys
+  ansible.builtin.assert:
+    that:
       - (telemt_web_limits.keys() | difference(_telemt_web_limit_keys)) | length == 0
       - (telemt_web_timeouts.keys() | difference(_telemt_web_timeout_keys)) | length == 0
+    fail_msg: >-
+      telemt_web_limits or telemt_web_timeouts contains a key unsupported by
+      the pinned Telemt release. Supported limits: {{ _telemt_web_limit_keys | join(', ') }}.
+      Supported timeouts: {{ _telemt_web_timeout_keys | join(', ') }}.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB limits and timeouts values
+  ansible.builtin.assert:
+    that:
       - (telemt_web_limits.values() | map('int') | select('le', 0) | list | length) == 0
       - (telemt_web_timeouts.values() | map('int') | select('le', 0) | list | length) == 0
+    fail_msg: >-
+      Every telemt_web_limits and telemt_web_timeouts value must be a positive
+      integer.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate HAProxy timeout margin
+  ansible.builtin.assert:
+    that:
       - telemt_web_haproxy_timeout_margin_secs | int > 0
     fail_msg: >-
-      WEB limits/timeouts must contain only Telemt 3.5.2-supported keys with
-      positive integer values; the HAProxy timeout margin must be positive.
+      telemt_web_haproxy_timeout_margin_secs must be a positive integer.
     quiet: true
   when: telemt_deployment_mode == 'web'
 
@@ -151,24 +228,59 @@
     quiet: true
   when: telemt_deployment_mode == 'web'
 
-- name: telemt | preflight | validate explicit WEB profiles
+- name: telemt | preflight | validate explicit WEB profile identity
   ansible.builtin.assert:
     that:
       - item is mapping
       - item.user is defined
       - item.user in telemt_users
-      - item.secret_mode | default(telemt_web_default_secret_mode) in ['plain', 'dd']
-      - item.keys() | difference(['user', 'secret_mode', 'max_sessions', 'max_streams', 'max_streams_per_session']) | length == 0
-      - item.max_sessions is not defined or item.max_sessions | int > 0
-      - item.max_streams is not defined or item.max_streams | int > 0
-      - item.max_streams_per_session is not defined or item.max_streams_per_session | int > 0
     fail_msg: >-
-      Each WEB profile must reference a telemt_users key, use plain/dd,
-      contain only supported keys, and use positive optional limits.
+      Each telemt_web_profiles item must be a mapping whose user references a
+      key in telemt_users.
     quiet: true
   loop: "{{ telemt_web_profiles }}"
   loop_control:
     label: "{{ item.user | default('invalid-profile') }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate explicit WEB profile secret mode
+  ansible.builtin.assert:
+    that:
+      - item.secret_mode | default(telemt_web_default_secret_mode) in ['plain', 'dd']
+    fail_msg: >-
+      telemt_web_profiles['{{ item.user }}'].secret_mode must be 'plain' or
+      'dd'. Fake TLS 'ee' is not supported in WEB mode.
+    quiet: true
+  loop: "{{ telemt_web_profiles }}"
+  loop_control:
+    label: "{{ item.user }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate explicit WEB profile keys
+  ansible.builtin.assert:
+    that:
+      - item.keys() | difference(['user', 'secret_mode', 'max_sessions', 'max_streams', 'max_streams_per_session']) | length == 0
+    fail_msg: >-
+      telemt_web_profiles['{{ item.user }}'] contains unsupported keys.
+    quiet: true
+  loop: "{{ telemt_web_profiles }}"
+  loop_control:
+    label: "{{ item.user }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate explicit WEB profile limits
+  ansible.builtin.assert:
+    that:
+      - item.max_sessions is not defined or item.max_sessions | int > 0
+      - item.max_streams is not defined or item.max_streams | int > 0
+      - item.max_streams_per_session is not defined or item.max_streams_per_session | int > 0
+    fail_msg: >-
+      Optional limits in telemt_web_profiles['{{ item.user }}'] must be
+      positive integers.
+    quiet: true
+  loop: "{{ telemt_web_profiles }}"
+  loop_control:
+    label: "{{ item.user }}"
   when: telemt_deployment_mode == 'web'
 
 - name: telemt | preflight | validate unique WEB profile users
