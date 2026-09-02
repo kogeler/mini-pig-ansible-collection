@@ -16,7 +16,6 @@ VENV_DIR := $(THIS_DIR).venv
 VENV_PYTHON := $(VENV_DIR)/bin/python
 VENV_READY := $(VENV_DIR)/.ready
 REQUIREMENTS := $(THIS_DIR)requirements-dev.txt
-VERSION_AUDIT := $(THIS_DIR)scripts/version_audit.py
 
 MOLECULE ?= $(VENV_DIR)/bin/molecule
 ANSIBLE_LINT ?= $(VENV_DIR)/bin/ansible-lint
@@ -40,9 +39,7 @@ help:
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  lint                   run ansible-lint for this role"
-	@echo "  versions               compare runtime pins with upstream"
-	@echo "  versions-check         fail when a maintained pin is stale"
-	@echo "  ci-podman              clean test of the default Podman scenario"
+	@echo "  ci-podman              clean default test with live Telegram probes"
 	@echo ""
 	@echo "Scenarios x drivers:"
 	@echo "  default-podman-<action>  direct + WEB on Debian trixie"
@@ -82,7 +79,7 @@ _guard:
 		exit 1; \
 	fi
 
-.PHONY: env-info lint versions versions-check ci-podman
+.PHONY: env-info lint ci-podman
 env-info: $(VENV_READY)
 	$(VENV_PYTHON) --version
 	$(VENV_PYTHON) -m pip show ansible-core ansible-lint molecule molecule-plugins
@@ -90,14 +87,8 @@ env-info: $(VENV_READY)
 lint: $(VENV_READY) _guard
 	cd $(ROLE_DIR) && $(VENV_ENV) $(ANSIBLE_LINT)
 
-versions: $(VENV_READY)
-	$(VENV_PYTHON) $(VERSION_AUDIT)
-
-versions-check: $(VENV_READY)
-	$(VENV_PYTHON) $(VERSION_AUDIT) --check
-
-ci-podman: lint versions-check
-	$(MAKE) default-podman-test
+ci-podman: lint
+	MP_RUN_MTP_PING=1 $(MAKE) default-podman-test
 
 default-podman-%: $(VENV_READY) _guard
 	cd $(ROLE_DIR) && $(VENV_ENV) $(MOLECULE) $(MOLECULE_BASE) $* -s default

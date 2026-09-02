@@ -236,7 +236,7 @@
           body={{ _decoy_response.content | default('<empty>') | truncate(300) }}
 
     # -- Vanilla-TLS probe drives the connection counter ---------------------
-    # Telemt 3.5.2 drops a truncated TLS record before incrementing the public
+    # Telemt drops a truncated TLS record before incrementing the public
     # connection counter. A complete vanilla HTTPS request is deterministic:
     # it is accepted by Telemt, counted, and then spliced to the decoy.
 
@@ -296,15 +296,38 @@
           telemt_connections_total did not advance after a complete vanilla
           TLS request. Before={{ _conn_total_before }}, After={{ _conn_total_after }}.
 
-    # -- Real Fake-TLS handshake via mtp_ping (opt-in) -----------------------
+    # -- Real Fake-TLS handshake via mtp_ping --------------------------------
     # mtp_ping runs through the proxy under test and out to Telegram's
     # real middle proxies, so this requires egress to Telegram on 443.
-    # Default-off; set MP_RUN_MTP_PING=1 when you explicitly want this
-    # external integration probe.
+    # Repository CI enables it for both drivers. It stays opt-in for ordinary
+    # local actions; `make ci-podman` runs the complete local CI equivalent.
 
     - name: Real Fake-TLS handshake via mtp_ping
       when: molecule_telemt_run_mtp_ping | bool
       block:
+        # The upstream production image does not contain mtp_ping, which lives
+        # in the test source. Build it only after converge has installed Podman
+        # so the standard clean Molecule sequence works on a fresh host.
+        - name: Build pinned mtp-ping image
+          containers.podman.podman_image:
+            name: localhost/mtp-ping
+            tag: latest
+            state: build
+            build:
+              # Nested rootful Podman cannot ask systemd to create transient
+              # builder scopes, so keep the build out of the cgroup manager.
+              extra_args: --isolation=chroot
+              container_file: |-
+                FROM docker.io/library/erlang:27-alpine
+                RUN apk add --no-cache git build-base
+                RUN git init /src \
+                    && cd /src \
+                    && git remote add origin https://github.com/seriyps/mtproto_proxy \
+                    && git fetch --depth=1 origin {{ molecule_telemt_mtp_ping_ref }} \
+                    && git checkout --detach FETCH_HEAD \
+                    && ./rebar3 escriptize
+                ENTRYPOINT ["/src/_build/default/bin/mtp_ping"]
+
         - name: Capture per-user counter before mtp_ping
           containers.podman.podman_container_exec:
             name: telemt-decoy

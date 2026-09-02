@@ -150,20 +150,6 @@
     quiet: true
   when: telemt_deployment_mode == 'web'
 
-- name: telemt | preflight | validate WEB Telemt version floor
-  ansible.builtin.assert:
-    that:
-      - >-
-        not (telemt_image_tag is match('^[0-9]+\\.[0-9]+\\.[0-9]+$'))
-        or telemt_image_tag is version('3.5.2', '>=')
-    fail_msg: >-
-      Numeric telemt_image_tag values in WEB mode must be >= 3.5.2. Release
-      3.5.1 introduced WEB; 3.5.2 contains the first follow-up fix and is the
-      role's supported floor. Custom tags are verified from telemt --version
-      after their image is pulled.
-    quiet: true
-  when: telemt_deployment_mode == 'web'
-
 - name: telemt | preflight | validate WEB limits and timeouts containers
   ansible.builtin.assert:
     that:
@@ -181,7 +167,7 @@
       - (telemt_web_timeouts.keys() | difference(_telemt_web_timeout_keys)) | length == 0
     fail_msg: >-
       telemt_web_limits or telemt_web_timeouts contains a key unsupported by
-      the pinned Telemt release. Supported limits: {{ _telemt_web_limit_keys | join(', ') }}.
+      the role's WEB schema. Supported limits: {{ _telemt_web_limit_keys | join(', ') }}.
       Supported timeouts: {{ _telemt_web_timeout_keys | join(', ') }}.
     quiet: true
   when: telemt_deployment_mode == 'web'

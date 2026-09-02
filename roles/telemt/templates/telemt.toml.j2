@@ -10,8 +10,8 @@ secure = {{ telemt_modes_secure | lower }}
 tls = {{ telemt_modes_tls | lower }}
 
 {% else %}
-# Telemt 3.5.x still validates that one legacy mode is enabled globally, even
-# when every listener is WEB. Omitting general.modes keeps the upstream default
+# Telemt still validates that one legacy mode is enabled globally, even when
+# every listener is WEB. Omitting general.modes keeps the upstream default
 # (`tls = true`) without exposing an MTProxy listener; WEB profiles continue to
 # restrict inner handshakes to plain/dd.
 [general.links]

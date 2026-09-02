@@ -128,7 +128,7 @@ Internal ports:
   address, so every client behind it shares WEB per-IP limits and Telemt's
   source-policy identity. Do not claim that the role can reconstruct a source
   address absent from the incoming connection.
-- `telemt_web_public_ip` is deliberately singular. Telemt 3.5.2 stores one
+- `telemt_web_public_ip` is deliberately singular. Telemt stores one
   `SocketAddr` per WEB vhost and rejects duplicate vhosts for the same host.
   Every session for that vhost receives the same declared value because no
   original-destination signal reaches Telemt. A list would not provide a
@@ -144,7 +144,7 @@ Internal ports:
   filtering into HAProxy breaks the upstream WEB fallback semantics and risks
   exposing secret-bearing paths in access logs.
 - WEB mode deliberately omits `[general.modes]` from `telemt.toml`. Telemt
-  3.5.2 rejects a config where every legacy mode is false; no legacy MTProxy
+  rejects a config where every legacy mode is false; no legacy MTProxy
   listener is exposed in this topology, and WEB profiles still explicitly use
   only `plain`/`dd` handshakes.
 - Caddy runs with a read-only rootfs, so both `/data` and `/config` are
@@ -260,6 +260,7 @@ Run from `roles/telemt/molecule`:
 make bootstrap
 make help
 make lint
+make ci-podman
 make default-podman-converge
 make default-podman-idempotence
 make default-podman-verify
@@ -268,8 +269,14 @@ make gha-native-idempotence
 make gha-native-verify
 ```
 
+Runtime image tag defaults have exactly one source of truth:
+`defaults/main.yml`. To update them, change only that file, open a pull request,
+review both Telemt Molecule scenario results, and merge only after they pass.
+Do not duplicate concrete tag values in documentation or tests; CI is the
+compatibility gate.
+
 The `default` scenario runs inside a molecule-managed Debian container with
-nested Podman. Its Dockerfile installs `crun` for the opt-in `mtp_ping`
+nested Podman. Its Dockerfile installs `crun` for the `mtp_ping`
 one-shot but pins Podman's default runtime to `runc` in `containers.conf`; the
 role's normal systemd-managed containers use `--cgroups=split`, while
 `mtp_ping` explicitly uses `--runtime=crun --cgroups=disabled`. The `gha`
@@ -301,8 +308,8 @@ that `lineinfile` cannot atomically replace.
 7. a vanilla HTTPS GET through telemt's splice reaches the Caddy decoy
 8. the served certificate eventually has a Pebble issuer and expected SAN
 9. a raw garbage TCP probe increments `telemt_connections_total`
-10. optional `mtp_ping` performs a real Fake-TLS handshake to Telegram and
-    increments Alice's authenticated user counter
+10. when enabled, `mtp_ping` performs a real Fake-TLS handshake to Telegram
+    and increments Alice's authenticated user counter
 11. direct and WEB units, config paths, listeners, and health endpoints remain
     simultaneously active
 
@@ -315,15 +322,16 @@ MTProxy handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and requires
 a matching `resPQ` from Telegram. These checks are mandatory in both `default`
 and `gha`, so both environments must provide Telegram egress.
 
-The separate direct-mode `mtp_ping` check remains opt-in because it builds and
-runs an Erlang test image:
+Repository CI enables the separate direct-mode `mtp_ping` check for both
+drivers. It remains opt-in for ordinary local actions because it builds an
+Erlang test image. Run the full default CI equivalent with:
 
 ```bash
-MP_RUN_MTP_PING=1 make default-podman-verify
+make ci-podman
 ```
 
-Only that direct-mode Erlang check is off in CI; the Python WEB Telegram probes
-in both scenarios have no skip variable.
+Both direct and WEB live Telegram probes are therefore mandatory in repository
+CI, and both environments must provide Telegram egress.
 
 ## Key variables
 

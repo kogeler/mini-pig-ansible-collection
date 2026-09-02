@@ -35,7 +35,11 @@ molecule_telemt_metrics_port: 9090
 molecule_telemt_api_port: 9091
 
 # Run mtp_ping (real Fake-TLS handshake against Telegram middle proxies)
-# in verify. Requires egress from the molecule instance to Telegram DCs
-# on 443, so it is opt-in and stays off in CI by default.
-# Set MP_RUN_MTP_PING=1 to enable.
+# in verify. It remains opt-in for ordinary local actions because building
+# its Erlang image is relatively slow. Repository CI and `make ci-podman`
+# set MP_RUN_MTP_PING=1 for both Telemt scenarios.
 molecule_telemt_run_mtp_ping: "{{ lookup('env', 'MP_RUN_MTP_PING') | default('0', true) | bool }}"
+
+# Pin the official mtp_ping source so an upstream branch update cannot change
+# the result of an otherwise identical CI run.
+molecule_telemt_mtp_ping_ref: "154a8fb8e6ef85460f502d4b74434a22a5836937"

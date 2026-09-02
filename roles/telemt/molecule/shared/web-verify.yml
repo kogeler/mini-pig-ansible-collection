@@ -98,9 +98,6 @@
         - name: ambiguous-decoy-source
           site_dir: /tmp/duplicate-decoy
           error: WEB mode requires exactly one operator-owned decoy source
-        - name: unsupported-telemt-release
-          image_tag: 3.5.1
-          error: Numeric telemt_image_tag values in WEB mode must be
       loop_control:
         loop_var: _web_preflight_case
         label: "{{ _web_preflight_case.name }}"

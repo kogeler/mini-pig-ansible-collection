@@ -29,39 +29,3 @@
     }}
   loop_control:
     label: "{{ item.name }}:{{ item.tag }}"
-
-- name: telemt | image | read actual WEB-capable Telemt version
-  ansible.builtin.command:
-    argv: >-
-      {{
-        ['podman', 'run', '--rm', '--pull=never']
-        + _telemt_podman_probe_args
-        + [telemt_image ~ ':' ~ telemt_image_tag, '--version']
-      }}
-  register: _telemt_actual_version_output
-  changed_when: false
-  when:
-    - telemt_deployment_mode == 'web'
-    - not (telemt_image_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$'))
-    - not ansible_check_mode
-
-- name: telemt | image | enforce actual WEB-capable Telemt version
-  vars:
-    _telemt_actual_version: >-
-      {{
-        _telemt_actual_version_output.stdout
-        | regex_search('[0-9]+\.[0-9]+\.[0-9]+')
-        | default('0.0.0', true)
-      }}
-  ansible.builtin.assert:
-    that:
-      - _telemt_actual_version is version('3.5.2', '>=')
-    fail_msg: >-
-      WEB mode requires Telemt >= 3.5.2, but image
-      {{ telemt_image }}:{{ telemt_image_tag }} reported
-      {{ _telemt_actual_version_output.stdout | default('<no version>') | trim }}.
-    quiet: true
-  when:
-    - telemt_deployment_mode == 'web'
-    - not (telemt_image_tag is match('^[0-9]+\.[0-9]+\.[0-9]+$'))
-    - not ansible_check_mode

@@ -19,7 +19,6 @@
           {{ _web_preflight_case.carrier | default('https') }}
         telemt_web_default_secret_mode: >-
           {{ _web_preflight_case.default_secret_mode | default('dd') }}
-        telemt_image_tag: "{{ _web_preflight_case.image_tag | default('3.5.2') }}"
         telemt_users: "{{ molecule_telemt_users }}"
         telemt_web_profiles: >-
           {{

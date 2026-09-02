@@ -7,7 +7,7 @@
 
 telemt_enabled: true
 telemt_image: ghcr.io/telemt/telemt
-telemt_image_tag: "3.5.2"
+telemt_image_tag: "3.5.5"
 
 # Deployment topology. `direct` preserves the role's historical behaviour:
 # Telemt owns the public listener and splices masking traffic to TLS-Caddy.
@@ -99,7 +99,7 @@ telemt_web_default_secret_mode: dd
 # `ee` secrets are a direct-mode feature.
 telemt_web_profiles: []
 # Allowlisted Telemt [web.limits] and [web.timeouts] overrides. Empty maps use
-# the defaults from the pinned Telemt release.
+# Telemt's built-in defaults.
 telemt_web_limits: {}
 telemt_web_timeouts: {}
 
@@ -161,7 +161,7 @@ telemt_publish_metrics: false
 # TLS-ALPN-01 challenge passes through telemt TCP-splice to Caddy on localhost.
 
 telemt_decoy_image: docker.io/library/caddy
-telemt_decoy_image_tag: "2.11.4-alpine"
+telemt_decoy_image_tag: "2.11-alpine"
 # Domain for Let's Encrypt certificate. Defaults to telemt_domain if empty.
 telemt_decoy_domain: ""
 # ACME email for Let's Encrypt notifications (optional)
@@ -189,9 +189,9 @@ telemt_decoy_upstream_url: ""
 # -- WEB TLS termination / ACME ----------------------------------------------
 
 telemt_haproxy_image: docker.io/library/haproxy
-telemt_haproxy_image_tag: "3.4.3-alpine"
+telemt_haproxy_image_tag: "3.4-alpine"
 telemt_acme_image: docker.io/neilpang/acme.sh
-telemt_acme_image_tag: "3.1.4"
+telemt_acme_image_tag: "latest"
 telemt_acme_email: ""
 telemt_acme_server: letsencrypt
 
