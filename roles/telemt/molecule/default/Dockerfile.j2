@@ -4,7 +4,7 @@ FROM {{ item.image }}
 # the moment a child container starts. Trixie does not pull nftables in
 # transitively as a podman dep, so install it explicitly.
 #
-# crun: one-shot image/config probes and the optional mtp_ping check require a
+# crun: one-shot image/config probes and the mtp_ping check require a
 # runtime that supports `--cgroups=disabled`. Trixie's stock runc rejects that
 # flag, and the default systemd cgroup manager cannot create a transient scope
 # from inside this container. Normal role services remain on runc +

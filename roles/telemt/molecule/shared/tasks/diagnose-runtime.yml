@@ -1,0 +1,68 @@
+---
+- name: Capture runtime unit states
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+  loop: "{{ molecule_telemt_diagnostic_units }}"
+  register: _telemt_diagnostic_unit_states
+  changed_when: false
+  failed_when: false
+
+- name: Capture runtime unit journals # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - journalctl
+      - --no-pager
+      - -u
+      - "{{ item }}"
+      - -n
+      - "100"
+  loop: "{{ molecule_telemt_diagnostic_units }}"
+  register: _telemt_diagnostic_journals
+  changed_when: false
+  failed_when: false
+
+- name: Capture Podman container inventory # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - podman
+      - ps
+      - --all
+      - --pod
+      - --format
+      - json
+  register: _telemt_diagnostic_containers
+  changed_when: false
+  failed_when: false
+
+- name: Capture TCP listeners # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -lntp
+  register: _telemt_diagnostic_listeners
+  changed_when: false
+  failed_when: false
+
+- name: Print runtime failure diagnostics
+  ansible.builtin.debug:
+    msg: |-
+      Original failure:
+      {{ molecule_telemt_diagnostic_failure | to_nice_json }}
+
+      Unit states:
+      {% for result in _telemt_diagnostic_unit_states.results %}
+      {{ result.item }}: {{ result.status.ActiveState | default('unknown') }}/{{ result.status.SubState | default('unknown') }}
+      {% endfor %}
+
+      Unit journals:
+      {% for result in _telemt_diagnostic_journals.results %}
+      === {{ result.item }} ===
+      {{ result.stdout | default('<no output>') }}
+      {{ result.stderr | default('') }}
+      {% endfor %}
+
+      Podman containers:
+      {{ _telemt_diagnostic_containers.stdout | default('<no output>') }}
+
+      TCP listeners:
+      {{ _telemt_diagnostic_listeners.stdout | default('<no output>') }}

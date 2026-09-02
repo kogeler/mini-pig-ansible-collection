@@ -1,37 +1,61 @@
 ---
 - name: Apply Telemt WEB role with molecule overrides
-  ansible.builtin.include_role:
-    name: kogeler.mini_pig.telemt
-  vars:
-    telemt_deployment_mode: web
-    telemt_domain: "{{ molecule_telemt_web_domain }}"
-    telemt_listen_port: 443
-    telemt_web_public_ip: "127.0.0.1"
-    telemt_users: "{{ molecule_telemt_users }}"
-    telemt_web_carrier: "{{ molecule_telemt_web_carrier }}"
-    telemt_web_profiles:
-      - user: alice
-        secret_mode: plain
-        max_sessions: 4
-        max_streams: 16
-        max_streams_per_session: 4
-      - user: bob
-        secret_mode: dd
-        max_sessions: 4
-        max_streams: 16
-        max_streams_per_session: 4
-    telemt_web_timeouts:
-      long_poll_secs: 1
-    telemt_web_haproxy_timeout_margin_secs: 3
-    telemt_decoy_index_html: index.html
-    telemt_molecule_mode: true
-    # The direct deployment owns the host API and metrics sockets. WEB keeps
-    # the same listeners inside its isolated pod for health verification.
-    telemt_api_enabled: true
-    telemt_publish_api: false
-    telemt_api_port: "{{ molecule_telemt_api_port }}"
-    telemt_publish_metrics: false
-    telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"
+  block:
+    - name: Deploy WEB instance
+      ansible.builtin.include_role:
+        name: kogeler.mini_pig.telemt
+      vars:
+        telemt_deployment_mode: web
+        telemt_domain: "{{ molecule_telemt_web_domain }}"
+        telemt_listen_port: 443
+        telemt_web_public_ip: "127.0.0.1"
+        telemt_users: "{{ molecule_telemt_users }}"
+        telemt_web_carrier: "{{ molecule_telemt_web_carrier }}"
+        telemt_web_profiles:
+          - user: alice
+            secret_mode: plain
+            max_sessions: 4
+            max_streams: 16
+            max_streams_per_session: 4
+          - user: bob
+            secret_mode: dd
+            max_sessions: 4
+            max_streams: 16
+            max_streams_per_session: 4
+        telemt_web_timeouts:
+          long_poll_secs: 2
+        telemt_web_haproxy_timeout_margin_secs: 3
+        telemt_decoy_index_html: index.html
+        telemt_molecule_mode: true
+        # The direct deployment owns the host API and metrics sockets. WEB keeps
+        # the same listeners inside its isolated pod for health verification.
+        telemt_api_enabled: true
+        telemt_publish_api: false
+        telemt_api_port: "{{ molecule_telemt_api_port }}"
+        telemt_publish_metrics: false
+        telemt_metrics_port: "{{ molecule_telemt_metrics_port }}"
+  rescue:
+    - name: Preserve WEB deployment failure
+      ansible.builtin.set_fact:
+        _telemt_web_deployment_failure: "{{ ansible_failed_result }}"
+
+    - name: Diagnose failed WEB deployment
+      ansible.builtin.include_tasks: diagnose-runtime.yml
+      vars:
+        molecule_telemt_diagnostic_failure: "{{ _telemt_web_deployment_failure }}"
+        molecule_telemt_diagnostic_units:
+          - podman-telemt-web-pod.service
+          - podman-telemt-web-pebble.service
+          - podman-telemt-web-decoy.service
+          - podman-telemt-web.service
+          - podman-telemt-web-haproxy.service
+          - telemt-web-acme-renew.service
+
+    - name: Fail after WEB deployment diagnostics
+      ansible.builtin.fail:
+        msg: >-
+          Telemt WEB deployment failed: {{ _telemt_web_deployment_failure.msg
+          | default(_telemt_web_deployment_failure | string) }}
 
 - name: Persist emitted WEB proxy-link output for verify
   ansible.builtin.copy:

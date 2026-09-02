@@ -179,9 +179,9 @@ originally selected by the client.
 
 `telemt_web_public_ip` is therefore not a bind address, a DNS assertion, or a
 link-generation endpoint. Telemt does not resolve `telemt_domain` and does not
-compare `public_addr` with the incoming socket. Telemt 3.5.2 only requires a
-concrete socket address on port 443; this role's interface currently accepts
-one IPv4 other than `0.0.0.0` and renders `<IP>:443`.
+compare `public_addr` with the incoming socket. Telemt requires a concrete
+socket address on port 443; this role's interface currently accepts one IPv4
+other than `0.0.0.0` and renders `<IP>:443`.
 
 For every logical MTProxy stream, Telemt combines:
 
@@ -256,7 +256,7 @@ semantics:
 - Middle-End receives the router address plus Telemt's unique synthetic port
   as `client_addr`.
 
-The pinned Telemt defaults allow 16 live sessions and 64 unused bootstraps per
+The Telemt defaults allow 16 live sessions and 64 unused bootstraps per
 forwarded IP. For a trusted shared SNI ingress, make those per-IP ceilings
 equal to the corresponding global ceilings if the defaults are too small:
 
@@ -294,7 +294,7 @@ solves an observed workload problem. New sessions use the selected carrier;
 the user-facing `tg://webproxy` link remains the same.
 
 See the
-[upstream Telemt 3.5.2 WEB contract](https://github.com/telemt/telemt/blob/3.5.2/docs/WEB/WEB_PROXY.en.md)
+[upstream Telemt WEB contract](https://github.com/telemt/telemt/blob/main/docs/WEB/WEB_PROXY.en.md)
 for the wire-level details.
 
 ### Secret choice: plain or dd
@@ -406,7 +406,7 @@ The role does not discover unrelated instances or probe their sockets.
 | `telemt_instance_name` | mode-derived | Runtime and systemd namespace |
 | `telemt_config_dir` | mode-derived | Persistent configuration and state |
 | `telemt_pod_network` | `""` | Existing Podman network to attach |
-| `telemt_image_tag` | `3.5.2` | Telemt image version; WEB requires 3.5.2 or newer |
+| `telemt_image_tag` | [see role defaults](defaults/main.yml) | Telemt image tag |
 
 ### WEB variables
 
@@ -488,11 +488,17 @@ proxy that records request paths, queries, or authorization headers.
 
 ## Local development
 
+Runtime image tags have one source of truth: [`defaults/main.yml`](defaults/main.yml).
+To update them, edit that file, open a pull request, review the complete Telemt
+Molecule CI results, and merge only after both scenarios pass. Compatibility is
+validated by those deployment and end-to-end tests.
+
 Run from `roles/telemt/molecule`:
 
 ```bash
 make bootstrap
 make lint
+make ci-podman
 make default-podman-converge
 make default-podman-idempotence
 make default-podman-verify
@@ -503,6 +509,11 @@ that rerunning either one does not restart the other, and exercises WEB
 certificate issuance, decoy routing, and both `https` and `https-lanes` over
 HTTP/2. Each carrier runs `plain` and `dd` profiles through a real Telegram
 `req_pq`/`resPQ` round trip.
+
+Repository CI also enables the direct-mode `mtp_ping` probe in both scenarios.
+It performs a real Fake-TLS handshake through the deployed proxy to Telegram
+and verifies that Telemt records the authenticated user connection. The local
+`make ci-podman` target runs the same complete probe set for the default driver.
 
 The `gha` scenario uses the same converge and verify playbooks on a native
 GitHub Actions runner:

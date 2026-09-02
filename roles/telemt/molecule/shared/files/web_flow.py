@@ -418,11 +418,13 @@ def verify_rejected_streams(carrier: WebCarrier, carrier_mode: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
-    parser.add_argument("--secret", required=True)
+    parser.add_argument("--secret", default=os.environ.get("TELEMT_WEB_FLOW_SECRET"))
     parser.add_argument("--secret-mode", choices=("plain", "dd"), required=True)
     parser.add_argument("--carrier", choices=("https", "https-lanes"), required=True)
     parser.add_argument("--decoy-marker", required=True)
     args = parser.parse_args()
+    if not args.secret:
+        parser.error("--secret or TELEMT_WEB_FLOW_SECRET is required")
 
     access_secret = bytes.fromhex(args.secret)
     capability_secret = access_secret
@@ -454,11 +456,13 @@ def main() -> None:
         )
         assert status == 200, f"bridge status={status}"
         bridge_text = bridge.decode("utf-8")
-        assert "bootstrap='" in bridge_text
-        assert f"carrier='{args.carrier}'" in bridge_text
+        assert 'const bootstrap="' in bridge_text
+        assert "const negotiationEnabled=false" in bridge_text
         assert capability not in bridge_text
         assert "no-store" in headers.get("cache-control", "")
-        bootstrap_match = re.search(r"bootstrap='([A-Za-z0-9_-]{43})'", bridge_text)
+        bootstrap_match = re.search(
+            r'const bootstrap="([A-Za-z0-9_-]{43})"', bridge_text
+        )
         assert bootstrap_match, "bootstrap token is missing"
         bootstrap = bootstrap_match.group(1)
 

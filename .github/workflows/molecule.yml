@@ -132,4 +132,8 @@ jobs:
       # so this works whether or not the role has a shared base file.
       - name: Molecule test
         working-directory: ansible_collections/kogeler/mini_pig/roles/${{ matrix.role }}
+        env:
+          # Exercise Telemt's live direct-mode Fake-TLS probe in both of its
+          # CI scenarios. Other roles do not consume this variable.
+          MP_RUN_MTP_PING: ${{ matrix.role == 'telemt' && '1' || '0' }}
         run: molecule -c molecule/shared/base.yml test -s "${{ matrix.scenario }}"

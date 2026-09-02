@@ -38,23 +38,23 @@
     cmd: >-
       files/web_flow.py
       --host {{ molecule_telemt_web_domain }}
-      --secret {{ molecule_telemt_users.alice }}
       --secret-mode plain
       --carrier {{ _web_carrier_under_test }}
       --decoy-marker "The site is under construction."
+  environment:
+    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.alice }}"
   register: _carrier_plain_flow
   changed_when: false
-  no_log: true
 
 - name: Run Telegram E2E for DD profile | {{ _web_carrier_under_test }}
   ansible.builtin.script:
     cmd: >-
       files/web_flow.py
       --host {{ molecule_telemt_web_domain }}
-      --secret {{ molecule_telemt_users.bob }}
       --secret-mode dd
       --carrier {{ _web_carrier_under_test }}
       --decoy-marker "The site is under construction."
+  environment:
+    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.bob }}"
   register: _carrier_dd_flow
   changed_when: false
-  no_log: true
