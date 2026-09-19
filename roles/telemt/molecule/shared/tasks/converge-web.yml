@@ -6,7 +6,7 @@
         name: kogeler.mini_pig.telemt
       vars:
         telemt_deployment_mode: web
-        telemt_domain: "{{ molecule_telemt_web_domain }}"
+        telemt_web_domains: "{{ molecule_telemt_web_domains }}"
         telemt_listen_port: 443
         telemt_web_public_ip: "127.0.0.1"
         telemt_users: "{{ molecule_telemt_users }}"

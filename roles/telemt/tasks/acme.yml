@@ -15,18 +15,19 @@
     - telemt_molecule_mode
     - not ansible_check_mode
 
-- name: telemt | acme | inspect current certificate issuer
+- name: telemt | acme | inspect current certificate issuers
   ansible.builtin.command:
     argv:
       - openssl
       - x509
       - -in
-      - "{{ _telemt_certs_dir }}/fullchain.pem"
+      - "{{ _telemt_certs_dir }}/{{ item }}/fullchain.pem"
       - -issuer
       - -noout
   register: _telemt_cert_issuer
   changed_when: false
   failed_when: false
+  loop: "{{ _telemt_web_domain_list }}"
 
 - name: telemt | acme | reset renewal service failure state
   ansible.builtin.command:
@@ -37,14 +38,24 @@
   changed_when: false
   failed_when: false
 
-- name: telemt | acme | issue initial certificate
+# The unit issues every domain in one run, so a single domain still holding
+# its self-signed bootstrap (a new map entry, or a first deployment) is enough
+# to trigger it. Domains that already hold a CA certificate exit 2 and are
+# left untouched.
+- name: telemt | acme | issue initial certificates
+  vars:
+    _telemt_unissued_domains: >-
+      {{
+        _telemt_cert_issuer.results
+        | rejectattr('stdout', 'search', '(Pebble|Let)')
+        | map(attribute='item')
+        | list
+      }}
   ansible.builtin.systemd:
     name: "{{ _telemt_acme_renew_unit_name }}"
     state: started
     daemon_reload: true
-  when:
-    - "'Pebble' not in _telemt_cert_issuer.stdout"
-    - "'Let' not in _telemt_cert_issuer.stdout"
+  when: _telemt_unissued_domains | length > 0
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: telemt | acme | enable renewal timer

@@ -91,6 +91,21 @@ telemt_modes_tls: true
 # WEB is selected only by telemt_deployment_mode=web. Legacy telemt_modes_*
 # remain direct-mode settings and are intentionally ignored by this branch.
 
+# Required in WEB mode: map of label -> domain served by this deployment. Every
+# domain gets its own ACME certificate, its own HAProxy SNI entry, its own
+# Telemt `[[web.vhosts]]`, and its own `tg://webproxy` link per profile. The
+# label names the domain in the emitted links and orders rendered config.
+# Certificates stay separate per domain on purpose: a single multi-SAN
+# certificate would publish the whole set of domains to anyone probing one of
+# them. This replaces telemt_domain, which is direct-mode only.
+#
+# Example:
+#   telemt_web_domains:
+#     primary: "proxy.example.org"
+#     backup:  "cdn.example.net"
+
+telemt_web_domains: {}
+
 telemt_web_carrier: https
 telemt_web_default_secret_mode: dd
 # Optional list of {user, secret_mode, max_sessions?, max_streams?,
@@ -107,8 +122,11 @@ telemt_web_timeouts: {}
 
 telemt_use_middle_proxy: true
 
-# -- Domain (required) ---------------------------------------------------------
-# Server domain name. Used in proxy links and as tls_domain in Fake TLS mode.
+# -- Domain (direct mode only, required there) ---------------------------------
+# Server domain name. Used in direct-mode proxy links and as tls_domain in
+# Fake TLS mode. WEB mode takes its domains from telemt_web_domains and
+# rejects a non-empty value here, so one variable cannot silently disagree
+# with the served vhost set.
 
 telemt_domain: ""
 
@@ -162,7 +180,9 @@ telemt_publish_metrics: false
 
 telemt_decoy_image: docker.io/library/caddy
 telemt_decoy_image_tag: "2.11-alpine"
-# Domain for Let's Encrypt certificate. Defaults to telemt_domain if empty.
+# Direct mode only: domain for Caddy's Let's Encrypt certificate. Defaults to
+# telemt_domain if empty. WEB mode terminates TLS in HAProxy, so the decoy
+# serves plain HTTP on pod loopback and ignores this.
 telemt_decoy_domain: ""
 # ACME email for Let's Encrypt notifications (optional)
 telemt_decoy_acme_email: ""

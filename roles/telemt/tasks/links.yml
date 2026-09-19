@@ -2,21 +2,24 @@
 # Copyright © 2026 kogeler
 # SPDX-License-Identifier: Apache-2.0
 
+# One link per profile per WEB domain. The secret is shared, but a Telegram
+# WEB client derives its carrier capability from the server name, so each
+# domain needs its own link even for the same user.
 - name: telemt | links | display WEB proxy link
   vars:
     _telemt_web_link_secret: >-
       {{
-        ('dd' if item.secret_mode == 'dd' else '')
-        ~ telemt_users[item.user]
+        ('dd' if item.0.secret_mode == 'dd' else '')
+        ~ telemt_users[item.0.user]
       }}
   ansible.builtin.debug:
     msg: >-
-      [{{ item.user }}]
-      tg://webproxy?server={{ telemt_domain }}&secret={{ _telemt_web_link_secret }}
+      [{{ item.0.user }}@{{ item.1.label }}]
+      tg://webproxy?server={{ item.1.domain }}&secret={{ _telemt_web_link_secret }}
   register: _telemt_web_link_debug
-  loop: "{{ _telemt_effective_web_profiles }}"
+  loop: "{{ _telemt_effective_web_profiles | product(_telemt_web_domain_items) | list }}"
   loop_control:
-    label: "{{ item.user }}"
+    label: "{{ item.0.user }}@{{ item.1.label }}"
   when: telemt_deployment_mode == 'web'
 
 - name: telemt | links | display direct TLS proxy link

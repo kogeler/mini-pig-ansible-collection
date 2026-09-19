@@ -57,11 +57,19 @@ backend be_https
 
 frontend web_https
     bind 127.0.0.1:{{ _telemt_haproxy_https_port }} accept-proxy ssl alpn h2,http/1.1
-    ssl-f-use crt /certs/fullchain.pem key /certs/key.pem
+    # One certificate per WEB domain. SNI selects the entry; an unmatched or
+    # absent SNI gets the first one and is then routed to the decoy by Host.
+{% for entry in _telemt_web_domain_items %}
+    ssl-f-use crt /certs/{{ entry.domain }}/fullchain.pem key /certs/{{ entry.domain }}/key.pem
+{% endfor %}
     mode http
     no log
 
-    acl telemt_host hdr(host) -i {{ telemt_domain }} {{ telemt_domain }}:443
+    # Repeated acl declarations of one name are OR-ed, so every WEB domain
+    # reaches Telemt while any other Host keeps hitting the decoy.
+{% for entry in _telemt_web_domain_items %}
+    acl telemt_host hdr(host) -i {{ entry.domain }} {{ entry.domain }}:443
+{% endfor %}
     use_backend be_telemt_web if telemt_host
     default_backend be_decoy
 
@@ -73,7 +81,11 @@ backend be_telemt_web
     retries 0
     timeout connect {{ telemt_haproxy_timeout_connect }}
     timeout server {{ _telemt_haproxy_http_timeout_secs }}s
-    http-request set-header Host {{ telemt_domain }}
+    # Normalize the Host to the exact vhost string Telemt is configured with,
+    # so a `:443` suffix or odd casing still selects the right WEB vhost.
+{% for entry in _telemt_web_domain_items %}
+    http-request set-header Host {{ entry.domain }} if { hdr(host) -i {{ entry.domain }} {{ entry.domain }}:443 }
+{% endfor %}
     http-request del-header X-Forwarded-For
     http-request set-header X-Forwarded-For %[src]
     server telemt 127.0.0.1:{{ _telemt_web_listener_port }} check

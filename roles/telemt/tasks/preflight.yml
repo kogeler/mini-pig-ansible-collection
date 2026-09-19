@@ -30,14 +30,15 @@
       telemt_config_dir must be an absolute path other than '/'.
     quiet: true
 
-- name: telemt | preflight | validate domain
+- name: telemt | preflight | validate direct domain
   ansible.builtin.assert:
     that:
       - telemt_domain is string
       - telemt_domain | trim | length > 0
     fail_msg: >-
-      telemt_domain must be a non-empty string.
+      telemt_domain must be a non-empty string in direct mode.
     quiet: true
+  when: telemt_deployment_mode == 'direct'
 
 - name: telemt | preflight | validate users container
   ansible.builtin.assert:
@@ -97,14 +98,66 @@
     quiet: true
   when: telemt_deployment_mode == 'direct'
 
-- name: telemt | preflight | validate WEB domain
+# WEB mode has no single canonical domain. Accepting telemt_domain here would
+# create a second, silently divergent source of truth next to the served vhost
+# set, so it is rejected instead of merged.
+- name: telemt | preflight | reject direct domain in WEB mode
   ansible.builtin.assert:
     that:
-      - telemt_domain == telemt_domain | lower
-      - telemt_domain is match('^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$')
+      - telemt_domain | default('', true) | trim | length == 0
     fail_msg: >-
-      telemt_domain must be a canonical lowercase FQDN in WEB mode, for
-      example proxy.example.org.
+      telemt_domain is a direct-mode setting and must stay empty in WEB mode.
+      Declare every served domain in telemt_web_domains instead.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB domains container
+  ansible.builtin.assert:
+    that:
+      - telemt_web_domains is mapping
+      - telemt_web_domains | length > 0
+    fail_msg: >-
+      telemt_web_domains must be a non-empty mapping of label to domain. WEB
+      mode serves exactly the domains declared there.
+    quiet: true
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB domain labels
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^[a-z0-9][a-z0-9_-]{0,30}$')
+    fail_msg: >-
+      telemt_web_domains label '{{ item }}' must match
+      ^[a-z0-9][a-z0-9_-]{0,30}$. Labels identify the domain in the emitted
+      proxy links.
+    quiet: true
+  loop: "{{ telemt_web_domains.keys() | list }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB domain values
+  ansible.builtin.assert:
+    that:
+      - item.domain is string
+      - item.domain == item.domain | lower
+      - item.domain is match('^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$')
+    fail_msg: >-
+      telemt_web_domains['{{ item.label }}'] must be a canonical lowercase
+      FQDN in WEB mode, for example proxy.example.org.
+    quiet: true
+  loop: "{{ _telemt_web_domain_items }}"
+  loop_control:
+    label: "{{ item.label }}"
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate unique WEB domains
+  ansible.builtin.assert:
+    that:
+      - (_telemt_web_domain_list | unique | length) == (_telemt_web_domain_list | length)
+    fail_msg: >-
+      telemt_web_domains must not map two labels to the same domain. Telemt
+      rejects duplicate WEB vhosts and HAProxy would issue the same
+      certificate twice. Declared domains: {{ _telemt_web_domain_list }}
     quiet: true
   when: telemt_deployment_mode == 'web'
 
@@ -182,6 +235,19 @@
       integer.
     quiet: true
   when: telemt_deployment_mode == 'web'
+
+- name: telemt | preflight | validate WEB vhost capacity
+  ansible.builtin.assert:
+    that:
+      - (_telemt_web_domain_list | length) <= (telemt_web_limits.max_vhosts | int)
+    fail_msg: >-
+      telemt_web_domains declares {{ _telemt_web_domain_list | length }}
+      domains but telemt_web_limits.max_vhosts allows
+      {{ telemt_web_limits.max_vhosts }}.
+    quiet: true
+  when:
+    - telemt_deployment_mode == 'web'
+    - telemt_web_limits.max_vhosts is defined
 
 - name: telemt | preflight | validate HAProxy timeout margin
   ansible.builtin.assert:

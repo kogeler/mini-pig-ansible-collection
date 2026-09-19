@@ -1,0 +1,27 @@
+---
+# Both WEB profiles against one domain: bridge page, bootstrap, session
+# create, uplink/downlink of a real req_pq, the matching resPQ from Telegram,
+# and the wrong-capability fallback to the decoy.
+- name: Telegram E2E plain | {{ _web_carrier_under_test ~ ' | ' ~ _web_domain_under_test.domain }}
+  ansible.builtin.script:
+    cmd: >-
+      files/web_flow.py
+      --host {{ _web_domain_under_test.domain }}
+      --secret-mode plain
+      --carrier {{ _web_carrier_under_test }}
+      --decoy-marker "The site is under construction."
+  environment:
+    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.alice }}"
+  changed_when: false
+
+- name: Telegram E2E dd | {{ _web_carrier_under_test ~ ' | ' ~ _web_domain_under_test.domain }}
+  ansible.builtin.script:
+    cmd: >-
+      files/web_flow.py
+      --host {{ _web_domain_under_test.domain }}
+      --secret-mode dd
+      --carrier {{ _web_carrier_under_test }}
+      --decoy-marker "The site is under construction."
+  environment:
+    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.bob }}"
+  changed_when: false

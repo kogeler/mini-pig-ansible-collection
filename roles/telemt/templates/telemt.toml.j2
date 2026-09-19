@@ -59,8 +59,10 @@ carrier = {{ telemt_web_carrier | to_json }}
 {% endfor %}
 
 {% endif %}
+{% for entry in _telemt_web_domain_items %}
+# WEB vhost {{ entry.label }}
 [[web.vhosts]]
-host = {{ telemt_domain | to_json }}
+host = {{ entry.domain | to_json }}
 public_addr = {{ (telemt_web_public_ip ~ ':443') | to_json }}
 
 [web.vhosts.decoy]
@@ -91,6 +93,7 @@ secret_mode = {{ telemt_web_default_secret_mode | to_json }}
 
 {% endfor %}
 {% endif %}
+{% endfor %}
 {% else %}
 ip = "0.0.0.0"
 

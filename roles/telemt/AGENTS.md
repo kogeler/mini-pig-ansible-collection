@@ -44,10 +44,11 @@
 - `direct` (default) preserves the Rust MTProto/Fake-TLS proxy. Telemt owns the
   public listener and splices invalid TLS-looking traffic to Caddy.
 - `web` exposes HAProxy through a local ingress that external TCP/443 reaches
-  directly or through L4 forwarding. HAProxy routes ACME ALPN, terminates
-  normal TLS, and sends the canonical Host to Telemt's WEB listener. Telemt,
-  not HAProxy, validates capabilities/users and falls back invalid requests to
-  Caddy. Foreign Host values go straight to Caddy.
+  directly or through L4 forwarding. HAProxy routes ACME ALPN, picks a
+  per-domain certificate by SNI, terminates normal TLS, and sends the
+  canonical Host to Telemt's WEB listener. Telemt, not HAProxy, validates
+  capabilities/users and falls back invalid requests to Caddy. Foreign Host
+  values go straight to Caddy.
 
 Default direct resources use instance name `telemt` and `/opt/telemt`.
 Default WEB resources use `telemt-web` and `/opt/telemt_web`. Do not replace
@@ -87,7 +88,7 @@ WEB client :443
 | HAProxy outer TCP (:telemt_listen_port)                               |
 |   |-- ALPN acme-tls/1 -> acme.sh responder (:10443)                   |
 |   `-- default -> HAProxy inner TLS (:8444)                            |
-|                  |-- canonical Host -> Telemt WEB (:18080)            |
+|                  |-- configured Host -> Telemt WEB (:18080)           |
 |                  `-- foreign Host -> Caddy HTTP (:18081)              |
 |                                         ^                             |
 | Telemt invalid capability/user --------+                              |
@@ -132,13 +133,30 @@ Internal ports:
   `SocketAddr` per WEB vhost and rejects duplicate vhosts for the same host.
   Every session for that vhost receives the same declared value because no
   original-destination signal reaches Telemt. A list would not provide a
-  per-connection selection mechanism.
+  per-connection selection mechanism. Adding WEB domains does not change this:
+  every vhost declares the same `public_addr`.
+- `telemt_web_domains` is a map of `label: fqdn`, required in WEB mode. Each
+  entry produces one HAProxy `ssl-f-use` certificate entry, one
+  `acl telemt_host` line, one Host-normalizing `http-request set-header`, one
+  Telemt `[[web.vhosts]]`, one acme.sh issue run, and one `tg://webproxy` link
+  per profile. Entries are always rendered in label order so the operator's
+  map order cannot affect idempotence.
+- WEB domains never share a certificate. Each one lives in
+  `<telemt_config_dir>/certs/<domain>/` and is issued by its own acme.sh run.
+  A single multi-SAN certificate would let anyone probing one domain
+  enumerate the rest, which defeats the point of having several. Do not
+  "optimize" the renewal unit into one `--issue -d a -d b` call.
+- `telemt_domain` is direct-mode only. WEB preflight rejects a non-empty
+  value instead of merging it into the vhost set, because two sources of
+  truth for "which domains exist" is exactly the bug this interface removes.
+  WEB mode therefore has no canonical domain: bootstrap CSR subjects, HAProxy
+  SNI entries, ACME identifiers, and links all come from the map.
 - Pod, container, systemd, ACME, and handler identities derive from
   `telemt_instance_name`; config, Caddy state, ACME state, and certificates
   derive from `telemt_config_dir`. WEB defaults add `web-`/`_web` isolation.
 - The role intentionally does not discover other deployments or check their
   live sockets. Colocated inventories must keep `telemt_instance_name`,
-  `telemt_config_dir`, canonical domains, public socket tuples, and any
+  `telemt_config_dir`, served domains, public socket tuples, and any
   published API/metrics socket tuples unique.
 - Keep the entire canonical Host route pointed at Telemt. Moving credential
   filtering into HAProxy breaks the upstream WEB fallback semantics and risks
@@ -235,6 +253,7 @@ roles/telemt/molecule/
     │   ├── converge-telemt.yml
     │   ├── converge-web.yml
     │   ├── verify-web-carrier.yml
+    │   ├── verify-web-domain-flows.yml
     │   ├── verify-coexistence.yml
     │   └── wait-services.yml
     └── vars/common.yml
@@ -315,11 +334,16 @@ that `lineinfile` cannot atomically replace.
 
 The WEB portion checks Pebble certificate issuance through HAProxy, canonical
 and foreign Host camouflage, wrong/malformed capabilities, and complete
-create/uplink/downlink/delete flows. It deploys `https-lanes` and `https`
-sequentially in the same scenario and runs both plain and DD profiles over
-negotiated HTTP/2 for each carrier. Every combination performs a valid inner
-MTProxy handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and requires
-a matching `resPQ` from Telegram. These checks are mandatory in both `default`
+create/uplink/downlink/delete flows. Both scenarios deploy two WEB domains
+(`web.telemt.test` and `web2.telemt.test`) so the multi-domain path is the
+tested default. Verify asserts that each domain has its own vhost, SNI
+certificate entry, ACL, and Host rewrite; that SNI serves a separate
+single-SAN certificate per domain; and that one link per user per domain was
+emitted. It deploys `https-lanes` and `https` sequentially in the same
+scenario and runs both plain and DD profiles over negotiated HTTP/2 for every
+carrier and every domain. Every combination performs a valid inner MTProxy
+handshake, sends `req_pq` through HAProxy, WEB, and Telemt, and requires a
+matching `resPQ` from Telegram. These checks are mandatory in both `default`
 and `gha`, so both environments must provide Telegram egress.
 
 Repository CI enables the separate direct-mode `mtp_ping` check for both
@@ -337,7 +361,9 @@ CI, and both environments must provide Telegram egress.
 
 Required:
 
-- `telemt_domain` - proxy and Fake-TLS SNI domain
+- `telemt_domain` - direct mode only: proxy and Fake-TLS SNI domain; WEB
+  preflight rejects a non-empty value
+- `telemt_web_domains` - WEB mode only, required: map of label to served domain
 - `telemt_users` - dict of `user: 32-hex-secret`
 
 Important:

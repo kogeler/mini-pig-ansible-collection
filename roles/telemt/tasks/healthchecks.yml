@@ -9,11 +9,11 @@
     state: started
     timeout: 60
 
-- name: telemt | healthchecks | verify target WEB vhost falls back through Telemt
+- name: telemt | healthchecks | verify target WEB vhosts fall back through Telemt
   ansible.builtin.uri:
     url: "https://{{ _telemt_public_healthcheck_host }}:{{ telemt_listen_port }}/"
     headers:
-      Host: "{{ telemt_domain }}"
+      Host: "{{ item }}"
     validate_certs: false
     use_proxy: false
     return_content: true
@@ -22,6 +22,7 @@
   retries: 15
   delay: 2
   until: _telemt_web_target_decoy.status == 200
+  loop: "{{ _telemt_web_domain_list }}"
   when: telemt_deployment_mode == 'web'
 
 - name: telemt | healthchecks | verify foreign WEB vhost reaches decoy

@@ -40,14 +40,15 @@
     status_code: 200
   register: _coexistence_direct_decoy
 
-- name: Probe WEB decoy beside direct
+- name: Probe every WEB domain decoy beside direct
   ansible.builtin.uri:
-    url: "https://{{ molecule_telemt_web_domain }}/"
+    url: "https://{{ item }}/"
     validate_certs: false
     use_proxy: false
     return_content: true
     status_code: 200
   register: _coexistence_web_decoy
+  loop: "{{ molecule_telemt_web_domains.values() | list }}"
 
 - name: Probe direct readiness inside its pod
   containers.podman.podman_container_exec:
@@ -84,7 +85,14 @@
       - (_coexistence_markers.results[0].content | b64decode | trim) == 'direct'
       - (_coexistence_markers.results[1].content | b64decode | trim) == 'web'
       - _coexistence_direct_decoy.status == 200
-      - _coexistence_web_decoy.status == 200
-      - "'The site is under construction.' in _coexistence_web_decoy.content"
       - ((_coexistence_direct_ready.stdout | from_json).data.ready | default(false)) | bool
       - ((_coexistence_web_ready.stdout | from_json).data.ready | default(false)) | bool
+
+- name: Assert every WEB domain serves the operator decoy beside direct
+  ansible.builtin.assert:
+    that:
+      - item.status == 200
+      - "'The site is under construction.' in item.content"
+  loop: "{{ _coexistence_web_decoy.results }}"
+  loop_control:
+    label: "{{ item.item }}"

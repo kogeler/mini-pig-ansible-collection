@@ -54,7 +54,8 @@ Both topologies require:
 
 WEB mode additionally requires:
 
-- a lowercase FQDN dedicated to this WEB endpoint;
+- at least one lowercase FQDN dedicated to this WEB endpoint, declared in
+  `telemt_web_domains`;
 - one stable, declared IPv4 for Telemt's WEB relay tuple;
 - external TCP/443 reaching the role-managed HAProxy listener;
 - one operator-owned decoy source;
@@ -123,7 +124,8 @@ This example assumes that the server owns public TCP/443 directly:
     - role: kogeler.mini_pig.telemt
       vars:
         telemt_deployment_mode: web
-        telemt_domain: "proxy.example.org"
+        telemt_web_domains:
+          primary: "proxy.example.org"
         telemt_web_public_ip: "203.0.113.10"
         telemt_acme_email: "admin@example.org"
         telemt_decoy_site_dir: "{{ playbook_dir }}/files/decoy"
@@ -135,11 +137,51 @@ With the defaults, the role uses the `https` carrier and the `dd` secret
 mode. It prints:
 
 ```text
-tg://webproxy?server=proxy.example.org&secret=dd0123456789abcdef0123456789abcdef
+[alice@primary] tg://webproxy?server=proxy.example.org&secret=dd0123456789abcdef0123456789abcdef
 ```
 
 WEB links never contain a port. Telegram WEB proxy clients always connect to
 the external endpoint on TCP/443.
+
+### Domains
+
+`telemt_web_domains` maps a label to each domain the deployment serves. It is
+required in WEB mode and replaces `telemt_domain`, which stays a direct-mode
+setting: a non-empty `telemt_domain` in WEB mode is rejected by preflight so
+two variables can never disagree about which vhosts exist.
+
+HAProxy obtains and terminates a certificate for every domain in the map,
+Telemt receives one WEB vhost per domain, and the role prints one link per
+user per domain:
+
+```yaml
+telemt_deployment_mode: web
+telemt_web_domains:
+  primary: "proxy.example.org"
+  backup: "cdn.example.net"
+```
+
+```text
+[alice@backup]  tg://webproxy?server=cdn.example.net&secret=dd0123...
+[alice@primary] tg://webproxy?server=proxy.example.org&secret=dd0123...
+```
+
+The label is an identifier for humans — it appears in the printed links and
+orders the rendered configuration — and must match `^[a-z0-9][a-z0-9_-]{0,30}$`.
+Each domain must be a canonical lowercase FQDN and must appear only once;
+Telemt rejects duplicate WEB vhosts.
+
+Every domain needs its own DNS record pointing at the same ingress, because
+ACME validates each one through that ingress. All of them share one deployment:
+the same users, profiles, carrier, limits, decoy, and
+`telemt_web_public_ip`. A client's link works only for the domain it was
+generated from, since the Telegram WEB capability is derived from the server
+name.
+
+Each domain receives a **separate certificate** under
+`<telemt_config_dir>/certs/<domain>/`. The role never issues one multi-SAN
+certificate for the set, because that would let anyone probing a single domain
+enumerate all the others.
 
 ### Traffic path
 
@@ -149,17 +191,19 @@ Telegram Desktop -> proxy.example.org:443
     -> telemt_listen_bind:telemt_listen_port
     -> HAProxy TCP/ALPN router
        |-- acme-tls/1 -> acme.sh challenge responder
-       `-- regular TLS -> HAProxy HTTPS terminator
-            |-- canonical Host -> Telemt WEB on pod loopback
-            `-- other Host -> Caddy decoy
+       `-- regular TLS -> HAProxy HTTPS terminator (certificate chosen by SNI)
+            |-- Host in telemt_web_domains -> Telemt WEB on pod loopback
+            `-- any other Host -> Caddy decoy
 
 Telemt invalid capability or user -> Caddy decoy
 Telemt valid WEB stream -> Telegram middle proxy
 ```
 
-HAProxy routes the entire canonical vhost to Telemt. Telemt performs the
-credential decision and strips carrier credentials before sending invalid
-requests to the decoy. Do not route only known WEB paths in an external proxy.
+HAProxy routes every configured vhost in full to Telemt, normalizing the
+`Host` header to the exact configured domain so Telemt selects the matching
+WEB vhost. Telemt performs the credential decision and strips carrier
+credentials before sending invalid requests to the decoy. Do not route only
+known WEB paths in an external proxy.
 
 ### Public endpoint, local ingress, and declared relay address
 
@@ -362,9 +406,21 @@ the upstream hostname.
 
 ### Certificates
 
-The role obtains the WEB certificate with `acme.sh` through TLS-ALPN-01.
-HAProxy routes only the ACME ALPN challenge to the temporary responder and
-terminates normal TLS itself. Renewal is managed by:
+The role obtains one certificate per entry in `telemt_web_domains` with
+`acme.sh` through TLS-ALPN-01. HAProxy routes only the ACME ALPN challenge to
+the temporary responder and terminates normal TLS itself. Each certificate is
+stored separately:
+
+```text
+<telemt_config_dir>/certs/<domain>/fullchain.pem
+<telemt_config_dir>/certs/<domain>/key.pem
+```
+
+A new domain first gets a self-signed placeholder, because HAProxy has to be
+running before the ACME responder is reachable at all; the placeholder is
+replaced on the first successful issuance. One renewal unit issues every
+domain in a single run and reloads HAProxy only when something was actually
+renewed:
 
 ```text
 telemt-web-acme-renew.timer
@@ -388,7 +444,7 @@ For every additional instance, keep these values unique:
 | Public local ingress socket | `telemt_listen_bind` plus `telemt_listen_port` |
 | Published API socket | `telemt_api_bind` plus `telemt_api_port` |
 | Published metrics socket | `telemt_metrics_bind` plus `telemt_metrics_port` |
-| DNS and certificate identity | `telemt_domain` |
+| DNS and certificate identity | `telemt_domain` (direct) or every `telemt_web_domains` value (WEB) |
 
 The role does not discover unrelated instances or probe their sockets.
 
@@ -399,7 +455,7 @@ The role does not discover unrelated instances or probe their sockets.
 | Variable | Default | Purpose |
 |---|---|---|
 | `telemt_deployment_mode` | `direct` | Select `direct` or `web` |
-| `telemt_domain` | `""` | Required proxy domain; WEB requires a canonical lowercase FQDN |
+| `telemt_domain` | `""` | Direct-mode proxy domain; required there, rejected in WEB mode |
 | `telemt_users` | `{}` | Required mapping of user name to 32-hex secret |
 | `telemt_listen_bind` | `""` | Local IPv4 for the Podman ingress publish |
 | `telemt_listen_port` | `443` | Local ingress port; also advertised by direct links |
@@ -413,6 +469,7 @@ The role does not discover unrelated instances or probe their sockets.
 | Variable | Default | Purpose |
 |---|---|---|
 | `telemt_web_public_ip` | `""` | Required stable IPv4 declared as Telemt `public_addr`; not checked against DNS |
+| `telemt_web_domains` | `{}` | Required in WEB mode: map of label to served domain |
 | `telemt_web_carrier` | `https` | `https` or `https-lanes` |
 | `telemt_web_default_secret_mode` | `dd` | `plain` or `dd` for derived profiles |
 | `telemt_web_profiles` | `[]` | Optional explicit per-user profiles and limits |
@@ -474,6 +531,7 @@ restart only the affected topology. An unchanged repeated run is idempotent.
 | Symptom | Check |
 |---|---|
 | Preflight rejects `telemt_domain` | Use a lowercase FQDN with at least one dot, not an IP or single label |
+| Preflight rejects `telemt_domain` in WEB mode | Move the domain into `telemt_web_domains` and leave `telemt_domain` empty |
 | Preflight rejects `telemt_web_public_ip` | Use one syntactically valid IPv4 other than `0.0.0.0`; private and loopback values are accepted |
 | Certificate issuance fails | Verify DNS and that external TCP/443 is forwarded unchanged to `telemt_listen_bind:telemt_listen_port` |
 | Link is rejected by Telegram | Use a compatible Telegram Desktop build, external port 443, and a `plain` or `dd` WEB link |

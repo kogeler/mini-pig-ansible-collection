@@ -7,7 +7,18 @@
 # via molecule.yml `etc_hosts` (podman) and prepare.yml lineinfile
 # (gha-native fallback).
 molecule_telemt_domain: "telemt.test"
-molecule_telemt_web_domain: "web.telemt.test"
+
+# Two WEB domains behind one deployment. Every scenario deploys both so the
+# multi-domain path (per-domain ACME certificate, per-domain HAProxy SNI
+# entry, per-domain Telemt vhost, per-domain link) is the tested default
+# rather than an optional extra. `alt` sorts before `main`, which also proves
+# that the role orders rendered configuration by label instead of by the
+# operator's map order. WEB mode has no telemt_domain at all: this map is the
+# complete set of served domains.
+molecule_telemt_web_domains:
+  main: "web.telemt.test"
+  alt: "web2.telemt.test"
+
 molecule_telemt_web_carrier: https
 
 # Listen port for the proxy (host-side, published from the pod). 9443

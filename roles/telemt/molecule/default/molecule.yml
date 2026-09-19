@@ -25,6 +25,7 @@ platforms:
     etc_hosts:
       telemt.test: "127.0.0.1"
       web.telemt.test: "127.0.0.1"
+      web2.telemt.test: "127.0.0.1"
     devices:
       - /dev/fuse:/dev/fuse
     command: ""
