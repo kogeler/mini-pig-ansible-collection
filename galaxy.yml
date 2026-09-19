@@ -62,3 +62,8 @@ issues: https://github.com/kogeler/mini-pig-ansible-collection/issues
 # and '.git' are always filtered
 build_ignore:
   - .idea
+  # Role-local Molecule tooling created by `make bootstrap`. Molecule rebuilds
+  # the collection artifact on every run, so packing a ~55 MB virtualenv full
+  # of host-specific paths slows every Make target and must never ship.
+  - roles/*/molecule/.venv
+  - roles/*/molecule/**/__pycache__

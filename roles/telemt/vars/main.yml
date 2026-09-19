@@ -35,6 +35,28 @@ _telemt_decoy_port: >-
      else _telemt_direct_decoy_port }}
 
 # -- WEB ingress ---------------------------------------------------------------
+# Every WEB domain as a `{label, domain}` pair. WEB mode has no single
+# canonical domain: telemt_web_domains is the whole served set, and
+# telemt_domain stays a direct-mode setting. Sorting by label keeps the
+# rendered HAProxy, Telemt, and ACME units byte-stable no matter how the
+# operator ordered the map, so idempotence never depends on mapping order.
+_telemt_web_domain_items: >-
+  {{
+    telemt_web_domains
+    | dict2items(key_name='label', value_name='domain')
+    | sort(attribute='label')
+  }}
+_telemt_web_domain_list: >-
+  {{ _telemt_web_domain_items | map(attribute='domain') | list }}
+# Certificates live one directory per domain. Keying on the domain instead of
+# the label keeps the path derived from the validated FQDN and lets HAProxy's
+# SNI entry, the ACME issue loop, and the bootstrap certificate agree without
+# a second identifier.
+_telemt_web_flat_cert_files:
+  - fullchain.pem
+  - key.pem
+  - cert.pem
+
 _telemt_web_listener_port: 18080
 _telemt_haproxy_container_name: "{{ telemt_instance_name }}-haproxy"
 _telemt_haproxy_systemd_unit_name: "podman-{{ _telemt_haproxy_container_name }}.service"

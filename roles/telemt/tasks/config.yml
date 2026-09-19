@@ -32,6 +32,28 @@
     - {path: "{{ _telemt_acme_data_dir }}", mode: "0750"}
   when: telemt_deployment_mode == 'web'
 
+- name: telemt | config | create per-domain WEB certificate directories
+  ansible.builtin.file:
+    path: "{{ _telemt_certs_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _telemt_web_domain_list }}"
+  when: telemt_deployment_mode == 'web'
+
+# Deployments predating telemt_web_domains kept one flat certificate pair
+# directly under the certs directory. Every domain now has its own directory,
+# so the flat pair is dead material; leaving a stale private key behind would
+# be the worst of the possible outcomes. The per-domain bootstrap below plus
+# the ACME task reissue immediately, so nothing is lost by removing it.
+- name: telemt | config | remove pre-multi-domain flat WEB certificate
+  ansible.builtin.file:
+    path: "{{ _telemt_certs_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ _telemt_web_flat_cert_files }}"
+  when: telemt_deployment_mode == 'web'
+
 - name: telemt | config | copy operator decoy site
   ansible.builtin.copy:
     src: "{{ telemt_decoy_site_dir }}/"
@@ -76,51 +98,70 @@
   diff: false
   notify: "{{ _telemt_restart_telemt_handler }}"
 
-- name: telemt | config | check WEB bootstrap certificate
+- name: telemt | config | check WEB bootstrap certificates
   ansible.builtin.stat:
-    path: "{{ _telemt_certs_dir }}/fullchain.pem"
+    path: "{{ _telemt_certs_dir }}/{{ item }}/fullchain.pem"
   register: _telemt_cert_stat
+  loop: "{{ _telemt_web_domain_list }}"
   when: telemt_deployment_mode == 'web'
 
-- name: telemt | config | create WEB bootstrap certificate
+# HAProxy refuses to start without a certificate for every SNI entry, and the
+# ACME responder itself is reachable only once HAProxy is up. Each new domain
+# therefore needs a self-signed placeholder before acme.sh can replace it.
+- name: telemt | config | create WEB bootstrap certificates
+  vars:
+    _telemt_bootstrap_domains: >-
+      {{
+        (_telemt_cert_stat.results | default([]))
+        | rejectattr('skipped', 'defined')
+        | rejectattr('stat.exists')
+        | map(attribute='item')
+        | list
+      }}
   when:
     - telemt_deployment_mode == 'web'
-    - not _telemt_cert_stat.stat.exists
+    - _telemt_bootstrap_domains | length > 0
   block:
-    - name: telemt | config | generate bootstrap private key
+    - name: telemt | config | generate bootstrap private keys
       community.crypto.openssl_privatekey:
-        path: "{{ _telemt_certs_dir }}/key.pem"
+        path: "{{ _telemt_certs_dir }}/{{ item }}/key.pem"
         type: ECC
         curve: secp256r1
         owner: root
         group: root
         mode: "0644"
+      loop: "{{ _telemt_bootstrap_domains }}"
 
-    - name: telemt | config | generate bootstrap CSR
+    - name: telemt | config | generate bootstrap CSRs
       community.crypto.openssl_csr_pipe:
-        privatekey_path: "{{ _telemt_certs_dir }}/key.pem"
-        common_name: "{{ telemt_domain }}"
+        privatekey_path: "{{ _telemt_certs_dir }}/{{ item }}/key.pem"
+        common_name: "{{ item }}"
         subject_alt_name:
-          - "DNS:{{ telemt_domain }}"
+          - "DNS:{{ item }}"
       register: _telemt_bootstrap_csr
+      loop: "{{ _telemt_bootstrap_domains }}"
 
-    - name: telemt | config | generate bootstrap self-signed certificate
+    - name: telemt | config | generate bootstrap self-signed certificates
       community.crypto.x509_certificate:
-        path: "{{ _telemt_certs_dir }}/fullchain.pem"
-        privatekey_path: "{{ _telemt_certs_dir }}/key.pem"
-        csr_content: "{{ _telemt_bootstrap_csr.csr }}"
+        path: "{{ _telemt_certs_dir }}/{{ item.item }}/fullchain.pem"
+        privatekey_path: "{{ _telemt_certs_dir }}/{{ item.item }}/key.pem"
+        csr_content: "{{ item.csr }}"
         provider: selfsigned
         selfsigned_not_after: "+30d"
         owner: root
         group: root
         mode: "0644"
+      loop: "{{ _telemt_bootstrap_csr.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
 - name: telemt | config | enforce WEB private-key permissions
   ansible.builtin.file:
-    path: "{{ _telemt_certs_dir }}/key.pem"
+    path: "{{ _telemt_certs_dir }}/{{ item }}/key.pem"
     owner: root
     group: root
     mode: "0644"
+  loop: "{{ _telemt_web_domain_list }}"
   when: telemt_deployment_mode == 'web'
 
 - name: telemt | config | render HAProxy config

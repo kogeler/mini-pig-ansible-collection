@@ -10,11 +10,15 @@
         name: kogeler.mini_pig.telemt
       vars:
         telemt_deployment_mode: web
-        telemt_domain: >-
-          {{ _web_preflight_case.domain | default(molecule_telemt_web_domain) }}
+        # WEB mode rejects telemt_domain, so the valid baseline leaves it unset
+        # and a case has to opt in to exercise that rejection.
+        telemt_domain: "{{ _web_preflight_case.domain | default('') }}"
         telemt_listen_port: "{{ _web_preflight_case.listen_port | default(443) }}"
         telemt_web_public_ip: >-
           {{ _web_preflight_case.public_ip | default('127.0.0.1') }}
+        telemt_web_domains: >-
+          {{ _web_preflight_case.web_domains | default(molecule_telemt_web_domains) }}
+        telemt_web_limits: "{{ _web_preflight_case.limits | default({}) }}"
         telemt_web_carrier: >-
           {{ _web_preflight_case.carrier | default('https') }}
         telemt_web_default_secret_mode: >-

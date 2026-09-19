@@ -8,6 +8,14 @@
     _web_carrier: "{{ molecule_telemt_web_carrier }}"
     _web_config_dir: /opt/telemt_web
     _web_instance_name: telemt-web
+    # Same label ordering the role applies, so config-order assertions can
+    # compare against a known sequence.
+    _web_domains: >-
+      {{
+        molecule_telemt_web_domains
+        | dict2items(key_name='label', value_name='domain')
+        | sort(attribute='label')
+      }}
   tasks:
     - name: Wait for common runtime services
       ansible.builtin.import_tasks: tasks/wait-services.yml
@@ -55,13 +63,67 @@
           - "'server telemt 127.0.0.1:18080' in _web_haproxy_cfg"
           - "'auto_https off' in _web_caddyfile"
 
+    - name: Assert every WEB domain owns a vhost, a certificate, and a route
+      vars:
+        _web_telemt_toml: "{{ _web_configs.results[0].content | b64decode }}"
+        _web_haproxy_cfg: "{{ _web_configs.results[1].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'host = \"' ~ item.domain ~ '\"' in _web_telemt_toml"
+          - >-
+            'ssl-f-use crt /certs/' ~ item.domain ~ '/fullchain.pem key /certs/'
+            ~ item.domain ~ '/key.pem' in _web_haproxy_cfg
+          - >-
+            'acl telemt_host hdr(host) -i ' ~ item.domain ~ ' ' ~ item.domain
+            ~ ':443' in _web_haproxy_cfg
+          - >-
+            'http-request set-header Host ' ~ item.domain ~ ' if { hdr(host) -i '
+            ~ item.domain ~ ' ' ~ item.domain ~ ':443 }' in _web_haproxy_cfg
+      loop: "{{ _web_domains }}"
+      loop_control:
+        label: "{{ item.label }}"
+
+    - name: Assert WEB vhost set matches the domain map exactly
+      vars:
+        _web_telemt_toml: "{{ _web_configs.results[0].content | b64decode }}"
+        _web_haproxy_cfg: "{{ _web_configs.results[1].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          # No stray vhost beyond the declared map, and no shared certificate.
+          - _web_telemt_toml.count('[[web.vhosts]]') == _web_domains | length
+          - _web_haproxy_cfg.count('ssl-f-use crt ') == _web_domains | length
+          # `alt` sorts before `main`, so a label-ordered render puts web2
+          # first even though the operator map lists web.telemt.test first.
+          - >-
+            _web_haproxy_cfg.find('/certs/web2.telemt.test/')
+            < _web_haproxy_cfg.find('/certs/web.telemt.test/')
+
+    - name: Stat per-domain WEB certificate material
+      ansible.builtin.stat:
+        path: "{{ _web_config_dir }}/certs/{{ item.0.domain }}/{{ item.1 }}"
+      loop: "{{ _web_domains | product(['fullchain.pem', 'key.pem']) | list }}"
+      loop_control:
+        label: "{{ item.0.domain }}/{{ item.1 }}"
+      register: _web_cert_files
+
+    - name: Stat pre-multi-domain flat certificate path
+      ansible.builtin.stat:
+        path: "{{ _web_config_dir }}/certs/fullchain.pem"
+      register: _web_legacy_cert_file
+
+    - name: Assert certificates are stored one directory per domain
+      ansible.builtin.assert:
+        that:
+          - _web_cert_files.results | map(attribute='stat.exists') | unique | list == [true]
+          - not _web_legacy_cert_file.stat.exists
+
     - name: Accept forwarded WEB ingress with an independent declared relay IP
       ansible.builtin.include_role:
         name: kogeler.mini_pig.telemt
         tasks_from: preflight.yml
       vars:
         telemt_deployment_mode: web
-        telemt_domain: "{{ molecule_telemt_web_domain }}"
+        telemt_web_domains: "{{ molecule_telemt_web_domains }}"
         telemt_listen_port: 8443
         telemt_web_public_ip: "10.20.30.40"
         telemt_users: "{{ molecule_telemt_users }}"
@@ -70,9 +132,9 @@
     - name: Verify fail-fast WEB preflight cases
       ansible.builtin.include_tasks: tasks/expect-web-preflight-failure.yml
       loop:
-        - name: invalid-domain
-          domain: Web.telemt.test
-          error: telemt_domain must be a canonical lowercase FQDN
+        - name: direct-domain-in-web-mode
+          domain: web.telemt.test
+          error: telemt_domain is a direct-mode setting
         - name: invalid-public-ip
           public_ip: 999.0.0.1
           error: telemt_web_public_ip must be a concrete IPv4 address
@@ -98,6 +160,33 @@
         - name: ambiguous-decoy-source
           site_dir: /tmp/duplicate-decoy
           error: WEB mode requires exactly one operator-owned decoy source
+        - name: domain-map-not-a-mapping
+          web_domains:
+            - web.telemt.test
+          error: telemt_web_domains must be a non-empty mapping
+        - name: empty-domain-map
+          web_domains: {}
+          error: telemt_web_domains must be a non-empty mapping
+        - name: invalid-domain-map-label
+          web_domains:
+            Primary Site: web.telemt.test
+          error: telemt_web_domains label
+        - name: invalid-domain-map-value
+          web_domains:
+            primary: Web.telemt.test
+          error: must be a canonical lowercase FQDN
+        - name: duplicate-domain-map-value
+          web_domains:
+            primary: web.telemt.test
+            backup: web.telemt.test
+          error: must not map two labels to the same domain
+        - name: domain-map-over-vhost-limit
+          web_domains:
+            primary: web.telemt.test
+            backup: web2.telemt.test
+          limits:
+            max_vhosts: 1
+          error: telemt_web_limits.max_vhosts allows
       loop_control:
         loop_var: _web_preflight_case
         label: "{{ _web_preflight_case.name }}"
@@ -108,19 +197,42 @@
           - (_mode_marker.content | b64decode | trim) == 'web'
           - _haproxy_service.status.ActiveState == 'active'
 
-    - name: Wait for Pebble-issued public certificate
+    - name: Wait for a Pebble-issued certificate on every WEB domain
       community.crypto.get_certificate:
         host: 127.0.0.1
         port: 443
-        server_name: "{{ molecule_telemt_web_domain }}"
-      register: _web_certificate
+        server_name: "{{ item.domain }}"
+      register: _web_certificates
       until:
-        - _web_certificate.cert is defined
-        - "'Pebble' in (_web_certificate.issuer.CN | default(''))"
+        - _web_certificates.cert is defined
+        - "'Pebble' in (_web_certificates.issuer.CN | default(''))"
       retries: 30
       delay: 3
+      loop: "{{ _web_domains }}"
+      loop_control:
+        label: "{{ item.domain }}"
 
-    - name: Negotiate HTTP/2 ALPN on public endpoint
+    - name: Inspect the certificate served for each WEB domain
+      community.crypto.x509_certificate_info:
+        content: "{{ item.cert }}"
+      register: _web_certificate_info
+      loop: "{{ _web_certificates.results }}"
+      loop_control:
+        label: "{{ item.item.domain }}"
+
+    - name: Assert SNI selects a separate single-SAN certificate per domain
+      ansible.builtin.assert:
+        that:
+          - item.0.subject_alt_name == ['DNS:' ~ item.1.domain]
+        fail_msg: >-
+          The certificate served for {{ item.1.domain }} covers
+          {{ item.0.subject_alt_name }}. Each WEB domain must hold its own
+          certificate so probing one domain cannot enumerate the others.
+      loop: "{{ _web_certificate_info.results | zip(_web_domains) | list }}"
+      loop_control:
+        label: "{{ item.1.domain }}"
+
+    - name: Negotiate HTTP/2 ALPN on every WEB domain
       ansible.builtin.command:
         argv:
           - openssl
@@ -128,7 +240,7 @@
           - -connect
           - 127.0.0.1:443
           - -servername
-          - "{{ molecule_telemt_web_domain }}"
+          - "{{ item.domain }}"
           - -alpn
           - h2
       register: _web_alpn
@@ -136,6 +248,9 @@
       failed_when: >-
         _web_alpn.rc != 0
         or 'ALPN protocol: h2' not in (_web_alpn.stdout ~ _web_alpn.stderr)
+      loop: "{{ _web_domains }}"
+      loop_control:
+        label: "{{ item.domain }}"
 
     - name: Gather virtualization facts for carrier redeployments
       ansible.builtin.setup:
@@ -160,14 +275,16 @@
         src: "{{ _web_config_dir }}/molecule-web-link-debug.json"
       register: _web_links_raw
 
-    - name: Assert WEB links omit port and FakeTLS mode
+    - name: Assert one WEB link per user per domain
       vars:
         _web_links: "{{ _web_links_raw.content | b64decode | from_json }}"
       ansible.builtin.assert:
         that:
-          - _web_links | length == 2
-          - "'[alice] tg://webproxy?server=' ~ molecule_telemt_web_domain ~ '&secret=' ~ molecule_telemt_users.alice in _web_links"
-          - "'[bob] tg://webproxy?server=' ~ molecule_telemt_web_domain ~ '&secret=dd' ~ molecule_telemt_users.bob in _web_links"
+          - _web_links | length == (molecule_telemt_users | length) * (_web_domains | length)
+          - "'[alice@main] tg://webproxy?server=web.telemt.test&secret=' ~ molecule_telemt_users.alice in _web_links"
+          - "'[alice@alt] tg://webproxy?server=web2.telemt.test&secret=' ~ molecule_telemt_users.alice in _web_links"
+          - "'[bob@main] tg://webproxy?server=web.telemt.test&secret=dd' ~ molecule_telemt_users.bob in _web_links"
+          - "'[bob@alt] tg://webproxy?server=web2.telemt.test&secret=dd' ~ molecule_telemt_users.bob in _web_links"
           - "(_web_links | join(' ')).find('&port=') == -1"
           - "(_web_links | join(' ')).find('&secret=ee') == -1"
 

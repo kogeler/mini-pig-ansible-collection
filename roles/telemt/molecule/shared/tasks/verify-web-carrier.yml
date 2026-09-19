@@ -33,28 +33,18 @@
         'carrier = "' ~ _web_carrier_under_test ~ '"'
         in (_carrier_telemt_config.content | b64decode)
 
-- name: Run Telegram E2E for plain profile | {{ _web_carrier_under_test }}
-  ansible.builtin.script:
-    cmd: >-
-      files/web_flow.py
-      --host {{ molecule_telemt_web_domain }}
-      --secret-mode plain
-      --carrier {{ _web_carrier_under_test }}
-      --decoy-marker "The site is under construction."
-  environment:
-    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.alice }}"
-  register: _carrier_plain_flow
-  changed_when: false
-
-- name: Run Telegram E2E for DD profile | {{ _web_carrier_under_test }}
-  ansible.builtin.script:
-    cmd: >-
-      files/web_flow.py
-      --host {{ molecule_telemt_web_domain }}
-      --secret-mode dd
-      --carrier {{ _web_carrier_under_test }}
-      --decoy-marker "The site is under construction."
-  environment:
-    TELEMT_WEB_FLOW_SECRET: "{{ molecule_telemt_users.bob }}"
-  register: _carrier_dd_flow
-  changed_when: false
+# Every carrier is exercised on every WEB domain. One domain succeeding says
+# nothing about the others: HAProxy picks the certificate and backend per SNI
+# and Host, and the client derives its carrier capability from the server
+# name, so each vhost is an independent end-to-end path.
+- name: Run Telegram E2E on every WEB domain | {{ _web_carrier_under_test }}
+  ansible.builtin.include_tasks: verify-web-domain-flows.yml
+  loop: >-
+    {{
+      molecule_telemt_web_domains
+      | dict2items(key_name='label', value_name='domain')
+      | sort(attribute='label')
+    }}
+  loop_control:
+    loop_var: _web_domain_under_test
+    label: "{{ _web_domain_under_test.domain }}"

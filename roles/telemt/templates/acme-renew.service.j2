@@ -9,33 +9,49 @@ Type=oneshot
 ExecStartPre=/bin/sh -c '\
         /usr/bin/podman image exists {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
         || /usr/bin/podman pull {{ telemt_acme_image }}:{{ telemt_acme_image_tag }}'
+# One acme.sh run per WEB domain, each writing its own certificate pair. A
+# single multi-SAN certificate would disclose every other domain to anyone who
+# inspects one of them, so the domains never share a certificate. The runs are
+# sequential because they take turns on the same TLS-ALPN responder port.
+# acme.sh exits 2 when a certificate is still current; only a real issuance
+# (exit 0) reloads HAProxy, and the worst real failure becomes the unit's
+# result after every remaining domain has been attempted.
 ExecStart=/bin/sh -c '\
-        /usr/bin/podman run --rm \
-        --cgroups=split \
-        --log-driver=passthrough \
-        --pod={{ _telemt_pod_name }} \
-        --volume {{ _telemt_certs_dir }}:/certs \
-        --volume {{ _telemt_acme_data_dir }}:/acme.sh \
-        {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
-        --issue -d {{ telemt_domain }} \
-        --alpn --tlsport {{ _telemt_acme_alpn_port }} \
+        status=0; \
+        issued=0; \
+        for domain in {{ _telemt_web_domain_list | join(' ') }}; do \
+            /usr/bin/podman run --rm \
+            --cgroups=split \
+            --log-driver=passthrough \
+            --pod={{ _telemt_pod_name }} \
+            --volume {{ _telemt_certs_dir }}:/certs \
+            --volume {{ _telemt_acme_data_dir }}:/acme.sh \
+            {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
+            --issue -d "$$domain" \
+            --alpn --tlsport {{ _telemt_acme_alpn_port }} \
 {% if telemt_molecule_mode %}
-        --server {{ _telemt_pebble_acme_server }} \
-        --insecure \
-        --force \
+            --server {{ _telemt_pebble_acme_server }} \
+            --insecure \
+            --force \
 {% else %}
-        --server {{ telemt_acme_server }} \
+            --server {{ telemt_acme_server }} \
 {% endif %}
 {% if telemt_acme_email %}
-        --accountemail {{ telemt_acme_email }} \
+            --accountemail {{ telemt_acme_email }} \
 {% endif %}
-        --cert-file /certs/cert.pem \
-        --key-file /certs/key.pem \
-        --fullchain-file /certs/fullchain.pem \
-        --reloadcmd true; \
-        rc=$$?; \
-        if [ "$$rc" -eq 0 ]; then \
+            --cert-file /certs/"$$domain"/cert.pem \
+            --key-file /certs/"$$domain"/key.pem \
+            --fullchain-file /certs/"$$domain"/fullchain.pem \
+            --reloadcmd true; \
+            rc=$$?; \
+            if [ "$$rc" -eq 0 ]; then \
+                issued=1; \
+            elif [ "$$rc" -ne 2 ]; then \
+                status=$$rc; \
+            fi; \
+        done; \
+        if [ "$$issued" -eq 1 ]; then \
             /bin/systemctl reload {{ _telemt_haproxy_systemd_unit_name }} || exit $$?; \
         fi; \
-        exit $$rc'
+        exit $$status'
 SuccessExitStatus=0 2
