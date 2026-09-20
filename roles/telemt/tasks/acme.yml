@@ -27,6 +27,9 @@
   register: _telemt_cert_issuer
   changed_when: false
   failed_when: false
+  # Read-only probe. It has to run during a dry run too, otherwise the skipped
+  # results carry no stdout and the conditional below cannot be evaluated.
+  check_mode: false
   loop: "{{ _telemt_web_domain_list }}"
 
 - name: telemt | acme | reset renewal service failure state
@@ -46,7 +49,8 @@
   vars:
     _telemt_unissued_domains: >-
       {{
-        _telemt_cert_issuer.results
+        (_telemt_cert_issuer.results | default([]))
+        | rejectattr('skipped', 'defined')
         | rejectattr('stdout', 'search', '(Pebble|Let)')
         | map(attribute='item')
         | list

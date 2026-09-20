@@ -16,6 +16,14 @@
         | dict2items(key_name='label', value_name='domain')
         | sort(attribute='label')
       }}
+    # The domain the upgrade test rewinds to the pre-multi-domain layout.
+    _web_legacy_domain: "{{ molecule_telemt_web_domains.main }}"
+    _web_legacy_cert_files:
+      - fullchain.pem
+      - key.pem
+      - cert.pem
+    _web_legacy_acme_conf: >-
+      {{ _web_config_dir }}/acme-data/{{ _web_legacy_domain }}_ecc/{{ _web_legacy_domain }}.conf
   tasks:
     - name: Wait for common runtime services
       ansible.builtin.import_tasks: tasks/wait-services.yml
@@ -290,3 +298,79 @@
 
     - name: Verify colocated direct and WEB deployments
       ansible.builtin.import_tasks: tasks/verify-coexistence.yml
+
+    # A deployment predating telemt_web_domains is reconstructed here and then
+    # upgraded in place. acme.sh still holds a current certificate recorded
+    # against the flat paths, so a plain `--issue` answers "Skipping. Next
+    # renewal time is ..." and writes nothing; unless the role deletes that
+    # rudiment outright, HAProxy keeps serving the self-signed bootstrap until
+    # the renewal window opens weeks later. Runs last because it mutates the
+    # deployment.
+    - name: Reconstruct the pre-multi-domain certificate layout
+      ansible.builtin.copy:
+        src: "{{ _web_config_dir }}/certs/{{ _web_legacy_domain }}/{{ item }}"
+        dest: "{{ _web_config_dir }}/certs/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ _web_legacy_cert_files }}"
+
+    - name: Point acme.sh state back at the pre-multi-domain paths
+      ansible.builtin.replace:
+        path: "{{ _web_legacy_acme_conf }}"
+        regexp: "'/certs/{{ _web_legacy_domain | regex_escape }}/"
+        replace: "'/certs/"
+
+    - name: Drop the per-domain directory the old layout never had
+      ansible.builtin.file:
+        path: "{{ _web_config_dir }}/certs/{{ _web_legacy_domain }}"
+        state: absent
+
+    - name: Upgrade the reconstructed deployment
+      ansible.builtin.include_tasks: tasks/converge-web.yml
+
+    - name: Apply handlers after the upgrade
+      ansible.builtin.meta: flush_handlers
+
+    - name: Stat pre-multi-domain rudiments after the upgrade
+      ansible.builtin.stat:
+        path: "{{ _web_config_dir }}/certs/{{ item }}"
+      loop: "{{ _web_legacy_cert_files }}"
+      register: _web_legacy_rudiments
+
+    - name: Read the rebuilt acme.sh state
+      ansible.builtin.slurp:
+        src: "{{ _web_legacy_acme_conf }}"
+      register: _web_rebuilt_acme_conf
+
+    - name: Assert the upgrade erased the old layout instead of migrating it
+      ansible.builtin.assert:
+        that:
+          - _web_legacy_rudiments.results | map(attribute='stat.exists') | unique | list == [false]
+          - >-
+            "Le_RealFullChainPath='/certs/" ~ _web_legacy_domain ~ "/fullchain.pem'"
+            in (_web_rebuilt_acme_conf.content | b64decode)
+        fail_msg: >-
+          The upgrade left pre-multi-domain state behind. acme.sh would keep
+          skipping issuance and HAProxy would serve the bootstrap certificate.
+
+    - name: Wait for a reissued Pebble certificate on the upgraded domain
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 443
+        server_name: "{{ _web_legacy_domain }}"
+      register: _web_upgraded_certificate
+      until:
+        - _web_upgraded_certificate.cert is defined
+        - "'Pebble' in (_web_upgraded_certificate.issuer.CN | default(''))"
+      retries: 30
+      delay: 3
+
+    - name: Assert the untouched domain kept its certificate through the upgrade
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 443
+        server_name: "{{ _web_domains | rejectattr('domain', 'equalto', _web_legacy_domain) | map(attribute='domain') | first }}"
+      register: _web_untouched_certificate
+      failed_when: "'Pebble' not in (_web_untouched_certificate.issuer.CN | default(''))"

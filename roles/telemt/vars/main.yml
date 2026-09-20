@@ -56,6 +56,10 @@ _telemt_web_flat_cert_files:
   - fullchain.pem
   - key.pem
   - cert.pem
+# Mount point of _telemt_certs_dir inside the acme.sh container. acme.sh stores
+# these container paths in its per-domain state, so the role has to match them
+# there rather than the host paths.
+_telemt_acme_container_certs_dir: /certs
 
 _telemt_web_listener_port: 18080
 _telemt_haproxy_container_name: "{{ telemt_instance_name }}-haproxy"
