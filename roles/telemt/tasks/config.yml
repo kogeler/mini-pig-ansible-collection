@@ -43,15 +43,42 @@
   when: telemt_deployment_mode == 'web'
 
 # Deployments predating telemt_web_domains kept one flat certificate pair
-# directly under the certs directory. Every domain now has its own directory,
-# so the flat pair is dead material; leaving a stale private key behind would
-# be the worst of the possible outcomes. The per-domain bootstrap below plus
-# the ACME task reissue immediately, so nothing is lost by removing it.
+# directly under the certs directory. Every domain now owns a directory, so
+# the flat pair is dead material and a stale private key left on disk is the
+# worst possible outcome.
 - name: telemt | config | remove pre-multi-domain flat WEB certificate
   ansible.builtin.file:
     path: "{{ _telemt_certs_dir }}/{{ item }}"
     state: absent
   loop: "{{ _telemt_web_flat_cert_files }}"
+  when: telemt_deployment_mode == 'web'
+
+# acme.sh records the install paths it was last issued with inside its own
+# per-domain state. State written under the flat layout keeps pointing at the
+# files removed above, and acme.sh answers the next `--issue` with "Skipping.
+# Next renewal time is ..." instead of writing the per-domain files, so HAProxy
+# would serve the self-signed bootstrap until that window opens weeks later.
+# The old state is a rudiment of the previous architecture, so the role deletes
+# it and lets the ACME run rebuild it against the current layout. Only the flat
+# layout stores a single path segment under /certs, which makes the match exact;
+# acme.sh's account and CA files carry no Le_RealFullChainPath at all.
+- name: telemt | config | find acme.sh state predating the per-domain layout
+  ansible.builtin.find:
+    paths: "{{ _telemt_acme_data_dir }}"
+    patterns: "*.conf"
+    excludes: "account.conf"
+    recurse: true
+    contains: "^Le_RealFullChainPath='{{ _telemt_acme_container_certs_dir }}/[^/]+'$"
+  register: _telemt_stale_acme_state
+  when: telemt_deployment_mode == 'web'
+
+- name: telemt | config | remove acme.sh state predating the per-domain layout
+  ansible.builtin.file:
+    path: "{{ item.path | dirname }}"
+    state: absent
+  loop: "{{ _telemt_stale_acme_state.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | dirname }}"
   when: telemt_deployment_mode == 'web'
 
 - name: telemt | config | copy operator decoy site
@@ -108,6 +135,11 @@
 # HAProxy refuses to start without a certificate for every SNI entry, and the
 # ACME responder itself is reachable only once HAProxy is up. Each new domain
 # therefore needs a self-signed placeholder before acme.sh can replace it.
+#
+# Skipped in check mode: the per-domain directory above is not created during a
+# dry run, and community.crypto rejects a missing parent directory before it
+# ever looks at check mode. A dry run over a deployment that predates
+# telemt_web_domains, or one that just gained a domain, would otherwise abort.
 - name: telemt | config | create WEB bootstrap certificates
   vars:
     _telemt_bootstrap_domains: >-
@@ -120,6 +152,7 @@
       }}
   when:
     - telemt_deployment_mode == 'web'
+    - not ansible_check_mode
     - _telemt_bootstrap_domains | length > 0
   block:
     - name: telemt | config | generate bootstrap private keys
@@ -162,7 +195,12 @@
     group: root
     mode: "0644"
   loop: "{{ _telemt_web_domain_list }}"
-  when: telemt_deployment_mode == 'web'
+  when:
+    - telemt_deployment_mode == 'web'
+    # The key only exists once the bootstrap block above or acme.sh has run,
+    # neither of which happens in a dry run, and `file` without `state` fails
+    # on a missing path.
+    - not ansible_check_mode
 
 - name: telemt | config | render HAProxy config
   ansible.builtin.template:

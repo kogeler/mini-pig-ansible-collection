@@ -24,7 +24,7 @@ ExecStart=/bin/sh -c '\
             --cgroups=split \
             --log-driver=passthrough \
             --pod={{ _telemt_pod_name }} \
-            --volume {{ _telemt_certs_dir }}:/certs \
+            --volume {{ _telemt_certs_dir }}:{{ _telemt_acme_container_certs_dir }} \
             --volume {{ _telemt_acme_data_dir }}:/acme.sh \
             {{ telemt_acme_image }}:{{ telemt_acme_image_tag }} \
             --issue -d "$$domain" \
@@ -32,16 +32,15 @@ ExecStart=/bin/sh -c '\
 {% if telemt_molecule_mode %}
             --server {{ _telemt_pebble_acme_server }} \
             --insecure \
-            --force \
 {% else %}
             --server {{ telemt_acme_server }} \
 {% endif %}
 {% if telemt_acme_email %}
             --accountemail {{ telemt_acme_email }} \
 {% endif %}
-            --cert-file /certs/"$$domain"/cert.pem \
-            --key-file /certs/"$$domain"/key.pem \
-            --fullchain-file /certs/"$$domain"/fullchain.pem \
+            --cert-file {{ _telemt_acme_container_certs_dir }}/"$$domain"/cert.pem \
+            --key-file {{ _telemt_acme_container_certs_dir }}/"$$domain"/key.pem \
+            --fullchain-file {{ _telemt_acme_container_certs_dir }}/"$$domain"/fullchain.pem \
             --reloadcmd true; \
             rc=$$?; \
             if [ "$$rc" -eq 0 ]; then \
