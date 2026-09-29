@@ -7,7 +7,7 @@
 
 telemt_enabled: true
 telemt_image: ghcr.io/telemt/telemt
-telemt_image_tag: "3.5.5"
+telemt_image_tag: "3.5.9"
 
 # Deployment topology. `direct` preserves the role's historical behaviour:
 # Telemt owns the public listener and splices masking traffic to TLS-Caddy.
