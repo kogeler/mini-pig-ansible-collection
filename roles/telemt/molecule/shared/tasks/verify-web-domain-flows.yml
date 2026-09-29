@@ -1,7 +1,8 @@
 ---
 # Both WEB profiles against one domain: bridge page, bootstrap, session
 # create, uplink/downlink of a real req_pq, the matching resPQ from Telegram,
-# and the wrong-capability fallback to the decoy.
+# the wrong-capability fallback to the decoy, and the local rejection of an
+# authentic capability sent outside the carrier contract.
 - name: Telegram E2E plain | {{ _web_carrier_under_test ~ ' | ' ~ _web_domain_under_test.domain }}
   ansible.builtin.script:
     cmd: >-

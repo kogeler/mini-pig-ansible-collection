@@ -456,12 +456,13 @@ def main() -> None:
         )
         assert status == 200, f"bridge status={status}"
         bridge_text = bridge.decode("utf-8")
-        assert 'const bootstrap="' in bridge_text
-        assert "const negotiationEnabled=false" in bridge_text
+        # The bridge runtime rebinds both values during recovery, so match the
+        # rendered initial values rather than their declaration keyword.
+        assert re.search(r"\b(?:const|let) negotiationEnabled=false\b", bridge_text)
         assert capability not in bridge_text
         assert "no-store" in headers.get("cache-control", "")
         bootstrap_match = re.search(
-            r'const bootstrap="([A-Za-z0-9_-]{43})"', bridge_text
+            r'\b(?:const|let) bootstrap="([A-Za-z0-9_-]{43})"', bridge_text
         )
         assert bootstrap_match, "bootstrap token is missing"
         bootstrap = bootstrap_match.group(1)
@@ -475,11 +476,14 @@ def main() -> None:
         assert "bootstrap='" not in decoy.decode("utf-8", errors="replace")
         assert "x-session-token" not in headers
 
+        # An authentic capability outside the carrier contract is answered
+        # locally so the credential never reaches the decoy upstream.
         status, headers, malformed = request(
             connection, "GET", f"/?bridge={capability}&probe=1", args.host
         )
-        assert status == 200
-        assert args.decoy_marker.encode() in malformed
+        assert status == 404, f"malformed bridge status={status}"
+        assert malformed == b"not found\n"
+        assert "no-store" in headers.get("cache-control", "")
         assert "x-session-token" not in headers
 
         hello = frame(0x10, 0, b"\x01")
