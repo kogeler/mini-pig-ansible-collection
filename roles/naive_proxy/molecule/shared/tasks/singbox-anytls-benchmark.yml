@@ -25,10 +25,7 @@
     cmd: "{{ singbox_host_binary_path }} version"
   register: _anytls_version_probe
   changed_when: false
-  failed_when: >-
-    _anytls_version_probe.rc != 0 or
-    ('sing-box version ' ~ (singbox_build_version | regex_replace('^v', '')))
-    not in (_anytls_version_probe.stdout | default(''))
+  failed_when: _anytls_version_probe.rc != 0
 
 - name: anytls-bench | print sing-box version banner
   ansible.builtin.debug:

@@ -48,15 +48,17 @@ _naive_proxy_anytls_acme: >-
 # always offers ["h2","http/1.1"]; the server's ACME path (TLS-ALPN-01) would
 # otherwise advertise only "acme-tls/1" → no overlap → every session aborts with
 # `no_application_protocol`. So when uTLS is enabled we advertise h2,http/1.1
-# (sing-box prepends it ahead of acme-tls/1, so ACME issuance keeps working);
+# (sing-box keeps acme-tls/1 in front of them, so ACME issuance keeps working);
 # when uTLS is off we advertise nothing and the server behaves exactly as
 # before (a client offering no ALPN always negotiates fine). The whole
 # relationship is keyed off the single operator knob naive_proxy_anytls_utls_fingerprint.
 _naive_proxy_anytls_alpn: "{{ ['h2', 'http/1.1'] if (naive_proxy_anytls_utls_fingerprint | length > 0) else [] }}"
 
 # Accepted sing-box uTLS fingerprints for naive_proxy_anytls_utls_fingerprint.
-# Mirrors the keys sing-box accepts (common/tls/utls_client.go); preflight uses
-# this list to reject typos. Empty string (the default) disables uTLS entirely.
+# Mirrors the documented fingerprint values sing-box accepts
+# (common/tls/utls_client.go; the legacy chrome_psk*/chrome_pq* aliases only
+# fall back to `chrome` and are deliberately excluded); preflight uses this
+# list to reject typos. Empty string (the default) disables uTLS entirely.
 _naive_proxy_anytls_utls_fingerprints:
   - chrome
   - firefox

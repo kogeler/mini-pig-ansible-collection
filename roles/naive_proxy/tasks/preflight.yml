@@ -51,6 +51,30 @@
     quiet: true
   when: naive_proxy_anytls_enabled | bool
 
+- name: naive-proxy | preflight | validate sing-box server version for ACME
+  vars:
+    # `v1.14.2` -> `1.14`; non-version tags (`latest`, digests) stay empty and
+    # are left to the operator.
+    _naive_proxy_singbox_tag_minor: >-
+      {{ naive_proxy_singbox_image_tag
+         | regex_search('^v?(\d+\.\d+)(\.|-|$)', '\1')
+         | default([''], true) | first }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        _naive_proxy_singbox_tag_minor | length == 0
+        or _naive_proxy_singbox_tag_minor is version('1.14', '>=')
+    fail_msg: >-
+      naive_proxy_singbox_image_tag ({{ naive_proxy_singbox_image_tag }}) is
+      older than sing-box 1.14.0. The AnyTLS server config uses the ACME
+      `certificate_provider`, which sing-box only understands since 1.14.0.
+      Use v1.14.0 or newer, or disable AnyTLS ACME
+      (naive_proxy_anytls_acme_enabled: false).
+    quiet: true
+  when:
+    - naive_proxy_anytls_enabled | bool
+    - _naive_proxy_anytls_acme | bool
+
 - name: naive-proxy | preflight | validate anytls utls fingerprint
   ansible.builtin.assert:
     that:

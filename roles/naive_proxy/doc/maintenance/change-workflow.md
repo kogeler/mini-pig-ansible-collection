@@ -71,7 +71,7 @@ obsolete paths or facts. Useful searches include:
 ```bash
 rg -n 'roles/naive_proxy/debug|CI_DEBUG|\.config/molecule/config\.yml' \
   roles/naive_proxy/{defaults,tasks,templates,molecule,README.md,AGENTS.md}
-rg -n 'mixed.*SOCKS|TODO.*tun|1\.14\.0-beta|1\.26\.6' \
+rg -n "mixed.*SOCKS|TODO.*tun|'acme': \{|singbox_cronet_version|releases/download/.*libcronet" \
   roles/naive_proxy/{defaults,tasks,templates,molecule,README.md,AGENTS.md}
 git diff --check
 ```

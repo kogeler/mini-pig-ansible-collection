@@ -19,7 +19,8 @@ left by removed users or renamed inventory hosts; operators MUST remove those
 stale secret files explicitly.
 
 Implementation: [clients.yml](../../tasks/clients.yml).
-Verification: [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml).
+Verification: [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml)
+asserts both files per user and the `0700`/`0600` modes.
 
 ## Server map expansion
 
@@ -69,11 +70,9 @@ This policy is intentional API. Changing it requires a contract update and
 new structural assertions for every affected rule.
 
 Implementation: [singbox-client.json.j2](../../templates/singbox-client.json.j2).
-Current verification: [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml)
-asserts the shared `proxy` DNS detour and `route.final`, but does not yet assert
-the complete TUN/IPv6/DoT/QUIC/remaining-UDP rule set. This limitation is
-tracked in [Verification](verification.md#known-verification-gaps); do not cite
-the current test as proof of every policy rule.
+Verification: [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml)
+asserts the TUN inbound, the DNS server/final/strategy, and the exact ordered
+route-rule list above.
 
 ## uTLS option
 
@@ -90,7 +89,20 @@ on-wire Firefox assertion in
 ## Compatibility
 
 Generated files require a sing-box client build with the Naive outbound and
-core AnyTLS support. The stress harness rebuilds the same released SFA core,
-Go toolchain, build tags, and ABI-compatible cronet library recorded in
-[base.yml](../../molecule/shared/base.yml). Version maintenance is specified in
+core AnyTLS support, such as the released SFA. They use no field that sing-box
+1.14 deprecates.
+
+Every Molecule scenario runs each generated file through `sing-box check`
+(the real option parser plus `box.New`) and fails on any error, warning, or
+deprecation notice:
+
+- `singbox-stress` and `anytls-stress` (which also covers the uTLS block) use
+  the stress binary, a rebuild of the released SFA libbox recipe: the same
+  sing-box tag, Go toolchain, Android build tags, linker flags, and
+  ABI-compatible cronet library recorded in
+  [base.yml](../../molecule/shared/base.yml);
+- `default` and `debian-bookworm` use the deployed sing-box server image.
+
+Verification: [check-client-configs.yml](../../molecule/shared/tasks/check-client-configs.yml).
+Version maintenance is specified in
 [Updating versions](../maintenance/update-versions.md).

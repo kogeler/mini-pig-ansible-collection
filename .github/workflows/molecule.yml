@@ -103,6 +103,14 @@ jobs:
         with:
           path: ansible_collections/kogeler/mini_pig
 
+      # Nested Podman scenarios need crun as the outer OCI runtime. The runner
+      # image does not document crun, and Podman's `crun | runc` dependency
+      # can be satisfied by Docker's runc, so install it explicitly.
+      - name: Install crun
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends crun
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip

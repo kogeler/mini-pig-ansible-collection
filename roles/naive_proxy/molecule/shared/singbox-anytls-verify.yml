@@ -79,10 +79,17 @@
           - _anytls_in.users | length == molecule_naive_proxy_users | length
           - _anytls_in.tls.enabled
           - _anytls_in.tls.server_name == molecule_naive_proxy_anytls_domain
-          # This scenario issues from the local Pebble CA via real ACME.
-          - _anytls_in.tls.acme is defined
-          - _anytls_in.tls.acme.domain == [molecule_naive_proxy_anytls_domain]
-          - _anytls_in.tls.acme.alternative_tls_port == 8445
+          # This scenario issues from the local Pebble CA via real ACME,
+          # configured through the sing-box 1.14+ inline certificate provider
+          # (the deprecated inline `tls.acme` block must not come back).
+          - _anytls_in.tls.certificate_provider is defined
+          - _anytls_in.tls.certificate_provider.type == 'acme'
+          - _anytls_in.tls.certificate_provider.domain == [molecule_naive_proxy_anytls_domain]
+          - _anytls_in.tls.certificate_provider.data_directory == '/acme-data'
+          - _anytls_in.tls.certificate_provider.disable_http_challenge is sameas true
+          - _anytls_in.tls.certificate_provider.alternative_tls_port == 8445
+          - _anytls_in.tls.certificate_provider.provider is match('^https://')
+          - _anytls_in.tls.acme is not defined
           - _anytls_in.tls.certificate_path is not defined
           # ALPN must be advertised so uTLS/browser clients can negotiate;
           # without it the ACME path serves only acme-tls/1 (no_application_protocol).
@@ -154,41 +161,108 @@
           No-ALPN (non-uTLS) client completes the AnyTLS handshake — the server
           ALPN change is backward-compatible.
 
-    # -- Production ACME server config validity ---------------------------
-    # The deployed branch runs against a custom Pebble directory. Validate the
-    # normal production-provider shape separately with `sing-box check` so
-    # both provider forms are accepted by the with_acme build.
-    - name: Write production-shaped AnyTLS ACME config for validation
-      ansible.builtin.copy:
-        dest: /tmp/anytls-acme-check.json
-        mode: "0644"
-        content: "{{ _anytls_acme_config | to_nice_json }}"
-      vars:
-        _anytls_acme_config:
-          log: {level: info, timestamp: true}
-          inbounds:
-            - type: anytls
-              tag: anytls-in
-              listen: 127.0.0.1
-              listen_port: 8445
-              users: "{{ molecule_naive_proxy_users | dict2items(key_name='name', value_name='password') }}"
-              tls:
-                enabled: true
-                server_name: "{{ molecule_naive_proxy_anytls_domain }}"
-                acme:
-                  domain: ["{{ molecule_naive_proxy_anytls_domain }}"]
-                  data_directory: /acme-data
-                  email: ""
-                  provider: letsencrypt
-                  disable_http_challenge: true
-                  alternative_tls_port: 8445
+    # -- Server config validity with the deployed sing-box image ----------
+    # The deployed branch runs against a custom Pebble directory. Validate
+    # it, plus the normal production-provider shape, with `sing-box check`
+    # of the very image the AnyTLS server runs, and fail on warnings: a
+    # deprecation notice means the next sing-box minor will break the role.
+    - name: Inspect the deployed sing-box server container
+      containers.podman.podman_container_info:
+        name: naive-anytls
+      register: _anytls_container
 
-    - name: Validate production AnyTLS ACME config with sing-box check
+    - name: Create server config staging directory
+      ansible.builtin.file:
+        path: /tmp/anytls-config-check
+        state: directory
+        mode: "0700"
+
+    - name: Stage server configs for validation
+      ansible.builtin.copy:
+        dest: "/tmp/anytls-config-check/{{ item.name }}.json"
+        mode: "0600"
+        content: "{{ item.config | to_nice_json }}"
+      loop:
+        - name: deployed
+          config: "{{ _anytls_cfg_raw.content | b64decode | from_json }}"
+        - name: production
+          config:
+            log: {level: info, timestamp: true}
+            inbounds:
+              - type: anytls
+                tag: anytls-in
+                listen: 127.0.0.1
+                listen_port: 8445
+                users: "{{ molecule_naive_proxy_users | dict2items(key_name='name', value_name='password') }}"
+                tls:
+                  enabled: true
+                  server_name: "{{ molecule_naive_proxy_anytls_domain }}"
+                  alpn: ["h2", "http/1.1"]
+                  certificate_provider:
+                    type: acme
+                    domain: ["{{ molecule_naive_proxy_anytls_domain }}"]
+                    data_directory: /acme-data
+                    email: ""
+                    provider: letsencrypt
+                    disable_http_challenge: true
+                    alternative_tls_port: 8445
+            outbounds:
+              - {type: direct, tag: direct}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Validate server configs with the deployed sing-box image
       ansible.builtin.command:
-        cmd: "{{ singbox_host_binary_path }} check -c /tmp/anytls-acme-check.json"
-      register: _anytls_acme_check
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network=none
+          - --volume=/tmp/anytls-config-check:/tmp/anytls-config-check:ro
+          - --entrypoint=sing-box
+          - "{{ _anytls_container.containers[0].ImageName }}"
+          - check
+          - -c
+          - "/tmp/anytls-config-check/{{ item }}.json"
+      register: _anytls_config_check
       changed_when: false
-      failed_when: _anytls_acme_check.rc != 0
+      failed_when: false
+      loop: [deployed, production]
+
+    - name: Assert server configs are accepted without warnings
+      vars:
+        _output: "{{ (item.stdout | default('')) ~ '\n' ~ (item.stderr | default('')) }}"
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - "'WARN' not in _output"
+          - "'deprecated' not in (_output | lower)"
+        fail_msg: >-
+          {{ _anytls_container.containers[0].ImageName }} rejected or warned
+          about the {{ item.item }} AnyTLS server config (rc={{ item.rc }}):
+          {{ _output | trim }}
+      loop: "{{ _anytls_config_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Remove staged server configs
+      ansible.builtin.file:
+        path: /tmp/anytls-config-check
+        state: absent
+
+    - name: Read the AnyTLS server journal
+      ansible.builtin.command:
+        cmd: journalctl -u podman-naive-anytls.service --no-pager -o cat
+      register: _anytls_journal
+      changed_when: false
+
+    - name: Assert the running AnyTLS server reports no deprecated options
+      ansible.builtin.assert:
+        that:
+          - "'deprecated' not in (_anytls_journal.stdout | lower)"
+        fail_msg: >-
+          The AnyTLS server logged a deprecation warning:
+          {{ _anytls_journal.stdout_lines | select('search', '(?i)deprecated') | list }}
 
     # -- HAProxy SNI routing for the anytls domain ------------------------
     - name: Read rendered HAProxy config
@@ -259,6 +333,16 @@
         _verify_clients_anytls_utls_fingerprint: "{{ _anytls_utls_fingerprint }}"
         _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
         _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
+
+    # Includes the uTLS block, which singbox-stress does not render.
+    - name: Check generated client configs with the released-SFA sing-box build
+      ansible.builtin.import_tasks: tasks/check-client-configs.yml
+      vars:
+        _check_clients_users: "{{ molecule_naive_proxy_users }}"
+        _check_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _check_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _check_clients_command: ["{{ singbox_host_binary_path }}"]
+        _check_clients_label: "released-SFA sing-box build"
 
     # -- Real AnyTLS connection + traffic ---------------------------------
     - name: Run sing-box AnyTLS TUN benchmark

@@ -1,0 +1,75 @@
+---
+# Runs every generated sing-box client config (auto + manual, per user)
+# through `sing-box check`, i.e. the real option parser plus `box.New()` of
+# the selected build, and fails on any error, warning, or deprecation
+# notice. verify-clients.yml proves the JSON has the shape we intend; this
+# proves a real sing-box accepts that shape. The client files cannot be run
+# on Android here, so this is the closest live evidence for SFA
+# compatibility.
+#
+# The files live on the controller (the role delegates their write to
+# localhost); they are copied into the instance and checked there, so the
+# downloaded sing-box build never runs on the development host.
+#
+# Inputs:
+#   _check_clients_users               { name: password }
+#   _check_clients_config_dir          controller directory with the files
+#   _check_clients_inventory_hostname  host part of the file names
+#   _check_clients_command             argv that starts `sing-box`; `check -c
+#                                      <file>` is appended. Files are staged
+#                                      under /tmp/naive-client-check.
+#   _check_clients_label               build description for messages
+
+- name: check-client-configs | create staging directory
+  ansible.builtin.file:
+    path: /tmp/naive-client-check
+    state: directory
+    mode: "0700"
+
+- name: check-client-configs | stage generated client configs
+  ansible.builtin.copy:
+    src: >-
+      {{ _check_clients_config_dir }}/singbox-{{ _check_clients_inventory_hostname }}-{{ item.0.key }}-{{ item.1 }}.json
+    dest: "/tmp/naive-client-check/{{ item.0.key }}-{{ item.1 }}.json"
+    mode: "0600"
+  loop: "{{ _check_clients_users | dict2items | product(['auto', 'manual']) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}-{{ item.1 }}"
+
+- name: check-client-configs | run sing-box check
+  ansible.builtin.command:
+    argv: >-
+      {{ _check_clients_command
+         + ['check', '-c', '/tmp/naive-client-check/' ~ item.0.key ~ '-' ~ item.1 ~ '.json'] }}
+  register: _check_clients_results
+  changed_when: false
+  failed_when: false
+  loop: "{{ _check_clients_users | dict2items | product(['auto', 'manual']) | list }}"
+  loop_control:
+    label: "{{ item.0.key }}-{{ item.1 }}"
+
+- name: check-client-configs | assert configs are accepted without warnings
+  vars:
+    _output: "{{ (item.stdout | default('')) ~ '\n' ~ (item.stderr | default('')) }}"
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - "'FATAL' not in _output"
+      - "'ERROR' not in _output"
+      - "'WARN' not in _output"
+      - "'deprecated' not in (_output | lower)"
+    fail_msg: >-
+      {{ _check_clients_label }} rejected or warned about the generated
+      {{ item.item.1 }} client config of user {{ item.item.0.key }}
+      (rc={{ item.rc }}): {{ _output | trim }}
+    success_msg: >-
+      {{ _check_clients_label }} accepts the {{ item.item.1 }} client config
+      of user {{ item.item.0.key }} without warnings.
+  loop: "{{ _check_clients_results.results }}"
+  loop_control:
+    label: "{{ item.item.0.key }}-{{ item.item.1 }}"
+
+- name: check-client-configs | remove staged client secrets
+  ansible.builtin.file:
+    path: /tmp/naive-client-check
+    state: absent

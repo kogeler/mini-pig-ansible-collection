@@ -5,6 +5,41 @@
 # live in `tasks/prepare.yml`. Driver-specific divergence (podman
 # injects /etc/hosts via molecule.yml, gha-native uses lineinfile) is
 # gated by `mp_driver` inside the task file.
+- name: Check the Podman OCI runtime of the Molecule instances
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # Ansible enters the instance through `podman exec`. Rootless runc 1.1.x
+    # leaves exec'd processes outside the systemd instance's cgroup namespace,
+    # so every nested container Ansible starts (e.g. the OCI-isolated backend
+    # build) fails to get a systemd scope. crun joins the instance's init
+    # cgroup instead.
+    - name: Inspect Podman-driven instances
+      containers.podman.podman_container_info:
+        name: "{{ item }}"
+      register: _prepare_instances
+      loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+      when: hostvars[item].mp_driver | default('') == 'podman'
+
+    - name: Require crun as the instance OCI runtime
+      vars:
+        _inspected: "{{ _prepare_instances.results | selectattr('containers', 'defined') | list }}"
+        _runtimes: >-
+          {{ dict(_inspected | map(attribute='item')
+                  | zip(_inspected | map(attribute='containers') | map('first')
+                        | map(attribute='OCIRuntime'))) }}
+        _not_crun: "{{ _runtimes | dict2items | rejectattr('value', 'equalto', 'crun') | list }}"
+      ansible.builtin.assert:
+        that:
+          - _not_crun | length == 0
+        fail_msg: >-
+          Molecule instance(s) {{ _not_crun | map(attribute='key') | join(', ') }}
+          run on the '{{ _not_crun | map(attribute='value') | unique | join(', ') }}'
+          OCI runtime; these scenarios need crun for nested Podman. Install
+          crun on this machine (for example `sudo apt-get install crun`), then
+          destroy and recreate the instance (`make <scenario>-podman-destroy`).
+        quiet: true
+
 - name: Prepare
   hosts: all
   gather_facts: false

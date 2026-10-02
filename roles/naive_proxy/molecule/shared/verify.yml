@@ -32,6 +32,31 @@
         _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
         _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
 
+    # These scenarios have no SFA-equivalent client build (the stress
+    # scenarios check with that one), so parse the generated files with the
+    # sing-box image the role deployed for the AnyTLS server (the official
+    # image includes the Naive outbound).
+    - name: Inspect the deployed sing-box server container
+      containers.podman.podman_container_info:
+        name: naive-anytls
+      register: _verify_anytls_container
+
+    - name: Check generated client configs with the deployed sing-box image
+      ansible.builtin.import_tasks: tasks/check-client-configs.yml
+      vars:
+        _check_clients_users: "{{ molecule_naive_proxy_users }}"
+        _check_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _check_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _check_clients_command:
+          - podman
+          - run
+          - --rm
+          - --network=none
+          - --volume=/tmp/naive-client-check:/tmp/naive-client-check:ro
+          - --entrypoint=sing-box
+          - "{{ _verify_anytls_container.containers[0].ImageName }}"
+        _check_clients_label: "sing-box server image {{ _verify_anytls_container.containers[0].ImageName }}"
+
     # -- HAProxy diagnostics surface ------------------------------------------
     - name: Verify HAProxy diagnostics surface
       ansible.builtin.import_tasks: tasks/verify-diagnostics.yml
@@ -281,7 +306,7 @@
           ansible.builtin.include_role:
             name: kogeler.mini_pig.naive_proxy
             tasks_from: config.yml
-          vars:
+          vars: &reverse_proxy_decoy_role_vars
             naive_proxy_domain: "{{ molecule_naive_proxy_domain }}"
             naive_proxy_anytls_domain: "{{ molecule_naive_proxy_anytls_domain }}"
             naive_proxy_external_ip_auto: "{{ molecule_naive_proxy_external_ip_map_auto }}"
@@ -369,6 +394,19 @@
           ansible.builtin.fail:
             msg: >-
               Reverse-proxy decoy mode test failed; see diagnostics above.
+      always:
+        # Leave the instance as converge built it (local static decoy), so a
+        # later `idempotence` run reports only real role drift.
+        - name: Restore the local static decoy
+          ansible.builtin.include_role:
+            name: kogeler.mini_pig.naive_proxy
+            tasks_from: config.yml
+          vars:
+            <<: *reverse_proxy_decoy_role_vars
+            naive_proxy_decoy_upstream_url: ""
+
+        - name: Flush handlers to apply the restored Caddyfile
+          ansible.builtin.meta: flush_handlers
 
     - name: Start acme-renew timer after verify
       ansible.builtin.systemd:

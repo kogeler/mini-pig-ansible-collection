@@ -1,5 +1,12 @@
 ---
-naive_proxy_naive_version: "v150.0.7871.63-1"
+# The role defaults are the single source of truth for every version and
+# image pin; tests read them from there instead of repeating them. Every
+# Molecule playbook lives one directory below molecule/, so the same relative
+# path reaches roles/naive_proxy/defaults/main.yml from all of them.
+molecule_naive_proxy_role_defaults: >-
+  {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../defaults/main.yml') | from_yaml }}
+# The official Naive test client MUST run the same release as the backend.
+molecule_naive_proxy_naive_version: "{{ molecule_naive_proxy_role_defaults.naive_proxy_naive_version }}"
 molecule_naive_proxy_domain: "naive.test"
 # Separate FQDN for the sing-box AnyTLS server. Resolves to the same IP(s)
 # as the naive domain; HAProxy tells the two servers apart by SNI. Ordinary

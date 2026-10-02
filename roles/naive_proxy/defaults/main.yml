@@ -58,7 +58,7 @@ naive_proxy_users: {}
 # Official standalone naive binary from klzgrad/naiveproxy releases.
 # Releases: https://github.com/klzgrad/naiveproxy/releases
 
-naive_proxy_naive_version: "v150.0.7871.63-1"
+naive_proxy_naive_version: "v154.0.8037.49-2"
 naive_proxy_padding: true
 # Base image for the naive backend container build.
 naive_proxy_backend_base_image: "docker.io/library/ubuntu"
@@ -66,42 +66,52 @@ naive_proxy_backend_base_image_tag: "22.04"
 
 # -- Images -------------------------------------------------------------------
 
-# Pinned to the explicit patch `3.4.3-alpine` (NOT the rolling
-# `3.4-alpine`) and kept above `v3.3.10`, the first 3.3.x release that
-# carried the upstream fix for the H2 PADDED-DATA padding-drain bug
-# we hit in production (haproxy#3354). The official Docker Hub
-# library/haproxy image leaves OCI image labels empty
-# (`org.opencontainers.image.version` etc. are not set), so the only
-# way to pin to a known-good build is an explicit patch tag.
+# Long-running service images (HAProxy, Caddy) follow a MINOR release line
+# (`<major>.<minor>-alpine`), not an explicit patch. The official Docker Hub
+# library images retag the line on every patch release, so a host picks up
+# upstream bug/security fixes whenever the image is (re)pulled:
+#   * on first install (units pull a missing image);
+#   * on demand with `naive_proxy_update_runtime_images: true`, which
+#     re-resolves both tags and restarts only units whose image ID changed.
+# Moving to a newer minor line is a deliberate maintenance bump that goes
+# through `doc/maintenance/update-versions.md` (`make versions` reports it).
 #
-# DO NOT drop this pin below `3.3.10`. Branches that still carry the
-# bug: 3.3.9 and earlier on the 3.3 line, plus the entire 3.2 / 3.0 /
-# 2.8 maintenance lines (the fix has not been backported there yet).
-#
-# Bumping the pin upwards to a newer stable release is the expected
-# maintenance path. Before bumping, pull the new tag and verify
-# `haproxy -v` reports a build dated after the `043db34` backport
-# (2026-05-07) — every 3.3.10+ build qualifies.
+# HAProxy floor — DO NOT select a line that still carries the H2 PADDED-DATA
+# padding-drain bug we hit in production (haproxy#3354). The upstream fix
+# `faf3e9a` (2026-05-07) predates `v3.4.0`, so EVERY 3.4.x release carries
+# it; on the 3.3 line only 3.3.10+ does, and the 3.2 / 3.0 / 2.8 maintenance
+# lines are still unfixed. Never select a line older than `3.4`; on 3.3 only
+# an explicit `3.3.10`+ patch tag is acceptable.
 #
 #   - issue:        https://github.com/haproxy/haproxy/issues/3354
 #   - upstream fix: https://github.com/haproxy/haproxy/commit/faf3e9ac3a5df7258b0abbc06b0e0378617a18e5
 #                   ("BUG/MEDIUM: mux-h2: Properly consume padding for DATA frames")
 #   - 3.3 backport: https://git.haproxy.org/?p=haproxy-3.3.git;a=commit;h=043db34df5b08f32055e1ebf1dd568473b268dbe
-#   - 3.3 tags:     https://git.haproxy.org/?p=haproxy-3.3.git;a=tags
+#   - image tags:   https://hub.docker.com/_/haproxy/tags
 naive_proxy_haproxy_image: "docker.io/library/haproxy"
-naive_proxy_haproxy_image_tag: "3.4.3-alpine"
+naive_proxy_haproxy_image_tag: "3.4-alpine"
+# Caddy decoy, same minor-line policy. Tags: https://hub.docker.com/_/caddy/tags
 naive_proxy_decoy_image: "docker.io/library/caddy"
-naive_proxy_decoy_image_tag: "2.11.4-alpine"
+naive_proxy_decoy_image_tag: "2.11-alpine"
+# acme.sh publishes ONLY full patch tags (`3.1.6`, plus rolling `latest` /
+# `dev`) — there is no `3.1` minor-line tag to follow — so this one stays an
+# explicit patch pin. Tags: https://hub.docker.com/r/neilpang/acme.sh/tags
 naive_proxy_acme_image: "docker.io/neilpang/acme.sh"
-naive_proxy_acme_image_tag: "3.1.4"
+naive_proxy_acme_image_tag: "3.1.6"
 
 # sing-box image for the AnyTLS server container. The official image is
 # Alpine-based (`FROM alpine`) and built with `with_acme` plus core AnyTLS,
 # so it supports both the AnyTLS inbound and built-in Let's Encrypt. Pinned
 # to an explicit stable tag (NOT `latest`) for reproducibility — bumping to a
 # newer stable sing-box release is the expected maintenance path.
+#
+# MUST be v1.14.0 or newer: the rendered server config uses the ACME
+# `certificate_provider` (introduced in 1.14.0, replacing the inline
+# `tls.acme` block that 1.14 deprecates and 1.16 removes). Preflight rejects
+# an explicit older `v1.<14` tag while AnyTLS ACME is enabled.
+# Releases: https://github.com/SagerNet/sing-box/releases
 naive_proxy_singbox_image: "ghcr.io/sagernet/sing-box"
-naive_proxy_singbox_image_tag: "v1.13.19"
+naive_proxy_singbox_image_tag: "v1.14.2"
 
 # -- ACME / TLS ---------------------------------------------------------------
 

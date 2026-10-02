@@ -42,8 +42,10 @@
   when: mp_driver == 'podman'
 
 - name: Download naive client
+  vars:
+    _naive_release: "{{ molecule_naive_proxy_naive_version }}"
   ansible.builtin.get_url:
-    url: "https://github.com/klzgrad/naiveproxy/releases/download/{{ naive_proxy_naive_version }}/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64.tar.xz"
+    url: "https://github.com/klzgrad/naiveproxy/releases/download/{{ _naive_release }}/naiveproxy-{{ _naive_release }}-linux-x64.tar.xz"
     dest: /tmp/naiveproxy.tar.xz
     mode: "0644"
     timeout: 120
@@ -57,4 +59,4 @@
     src: /tmp/naiveproxy.tar.xz
     dest: /tmp/
     remote_src: true
-    creates: "/tmp/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64/naive"
+    creates: "/tmp/naiveproxy-{{ molecule_naive_proxy_naive_version }}-linux-x64/naive"

@@ -59,6 +59,9 @@ def main() -> int:
         return 2
 
     config.action = "side_effect"
+    # Molecule records every playbook outcome against the current action;
+    # register one the way its command base class does before running.
+    config.scenario.results.add_action_result(config.action)
     config.provisioner.converge(playbook=str(playbook))
     return 0
 
