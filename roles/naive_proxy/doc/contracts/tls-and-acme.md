@@ -6,7 +6,7 @@ They MUST remain independent.
 Naive issuance uses [acme.sh](https://github.com/acmesh-official/acme.sh);
 Molecule uses [Pebble](https://github.com/letsencrypt/pebble) as a real local
 ACME test CA. AnyTLS uses sing-box's
-[built-in ACME](https://sing-box.sagernet.org/configuration/shared/tls/#acme-fields).
+[ACME certificate provider](https://sing-box.sagernet.org/configuration/shared/certificate-provider/acme/).
 
 ## Naive domain
 
@@ -51,23 +51,43 @@ Implementation: [vars/main.yml](../../vars/main.yml).
 
 ### ACME mode
 
-sing-box uses its built-in ACME with:
+sing-box uses an inline ACME `certificate_provider` in the inbound TLS options
+(sing-box 1.14+) with:
 
 - `disable_http_challenge: true`;
 - the AnyTLS domain as the only requested domain;
 - persistent `/acme-data` storage;
 - `alternative_tls_port: 8445`.
 
-The alternative port MUST equal the internal AnyTLS listener. During initial
-issuance CertMagic needs to bind that port before the inbound listener exists;
-on renewal the active listener answers the challenge inline. Using public port
-443 would collide with HAProxy inside the shared pod.
+The inline `tls.acme` block MUST NOT be used: sing-box 1.14 deprecates it and
+1.16 removes it. The role therefore requires a sing-box server image of
+v1.14.0 or newer while ACME is enabled; preflight rejects an older explicit
+`v1.x` tag.
+
+The provider manages the certificate asynchronously, and the AnyTLS listener
+binds immediately after it starts. TLS-ALPN-01 handshakes that HAProxy routes
+to the AnyTLS backend are therefore answered by that listener: sing-box places
+`acme-tls/1` first in the server ALPN list and serves CertMagic's challenge
+certificate. The alternative port MUST equal the internal AnyTLS listener.
+CertMagic only binds it itself when the port is free, and the default 443
+would point it at HAProxy's public port inside the shared pod. Certificates
+are stored in CertMagic's layout under `/acme-data`, so a certificate issued
+by the former inline `tls.acme` configuration is reused.
 
 When a custom ACME directory needs a private CA, the configured CA file is
-mounted read-only and exported as `SSL_CERT_FILE`.
+mounted read-only and exported as `SSL_CERT_FILE`. The provider's default
+HTTP client uses sing-box's `system` certificate store, which reads that
+variable on Linux.
 
 Implementation: [anytls.json.j2](../../templates/anytls.json.j2),
-[anytls.service.j2](../../templates/anytls.service.j2).
+[anytls.service.j2](../../templates/anytls.service.j2),
+[preflight.yml](../../tasks/preflight.yml).
+
+Verification: [singbox-anytls-verify.yml](../../molecule/shared/singbox-anytls-verify.yml)
+asserts the deployed provider shape, issues a real Pebble certificate, runs
+`sing-box check` with the deployed image on the deployed and a
+production-shaped configuration, and rejects warnings or deprecation notices
+in that output and in the server journal.
 
 ### Static mode
 
@@ -100,8 +120,10 @@ TLS wrapper may advertise only `acme-tls/1`, producing
 `no_application_protocol` for normal AnyTLS sessions.
 
 The role derives the server ALPN internally; operators configure only the uTLS
-fingerprint. ACME continues to work because sing-box prepends the normal ALPN
-values alongside the challenge protocol.
+fingerprint. ACME continues to work because sing-box keeps `acme-tls/1` in
+front of the configured ALPN values: an ACME validator offers only
+`acme-tls/1`, and a browser hello offers only `h2,http/1.1`, so each still
+negotiates its own protocol.
 
 Implementation: [vars/main.yml](../../vars/main.yml),
 [anytls.json.j2](../../templates/anytls.json.j2),

@@ -22,6 +22,12 @@
 #   * the auto file's `proxy` is a urltest (probe url + interval), the manual
 #     file's `proxy` is a selector (manual choice) — no automatic switching
 #   * route default + DNS detour both target the `proxy` tag
+#   * the full TUN inbound, DNS and route-rule leak-prevention policy is
+#     exactly the documented one (rule order is semantics)
+#   * the controller directory is mode 0700 and every file mode 0600
+#
+# `check-client-configs.yml` complements this: it proves a real sing-box
+# build accepts the files.
 #
 # Runs on the controller (`localhost`) because that's where the role
 # delegates the file write. Reusable across scenarios via:
@@ -62,16 +68,36 @@
   loop_control:
     label: "{{ item.0.key }}-{{ item.1 }}"
 
-- name: verify-clients | fail if any config file is missing
+- name: verify-clients | fail if any config file is missing or not private
   ansible.builtin.assert:
     that:
       - item.stat.exists
+      - item.stat.mode == '0600'
     fail_msg: >-
-      Expected sing-box client config not found:
+      Expected sing-box client config
       singbox-{{ _verify_clients_inventory_hostname }}-{{ item.item.0.key }}-{{ item.item.1 }}.json
+      to exist with mode 0600 (it carries the user's password); got
+      exists={{ item.stat.exists }} mode={{ item.stat.mode | default('n/a') }}.
   loop: "{{ _verify_clients_stats.results }}"
   loop_control:
     label: "{{ item.item.0.key }}-{{ item.item.1 }}"
+
+- name: verify-clients | stat the client config directory
+  ansible.builtin.stat:
+    path: "{{ _verify_clients_config_dir }}"
+  register: _verify_clients_dir_stat
+  delegate_to: localhost
+  connection: local
+  become: false
+
+- name: verify-clients | assert the client config directory is private
+  ansible.builtin.assert:
+    that:
+      - _verify_clients_dir_stat.stat.isdir | default(false)
+      - _verify_clients_dir_stat.stat.mode == '0700'
+    fail_msg: >-
+      {{ _verify_clients_config_dir }} must be a directory with mode 0700;
+      got mode={{ _verify_clients_dir_stat.stat.mode | default('n/a') }}.
 
 - name: verify-clients | read each user config file
   ansible.builtin.slurp:
@@ -123,6 +149,28 @@
       {{ _anytls_obs | selectattr('tls.utls', 'defined') | list }}
     _anytls_utls_fps: >-
       {{ _anytls_with_utls | map(attribute='tls.utls.fingerprint') | unique | list }}
+    _tun: "{{ _config.inbounds | first }}"
+    _dns_server: "{{ _config.dns.servers | first }}"
+    # Must stay identical to templates/singbox-client.json.j2 and the
+    # client-configs contract; route rules are evaluated in order.
+    _expected_route_rules:
+      - action: sniff
+      - action: reject
+        ip_cidr: ["2000::/3"]
+      - type: logical
+        mode: or
+        rules:
+          - protocol: dns
+          - port: [53]
+        action: hijack-dns
+      - action: reject
+        port: [853]
+      - action: reject
+        network: ["udp"]
+        port: [443]
+      - action: route
+        outbound: direct
+        network: ["udp"]
   ansible.builtin.assert:
     that:
       # Option set: 2 × map (AnyTLS on) / 1 × map (off); tags built from keys.
@@ -155,6 +203,28 @@
       # Route default + DNS detour follow the manual/auto choice.
       - _config.route.final == 'proxy'
       - _config.dns.servers[0].detour == 'proxy'
+      # TUN inbound (Android VPN service shape).
+      - _config.inbounds | length == 1
+      - _tun.type == 'tun'
+      - _tun.address == ['172.19.0.1/30']
+      - _tun.auto_route is sameas true
+      - _tun.strict_route is sameas true
+      - _tun.stack == 'mixed'
+      - _tun.exclude_package == ['com.android.captiveportallogin']
+      # IPv4-only remote DoH through the tunnel.
+      - _config.dns.servers | length == 1
+      - _dns_server.type == 'https'
+      - _dns_server.server == '1.1.1.1'
+      - _dns_server.server_port == 443
+      - _dns_server.tls.enabled is sameas true
+      - _dns_server.tls.server_name == 'cloudflare-dns.com'
+      - _config.dns.final == _dns_server.tag
+      - _config.dns.strategy == 'ipv4_only'
+      # Leak prevention: sniff, IPv6 reject, DNS hijack, DoT reject, QUIC
+      # reject, remaining UDP direct, everything else via `proxy`.
+      - _config.route.auto_detect_interface is sameas true
+      - _config.route.rules == _expected_route_rules
+      - (_config.outbounds | selectattr('tag', 'equalto', 'direct') | map(attribute='type') | list) == ['direct']
     fail_msg: >-
       Sing-box {{ _mode }} config for user {{ _user_name }} does not match the
       expected shape. Option tags (got vs expected): {{ _actual_option_tags }}

@@ -52,10 +52,7 @@
     cmd: "{{ singbox_host_binary_path }} version"
   register: _singbox_version_probe
   changed_when: false
-  failed_when: >-
-    _singbox_version_probe.rc != 0 or
-    ('sing-box version ' ~ (singbox_build_version | regex_replace('^v', '')))
-    not in (_singbox_version_probe.stdout | default(''))
+  failed_when: _singbox_version_probe.rc != 0
 
 - name: Print sing-box version banner
   ansible.builtin.debug:

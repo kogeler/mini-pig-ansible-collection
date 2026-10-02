@@ -106,8 +106,11 @@ Frequently used optional variables include:
 
 The supported meaning of every public variable, validation boundary, tag, and
 owned output is in the [interface contract](doc/contracts/interface.md); the
-executable literal defaults remain in `defaults/main.yml`. Image/version pins
-are intentionally explicit; update them through the
+executable literal defaults remain in `defaults/main.yml`, which is also the
+single source of truth for image/version pins. HAProxy and Caddy follow a
+minor release line (patch releases arrive when the image is re-pulled, for
+example with `naive_proxy_update_runtime_images`); the other pins are
+explicit releases. Update them through the
 [version runbook](doc/maintenance/update-versions.md).
 
 ## Generated client configurations

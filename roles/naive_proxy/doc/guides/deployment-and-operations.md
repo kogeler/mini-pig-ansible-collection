@@ -63,8 +63,10 @@ the HAProxy version floor are in the
 
 ## Runtime image refresh
 
-Pinned images are normally pulled only when absent. To re-resolve the current
-HAProxy and Caddy tags on an existing host for one apply:
+Images are normally pulled only when absent. HAProxy and Caddy follow a minor
+release line (for example `3.4-alpine`), so a host keeps the patch release it
+first pulled until the tag is re-resolved. To pick up the current patch
+releases of both lines on an existing host for one apply:
 
 ```yaml
 naive_proxy_update_runtime_images: true

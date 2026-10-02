@@ -11,24 +11,30 @@ Directive semantics are defined by the
 
 ## Version floor
 
-The maintained image tag MUST be an explicit patch release and MUST include
-the fix for [haproxy/haproxy#3354](https://github.com/haproxy/haproxy/issues/3354),
-the HTTP/2 padded-DATA drain bug observed by this role. Do not lower the pin
-below HAProxy `3.3.10`; `3.3.9` and older 3.3 releases, as well as the currently
-unfixed 3.2/3.0/2.8 maintenance lines, retain the fault.
+The maintained image tag follows a minor release line (`3.4-alpine`), not an
+explicit patch. Docker Hub retags the line on every patch release, so a host
+picks up HAProxy fixes whenever the image is pulled: on first install, or on
+demand through `naive_proxy_update_runtime_images` (see
+[Interface](interface.md#runtime-images)). The pinned line MUST include the
+fix for [haproxy/haproxy#3354](https://github.com/haproxy/haproxy/issues/3354),
+the HTTP/2 padded-DATA drain bug observed by this role.
 
-The upstream fix is
+The upstream fix
 [`faf3e9a`](https://github.com/haproxy/haproxy/commit/faf3e9ac3a5df7258b0abbc06b0e0378617a18e5)
-and its 3.3 backport is `043db34`. A later explicit stable patch is the normal
-upgrade path. Verify the image banner and rerun all Podman scenarios after a
-pin change; see [Updating versions](../maintenance/update-versions.md).
+(2026-05-07) is an ancestor of `v3.4.0`, so every 3.4.x release carries it.
+On the 3.3 line only 3.3.10 and newer carry the backport `043db34`; the
+3.2/3.0/2.8 maintenance lines are still unfixed. Therefore never select a
+line older than `3.4`, and accept the 3.3 line only as an explicit `3.3.10`+
+patch tag. Moving to a newer stable line is the normal upgrade path; rerun all
+Podman scenarios after a pin change, see
+[Updating versions](../maintenance/update-versions.md).
 
-For HAProxy 2.x through 3.2 tags, the template emits defensive `no-quic` to
-avoid startup checks in builds compiled with QUIC. HAProxy 3.3 removed that
-directive, so it MUST NOT be rendered for 3.3 or newer tags. The role does not
-configure a QUIC listener.
+For HAProxy 2.x through 3.2 tags (patch or minor-line form), the template
+emits defensive `no-quic` to avoid startup checks in builds compiled with QUIC.
+HAProxy 3.3 removed that directive, so it MUST NOT be rendered for 3.3 or newer
+tags. The role does not configure a QUIC listener.
 
-Verification: image/config assertions in
+Verification: config assertions in
 [verify.yml](../../molecule/shared/verify.yml), transport load in
 [singbox-benchmark.yml](../../molecule/shared/tasks/singbox-benchmark.yml),
 and the production investigation workflow in

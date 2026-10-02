@@ -1,18 +1,19 @@
 FROM {{ item.image }}
 
-# `singbox_build_*` vars come from molecule.yml `provisioner.inventory.
-# group_vars.all` — pinned to match SagerNet/sing-box-for-android (SFA)
-# `version.properties` (VERSION_NAME + GO_VERSION). Building the same
-# sing-box source with the same Go toolchain that SFA ships is the
-# reason this scenario can reproduce the H2 protocol error Android
-# users hit. The standard SagerNet linux release is built without
-# `with_naive_outbound`, so we compile from source with the tag enabled and bake
-# the CGO-disabled binary into the molecule instance image at
+# `singbox_build_*` / `singbox_cronet_commit` come from
+# `molecule/shared/base.yml` `provisioner.inventory.group_vars.all` and mirror
+# the libbox.aar build inside the released SFA APK (sing-box tag, Go
+# toolchain, build_libbox Android tags, build_shared linker flags, cronet-go
+# commit). Building the same sing-box source the same way is the reason these
+# scenarios can reproduce what Android users hit. The standard SagerNet Linux
+# CLI release uses different (CLI) tags, so we compile from source and bake the
+# CGO-disabled binary into the molecule instance image at
 # /usr/local/bin/sing-box.
 ARG SINGBOX_VERSION={{ singbox_build_version }}
 ARG SINGBOX_TAGS={{ singbox_build_tags | join(',') }}
+ARG SINGBOX_LDFLAGS="{{ singbox_build_ldflags }}"
 ARG GO_VERSION={{ singbox_build_go_version }}
-ARG CRONET_VERSION={{ singbox_cronet_version }}
+ARG CRONET_COMMIT={{ singbox_cronet_commit }}
 
 RUN set -eux; \
     apt-get update -qq; \
@@ -29,30 +30,34 @@ RUN set -eux; \
     # sing-box with `with_naive_outbound` pulls in
     # github.com/sagernet/cronet-go. The `with_purego` tag tells
     # cronet-go to dlopen libcronet.so at runtime via purego, instead
-    # of statically linking the LFS-tracked libcronet.a (which would
-    # require the Chromium toolchain at build time). With both tags +
+    # of statically linking libcronet.a (which would require the
+    # Chromium toolchain at build time). With both tags +
     # CGO_ENABLED=0 we avoid the Chromium C toolchain; libcronet.so is
-    # downloaded from the cronet-go GitHub release and placed in
-    # /usr/local/lib so cronet-go's loader_unix.findLibrary() picks it
-    # up automatically.
+    # taken from cronet-go AT THE COMMIT sing-box pins
+    # (.github/CRONET_GO_VERSION) — the same file sing-box's own purego
+    # Linux release ships — and placed in /usr/local/lib so cronet-go's
+    # loader_unix.findLibrary() picks it up automatically.
     #
-    # `-checklinkname=0` is required because the `badlinkname` build
-    # tag (mirrored from sing-box DEFAULT_BUILD_TAGS) makes sing-box's
-    # internal `common/badtls` package use `go:linkname` to reach
-    # crypto/tls.(*Conn).handlePostHandshakeMessage. Go 1.22+ rejects
-    # those links unless the linker is told to skip the check. SFA's
-    # libbox build sets the same flag in cmd/internal/build_libbox.
+    # SINGBOX_LDFLAGS is sing-box release/LDFLAGS (= build_shared.
+    # LinkerFlags, used by build_libbox for libbox.aar):
+    #   * `-X runtime.godebugDefault=multipathtcp=0,tlssha1=1` — the same
+    #     GODEBUG defaults SFA ships (no MPTCP, SHA-1 TLS signatures allowed);
+    #   * `-checklinkname=0` — the `badlinkname` tag makes sing-box's
+    #     internal `common/badtls` package `go:linkname` into crypto/tls,
+    #     which Go 1.22+ rejects unless the linker skips the check.
+    # The version `-X` and `-s -w -buildid=` match LinkerFlags' non-debug
+    # build; `-trimpath -buildvcs=false` match build_libbox sharedFlags.
     PATH=/usr/local/go/bin:$PATH \
     CGO_ENABLED=0 \
     GOFLAGS=-mod=mod \
-        go install -trimpath \
-        -ldflags="-X github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION#v} -s -w -checklinkname=0" \
+        go install -trimpath -buildvcs=false \
+        -ldflags="-X github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION#v} ${SINGBOX_LDFLAGS} -s -w -buildid=" \
         -tags="${SINGBOX_TAGS}" \
         "github.com/sagernet/sing-box/cmd/sing-box@${SINGBOX_VERSION}"; \
     install -m 0755 /root/go/bin/sing-box /usr/local/bin/sing-box; \
     install -d /usr/local/lib; \
     curl -fsSL \
-        "https://github.com/sagernet/cronet-go/releases/download/${CRONET_VERSION}/libcronet-linux-${go_arch}.so" \
+        "https://raw.githubusercontent.com/sagernet/cronet-go/${CRONET_COMMIT}/lib/linux_${go_arch}/libcronet.so" \
         -o /usr/local/lib/libcronet.so; \
     chmod 0644 /usr/local/lib/libcronet.so; \
     /usr/local/bin/sing-box version; \

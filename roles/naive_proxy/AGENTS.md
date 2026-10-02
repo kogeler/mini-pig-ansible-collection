@@ -46,6 +46,8 @@ invoke its selected scenario directly.
    the disposable GitHub Actions runner.
 8. Never execute downloaded Naive, sing-box, cronet, or benchmark binaries on
    the development host. They run inside the Molecule instance/containers.
+9. Podman scenarios require crun on the host; prepare fails otherwise (see
+   [Testing](doc/maintenance/testing.md#toolchain)).
 
 Typical development sequence:
 
@@ -78,8 +80,13 @@ reference.
   `0700`, file mode `0600`. Each current user gets `auto` and `manual` JSON.
 - Client stress success requires TUN byte movement, not throughput alone. A
   connected container route can otherwise bypass the proxy.
-- The released-SFA stress binary follows SFA `main/version.properties` and its
-  released APK tuple. It is independent of the latest stable server image pin.
+- `defaults/main.yml` is the single source of truth for version and image
+  pins. Molecule reads it instead of repeating values, and tests do not assert
+  versions; `make versions-check` compares pins with upstream.
+- The released-SFA stress binary follows SFA `main/version.properties` and
+  rebuilds that tag's Android libbox recipe (build_libbox tags,
+  `release/LDFLAGS`, `CRONET_GO_VERSION` commit). It is independent of the
+  latest stable server image pin.
 - Do not restore QR generation or `qrcode[pil]` to this role or its tests. The
   collection's standalone QR plugin files are outside this role and MUST NOT
   be removed during role maintenance.

@@ -40,17 +40,19 @@ Scenario definitions: [molecule](../../molecule/). Shared assertions:
 | HAProxy CPU/cache/FIN/rxbuf directives | [verify.yml](../../molecule/shared/verify.yml) |
 | built-in decoy content and `Host: domain:external_port` handling | [verify.yml](../../molecule/shared/verify.yml) |
 | reverse-proxied decoy mode | reconfiguration block in [verify.yml](../../molecule/shared/verify.yml) |
-| generated auto/manual client files, server-map expansion, protocol options, selection mode, DNS detour/final route | [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml) |
+| generated auto/manual client files and modes, server-map expansion, protocol options, selection mode, TUN/DNS/route leak-prevention policy | [verify-clients.yml](../../molecule/shared/tasks/verify-clients.yml) |
+| generated client files accepted by a real sing-box without warnings (released-SFA build in the stress scenarios, deployed server image otherwise) | [check-client-configs.yml](../../molecule/shared/tasks/check-client-configs.yml) |
 | diagnostics ring/admin socket | [verify-diagnostics.yml](../../molecule/shared/tasks/verify-diagnostics.yml) |
 | Naive certificate issuance, timer, forced renewal, live reload | [verify.yml](../../molecule/shared/verify.yml) |
 | direct HTTPS proxy and official-Naive SOCKS5 | [verify.yml](../../molecule/shared/verify.yml), [benchmark.yml](../../molecule/shared/tasks/benchmark.yml) |
 | Naive padding negotiation (`Variant1`) | [benchmark.yml](../../molecule/shared/tasks/benchmark.yml) |
 | Naive H2 transport under released-SFA sing-box/TUN | [singbox-benchmark.yml](../../molecule/shared/tasks/singbox-benchmark.yml) |
-| AnyTLS server config, SNI, Pebble cert, ALPN compatibility | [singbox-anytls-verify.yml](../../molecule/shared/singbox-anytls-verify.yml) |
+| AnyTLS server config (ACME `certificate_provider`, deployed-image `sing-box check`, no deprecation warnings), SNI, Pebble cert, ALPN compatibility | [singbox-anytls-verify.yml](../../molecule/shared/singbox-anytls-verify.yml) |
 | AnyTLS uTLS fingerprint and real TUN traffic | [singbox-anytls-benchmark.yml](../../molecule/shared/tasks/singbox-anytls-benchmark.yml) |
 | opt-in HAProxy/Caddy runtime image refresh and restarts | [utils.yml](../../molecule/shared/utils.yml), run via the Make runtime-refresh target |
 | handler/task idempotence | each scenario's `idempotence` action |
 | maintained upstream pins | [version_audit.py](../../molecule/scripts/version_audit.py) via `make versions-check` |
+| Podman instances run on crun (nested-Podman precondition) | [prepare.yml](../../molecule/shared/prepare.yml) |
 
 Both TUN stress tests pin a `/32` route to the target and assert the interface
 byte delta is at least half of the bytes reported by iperf. Throughput alone is
@@ -62,10 +64,12 @@ the client container's connected bridge route.
 - Preflight, tag aliases, disable/decommission semantics, and production unit
   hardening flags have no dedicated negative/static assertion matrix; they are
   covered by code review, rendered units during converge, and lint.
-- Client verification checks file count/content and the shared DNS/final proxy
-  selection, but not controller file modes or every TUN leak-prevention rule
-  (IPv6, DoT, UDP/443, and remaining UDP). Those remain implementation/review
-  evidence until structural assertions are added.
+- Generated client files are checked structurally and with `sing-box check`,
+  but cannot be run on Android here; the released-SFA stress build is the
+  closest available evidence of SFA compatibility.
+- Tests deliberately do not assert component versions. `defaults/main.yml`
+  is the single source of truth for pins; `make versions-check` compares them
+  with upstream.
 - HAProxy tuning verification proves selected directives render, not the
   performance or memory effect of alternate values on a real network.
 - The current role does not prune stale controller profiles or disabled-AnyTLS
@@ -74,8 +78,8 @@ the client container's connected bridge route.
 - Public DNS equality and public CA reachability cannot be proven in the local
   sandbox.
 - Production AnyTLS uses a public ACME CA. Molecule proves the same protocol
-  with Pebble and separately runs `sing-box check` on a production-shaped
-  provider configuration.
+  with Pebble and separately runs `sing-box check` with the deployed image on a
+  production-shaped provider configuration.
 - Real-internet latency/backpressure is outside loopback Molecule coverage.
   Use [the production diagnostic runbook](../maintenance/debugging.md) and
   [scripts](../scripts/README.md) for H2 regressions that need a real network.

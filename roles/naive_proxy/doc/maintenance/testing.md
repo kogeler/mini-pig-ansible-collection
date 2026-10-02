@@ -22,6 +22,14 @@ packages in [`requirements-dev.txt`](../../molecule/requirements-dev.txt).
 Do not set `ANSIBLE_COLLECTIONS_PATH` or `GIT_DIR`; the Makefile rejects both
 because either can shadow the checkout with stale collection content.
 
+The machine running Podman scenarios MUST provide crun
+(`sudo apt-get install crun`) so rootless Podman creates the instances with it.
+With runc 1.1.x, `podman exec` processes stay outside the systemd instance's
+cgroup namespace, and nested containers started by Ansible (such as the
+backend image build) fail. The shared prepare playbook rejects instances that
+run on another runtime; recreate them after installing crun. CI installs crun
+explicitly.
+
 ## Non-negotiable execution rules
 
 1. Never invoke bare `molecule`; use a Make target.
@@ -122,10 +130,10 @@ Use the smallest set that can observe the change.
 | documentation/comments only | link/static checks; `make lint` when YAML/Jinja comments changed |
 | preflight, common tasks, HAProxy, Caddy, Naive backend, handlers | `default`; add `bookworm` for package/runtime portability |
 | Debian package list or nested-container runtime | `default` + `bookworm` |
-| generated client JSON | `default`; add `anytls-stress` for uTLS-specific shape |
+| generated client JSON | `default` + `singbox-stress` (released-SFA `sing-box check`); add `anytls-stress` for uTLS-specific shape |
 | Naive certificate/acme.sh/timer | `default` (and `bookworm` when package-sensitive) |
 | AnyTLS server, SNI, ACME, ALPN, uTLS | `anytls-stress`; add `default` if default/static mode changed |
-| released-SFA sing-box build, Go, tags, cronet | `singbox-stress` + `anytls-stress` |
+| released-SFA sing-box build, Go, tags, ldflags, cronet | `singbox-stress` + `anytls-stress` |
 | Naive H2/TUN transport | `singbox-stress` |
 | benchmark helpers shared by all transports | `default` + both stress scenarios |
 | Makefile, venv, native collection discovery | `make venv-recreate`, `make lint`, one representative converge |
@@ -185,7 +193,7 @@ failing `/dev` remount path.
 The `default` and two stress scenarios use different Dockerfile content but
 share Molecule's local trixie image tag. The stress scenarios share
 [`shared/Dockerfile.j2`](../../molecule/shared/Dockerfile.j2). After changing
-sing-box/Go/build tags/cronet, destroy every live scenario that can hold that
+sing-box/Go/build tags/ldflags/cronet, destroy every live scenario that can hold that
 tag, inspect it, and remove only the exact image before converging the stress
 scenarios:
 
@@ -204,7 +212,9 @@ role workflow.
 
 - Every recap has `failed=0`.
 - Idempotence has `changed=0`.
-- Stress banners show the configured sing-box and Go versions.
+- Generated client configs pass `sing-box check` without warnings.
+- Stress logs print the sing-box version banner for review; versions are
+  not asserted (pins live only in `defaults/main.yml` and `shared/base.yml`).
 - TUN byte assertions pass; throughput without TUN movement is a failed test.
 - Journal marker scans are empty.
 - `anytls-stress` proves Pebble issuer, browser/no-ALPN negotiation, and uTLS

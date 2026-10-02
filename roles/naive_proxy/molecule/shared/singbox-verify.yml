@@ -82,6 +82,17 @@
         _verify_clients_urltest_url: "{{ molecule_naive_proxy_singbox_urltest_url }}"
         _verify_clients_urltest_interval: "{{ molecule_naive_proxy_singbox_urltest_interval }}"
 
+    # The stress binary reproduces the released SFA libbox build, so this is
+    # the closest available proof that Android clients accept the files.
+    - name: Check generated client configs with the released-SFA sing-box build
+      ansible.builtin.import_tasks: tasks/check-client-configs.yml
+      vars:
+        _check_clients_users: "{{ molecule_naive_proxy_users }}"
+        _check_clients_config_dir: "{{ molecule_naive_proxy_client_config_dir }}"
+        _check_clients_inventory_hostname: "{{ inventory_hostname }}"
+        _check_clients_command: ["{{ singbox_host_binary_path }}"]
+        _check_clients_label: "released-SFA sing-box build"
+
     # -- HAProxy diagnostics surface ------------------------------------------
     # Run before the stress benchmark so that if the diagnostics surface is
     # broken we fail fast with a clear message instead of timing out on the

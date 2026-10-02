@@ -49,7 +49,7 @@
               --name {{ naive_client_container_name }} \
               --network host \
               --security-opt=apparmor=unconfined \
-              --volume /tmp/naiveproxy-{{ naive_proxy_naive_version }}-linux-x64/naive:/usr/bin/naive:ro \
+              --volume /tmp/naiveproxy-{{ molecule_naive_proxy_naive_version }}-linux-x64/naive:/usr/bin/naive:ro \
               --volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
               {{ naive_client_image }}:{{ naive_client_image_tag }} \
               naive \

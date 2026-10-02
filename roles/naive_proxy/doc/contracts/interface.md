@@ -83,12 +83,23 @@ The explicit image variables are:
 | acme.sh | `naive_proxy_acme_image` | `naive_proxy_acme_image_tag` |
 | sing-box AnyTLS | `naive_proxy_singbox_image` | `naive_proxy_singbox_image_tag` |
 
-Maintained tags MUST stay pinned; updating them follows
-[the version runbook](../maintenance/update-versions.md).
+The defaults are the single source of truth for every runtime image and
+release pin:
 
-`naive_proxy_update_runtime_images` is opt-in. It refreshes only HAProxy and
-Caddy and queues a restart only when the resolved image ID changed. It MUST NOT
-pull the locally built backend, acme.sh, Pebble, or sing-box.
+- HAProxy and Caddy follow a minor release line (`X.Y-alpine`), so the patch
+  release is resolved when the image is pulled;
+- acme.sh is an explicit patch tag because its image publishes no minor-line
+  tag;
+- sing-box is an explicit release tag and MUST be v1.14.0 or newer while
+  AnyTLS ACME is enabled; preflight rejects an older explicit `v1.x` tag;
+- the Naive release in `naive_proxy_naive_version` is an explicit release.
+
+Changing a pin follows [the version runbook](../maintenance/update-versions.md).
+
+`naive_proxy_update_runtime_images` is opt-in. It re-pulls only the HAProxy
+and Caddy tags (picking up a new patch on their minor line) and queues a
+restart only when the resolved image ID changed. It MUST NOT pull the locally
+built backend, acme.sh, Pebble, or sing-box.
 
 Implementation: [utils.yml](../../tasks/utils.yml). Verification:
 [shared/utils.yml](../../molecule/shared/utils.yml).

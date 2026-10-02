@@ -1,14 +1,16 @@
 ---
 naive_client_unit: "podman-naive-molecule-client.service"
 naive_client_container_name: "naive-molecule-client"
-naive_client_image: "docker.io/library/ubuntu"
-naive_client_image_tag: "22.04"
+# Same base image as the role's Naive backend (role defaults), so the client
+# binary runs on the platform the release is deployed on.
+naive_client_image: "{{ molecule_naive_proxy_role_defaults.naive_proxy_backend_base_image }}"
+naive_client_image_tag: "{{ molecule_naive_proxy_role_defaults.naive_proxy_backend_base_image_tag }}"
 naive_client_socks_port: 1080
 iperf_unit: "podman-naive-iperf-bench.service"
 # networkstatic publishes only moving `latest` / `multiarch` tags. Pin the
 # current multi-arch latest manifest so a benchmark cannot silently change.
-# Refreshed 2026-08-22.
-iperf_image: "docker.io/networkstatic/iperf3@sha256:25bce1d02f5e1c0acb4a4376815b87059ad730cd9a1c18ce8a9cb9babd7ad05f"
+# Refreshed 2026-10-02.
+iperf_image: "docker.io/networkstatic/iperf3@sha256:bc267517f534d9f7cced2669f325799a1fd7fe1d5953c2ca2c6ea1db61affa08"
 iperf_container_name: "naive-iperf-bench"
 iperf_port: 5201
 iperf_duration: 30
