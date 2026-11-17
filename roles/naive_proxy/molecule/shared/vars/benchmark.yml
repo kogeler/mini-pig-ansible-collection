@@ -9,8 +9,8 @@ naive_client_socks_port: 1080
 iperf_unit: "podman-naive-iperf-bench.service"
 # networkstatic publishes only moving `latest` / `multiarch` tags. Pin the
 # current multi-arch latest manifest so a benchmark cannot silently change.
-# Refreshed 2026-10-02.
-iperf_image: "docker.io/networkstatic/iperf3@sha256:bc267517f534d9f7cced2669f325799a1fd7fe1d5953c2ca2c6ea1db61affa08"
+# Refreshed 2026-11-17.
+iperf_image: "docker.io/networkstatic/iperf3@sha256:d8767f2888155902ec72760f9ba8dd6fb16ff73256a8e02572c109aecc23269b"
 iperf_container_name: "naive-iperf-bench"
 iperf_port: 5201
 iperf_duration: 30

@@ -5,6 +5,9 @@
 # path reaches roles/naive_proxy/defaults/main.yml from all of them.
 molecule_naive_proxy_role_defaults: >-
   {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../defaults/main.yml') | from_yaml }}
+# Role vars hold the molecule-only Pebble pin; read it the same way.
+molecule_naive_proxy_role_vars: >-
+  {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../vars/main.yml') | from_yaml }}
 # The official Naive test client MUST run the same release as the backend.
 molecule_naive_proxy_naive_version: "{{ molecule_naive_proxy_role_defaults.naive_proxy_naive_version }}"
 molecule_naive_proxy_domain: "naive.test"

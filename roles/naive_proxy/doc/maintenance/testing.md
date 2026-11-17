@@ -88,8 +88,15 @@ make anytls-stress-podman-idempotence > /tmp/anytls-idempotence.log 2>&1
 `MP_NETWORK` selects the outer rootless Podman network and defaults to
 `slirp4netns`. Scenario files use the `network` key; `network_mode` is ignored
 by the Molecule Podman driver. Supported choices are `host`, `slirp4netns`,
-`bridge`, and `pasta` (Podman 5+); record a non-default choice with the test
-result because it changes the outer connectivity boundary.
+or the name of a dedicated network that the driver creates on `create` and
+removes on `destroy` (for example `MP_NETWORK=molecule-naive-net`). Do not use
+`bridge`: the default rootless network is `10.88.0.0/16`, the same subnet as
+the nested Podman network inside the instance, so nested published ports and
+DNS time out. `pasta` is a valid Podman mode, but molecule-plugins tries to
+create a network with that name and fails. A dedicated network routes through
+the rootless network command from `containers.conf`. Record a non-default
+choice with the test result because it changes the outer connectivity
+boundary.
 
 ## Scenario configuration model
 
