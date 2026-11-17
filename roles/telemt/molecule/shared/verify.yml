@@ -10,6 +10,25 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- Nested Podman network -------------------------------------------------
+    # The role's pod runs on the nested default network; prepare pinned its
+    # subnet so it cannot collide with the instance's own network.
+
+    - name: Inspect the nested Podman default network
+      containers.podman.podman_network_info:
+        name: podman
+      register: _nested_podman_network
+      when: mp_driver == 'podman'
+
+    - name: Assert the nested default network uses the pinned subnet
+      ansible.builtin.assert:
+        that:
+          - >-
+            _nested_podman_network.networks[0].subnets | map(attribute='subnet') | list
+            == [molecule_telemt_nested_podman_subnet]
+        quiet: true
+      when: mp_driver == 'podman'
+
     # -- Health API ------------------------------------------------------------
     # API + metrics probes go through `podman_container_exec` against the
     # decoy because telemt's API enforces loopback-only access — see the

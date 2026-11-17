@@ -302,6 +302,13 @@ role's normal systemd-managed containers use `--cgroups=split`, while
 scenario applies the role directly to the GitHub Actions runner VM with
 `ansible_connection: local`.
 
+The outer and nested Podman would both use the fixed default network
+`10.88.0.0/16`, so an instance on the outer bridge (`MP_NETWORK=bridge`) would
+share its address, gateway and DNS with its own nested bridge. Prepare pins
+the nested default network to `molecule_telemt_nested_podman_subnet` through a
+`containers.conf.d` drop-in. It fails early if the instance network reaches
+into that subnet, and verify asserts that the nested network uses it.
+
 ## Driver conditionals
 
 `mp_driver` is the single source of truth for driver-specific behavior.
@@ -331,6 +338,7 @@ that `lineinfile` cannot atomically replace.
     and increments Alice's authenticated user counter
 11. direct and WEB units, config paths, listeners, and health endpoints remain
     simultaneously active
+12. Podman scenarios: the nested default network uses the pinned subnet
 
 The WEB portion checks Pebble certificate issuance through HAProxy, canonical
 and foreign Host camouflage, wrong/malformed capabilities, and complete

@@ -8,6 +8,12 @@
 # (gha-native fallback).
 molecule_telemt_domain: "telemt.test"
 
+# Default network of the Podman nested inside the Podman instance (see
+# shared/tasks/nested-podman-subnet.yml). Clear of the outer Podman default
+# network (10.88.0.0/16), its first auto-assigned networks (10.89.x.0/24) and
+# slirp4netns (10.0.2.0/24).
+molecule_telemt_nested_podman_subnet: "10.188.0.0/24"
+
 # Two WEB domains behind one deployment. Every scenario deploys both so the
 # multi-domain path (per-domain ACME certificate, per-domain HAProxy SNI
 # entry, per-domain Telemt vhost, per-domain link) is the tested default

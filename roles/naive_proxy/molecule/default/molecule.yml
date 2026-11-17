@@ -11,8 +11,8 @@ platforms:
     pre_build_image: false
     systemd: always
     # Rootless podman network mode for the molecule instance.
-    # Supported values: host, slirp4netns (rootless default), or a dedicated
-    # network name (see doc/maintenance/testing.md). NOTE: the
+    # Supported values: host, slirp4netns (rootless default), bridge, or a
+    # dedicated network name (see doc/maintenance/testing.md). NOTE: the
     # molecule-podman create play reads "network", not "network_mode" —
     # using the wrong key silently falls back to the default.
     network: "${MP_NETWORK:-slirp4netns}"

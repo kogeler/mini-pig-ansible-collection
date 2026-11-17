@@ -41,6 +41,10 @@
     state: started
   when: mp_driver == 'podman'
 
+- name: Pin the nested Podman network clear of the instance network
+  ansible.builtin.include_tasks: nested-podman-subnet.yml
+  when: mp_driver == 'podman'
+
 - name: Download naive client
   vars:
     _naive_release: "{{ molecule_naive_proxy_naive_version }}"
