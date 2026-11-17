@@ -1,0 +1,67 @@
+---
+# Podman scenarios only. Both Podman layers default to 10.88.0.0/16, so an
+# instance on the outer default bridge (MP_NETWORK=bridge) would share its
+# addresses, gateway and DNS with the bridge of the Podman nested inside it,
+# and nested DNS and published ports time out. Pin the nested default network
+# instead, and fail early if the instance's own network still reaches into it.
+- name: Create the nested Podman drop-in directory
+  ansible.builtin.file:
+    path: /etc/containers/containers.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Pin the nested Podman default network subnet
+  ansible.builtin.copy:
+    dest: /etc/containers/containers.conf.d/50-molecule-nested-subnet.conf
+    content: |
+      [network]
+      default_subnet = "{{ molecule_naive_proxy_nested_podman_subnet }}"
+    mode: "0644"
+
+# The Debian base images ship without `ip`; Ansible then gathers no
+# interface facts at all.
+- name: Install iproute2 for the network facts
+  ansible.builtin.apt:
+    name: iproute2
+    state: present
+
+- name: Gather instance network facts
+  ansible.builtin.setup:
+    gather_subset:
+      - network
+
+- name: Require the instance network to stay outside the nested subnet
+  vars:
+    # Instance addresses, default gateway and resolvers. The nested bridge
+    # itself (podman*, veth*) is skipped so a repeated prepare still passes.
+    _peers: >-
+      {{ (ansible_facts.interfaces | reject('match', '^(lo|podman[0-9]+|veth)')
+          | map('regex_replace', '-', '_') | map('extract', ansible_facts)
+          | selectattr('ipv4', 'defined') | map(attribute='ipv4.address') | list)
+         + [ansible_facts.default_ipv4.gateway | default('')]
+         + (ansible_facts.dns.nameservers | default([])) }}
+    # IPv4-in-CIDR without netaddr: compare both sides divided by the
+    # subnet size.
+    _conflicts: >-
+      {%- set n = molecule_naive_proxy_nested_podman_subnet.split('/') -%}
+      {%- set size = 2 ** (32 - (n[1] | int)) -%}
+      {%- set o = n[0].split('.') | map('int') | list -%}
+      {%- set base = (((o[0] * 256 + o[1]) * 256 + o[2]) * 256 + o[3]) // size -%}
+      {%- set ns = namespace(hits=[]) -%}
+      {%- for ip in _peers | select('match', '^[0-9]+([.][0-9]+){3}$') -%}
+      {%- set p = ip.split('.') | map('int') | list -%}
+      {%- if (((p[0] * 256 + p[1]) * 256 + p[2]) * 256 + p[3]) // size == base -%}
+      {%- set ns.hits = ns.hits + [ip] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.hits | join(', ') }}
+  ansible.builtin.assert:
+    that:
+      - _conflicts | length == 0
+    fail_msg: >-
+      {{ _conflicts }} of this Molecule instance fall inside
+      {{ molecule_naive_proxy_nested_podman_subnet }}, the default network
+      pinned for the Podman nested inside it. Choose another MP_NETWORK or
+      change molecule_naive_proxy_nested_podman_subnet in
+      molecule/shared/vars/common.yml.
+    quiet: true

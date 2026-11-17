@@ -53,6 +53,7 @@ Scenario definitions: [molecule](../../molecule/). Shared assertions:
 | handler/task idempotence | each scenario's `idempotence` action |
 | maintained upstream pins | [version_audit.py](../../molecule/scripts/version_audit.py) via `make versions-check` |
 | Podman instances run on crun (nested-Podman precondition) | [prepare.yml](../../molecule/shared/prepare.yml) |
+| nested Podman default network pinned clear of the instance network | [nested-podman-subnet.yml](../../molecule/shared/tasks/nested-podman-subnet.yml), [verify.yml](../../molecule/shared/verify.yml) |
 
 Both TUN stress tests pin a `/32` route to the target and assert the interface
 byte delta is at least half of the bytes reported by iperf. Throughput alone is

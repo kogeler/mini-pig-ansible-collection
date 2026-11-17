@@ -88,15 +88,22 @@ make anytls-stress-podman-idempotence > /tmp/anytls-idempotence.log 2>&1
 `MP_NETWORK` selects the outer rootless Podman network and defaults to
 `slirp4netns`. Scenario files use the `network` key; `network_mode` is ignored
 by the Molecule Podman driver. Supported choices are `host`, `slirp4netns`,
-or the name of a dedicated network that the driver creates on `create` and
-removes on `destroy` (for example `MP_NETWORK=molecule-naive-net`). Do not use
-`bridge`: the default rootless network is `10.88.0.0/16`, the same subnet as
-the nested Podman network inside the instance, so nested published ports and
-DNS time out. `pasta` is a valid Podman mode, but molecule-plugins tries to
-create a network with that name and fails. A dedicated network routes through
-the rootless network command from `containers.conf`. Record a non-default
-choice with the test result because it changes the outer connectivity
-boundary.
+`bridge`, or the name of a dedicated network that the driver creates on
+`create` and removes on `destroy` (for example `MP_NETWORK=molecule-naive-net`).
+A dedicated network routes through the rootless network command from
+`containers.conf`. `pasta` is a valid Podman mode, but molecule-plugins tries
+to create a network with that name and fails. Record a non-default choice with
+the test result because it changes the outer connectivity boundary.
+
+Both Podman layers would use the same fixed default network, `10.88.0.0/16`.
+With `bridge` the instance would then share its address, gateway and DNS with
+the bridge of the Podman nested inside it, and nested DNS and published ports
+would time out. Prepare therefore pins the nested default network to
+`molecule_naive_proxy_nested_podman_subnet` in
+[`vars/common.yml`](../../molecule/shared/vars/common.yml) through a
+`containers.conf.d` drop-in. It fails early if an instance address, the
+default gateway or a resolver falls inside that subnet; change the variable
+for such a machine. Verify asserts that the nested network uses it.
 
 ## Scenario configuration model
 

@@ -11,6 +11,11 @@ molecule_naive_proxy_role_vars: >-
 # The official Naive test client MUST run the same release as the backend.
 molecule_naive_proxy_naive_version: "{{ molecule_naive_proxy_role_defaults.naive_proxy_naive_version }}"
 molecule_naive_proxy_domain: "naive.test"
+# Default network of the Podman nested inside Podman instances (see
+# shared/tasks/nested-podman-subnet.yml). Clear of the outer Podman default
+# network (10.88.0.0/16), its first auto-assigned networks (10.89.x.0/24),
+# slirp4netns (10.0.2.0/24) and the sing-box client TUN range (172.19.0.0/30).
+molecule_naive_proxy_nested_podman_subnet: "10.188.0.0/24"
 # Separate FQDN for the sing-box AnyTLS server. Resolves to the same IP(s)
 # as the naive domain; HAProxy tells the two servers apart by SNI. Ordinary
 # scenarios use a static self-signed certificate; anytls-stress issues from

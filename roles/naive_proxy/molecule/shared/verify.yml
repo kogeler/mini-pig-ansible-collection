@@ -11,6 +11,25 @@
     - name: Wait for verify prerequisites
       ansible.builtin.import_tasks: tasks/wait-services.yml
 
+    # -- Nested Podman network -------------------------------------------------
+    # The role's pod runs on the nested default network; prepare pinned its
+    # subnet so it cannot collide with the instance's own network.
+
+    - name: Inspect the nested Podman default network
+      containers.podman.podman_network_info:
+        name: podman
+      register: _nested_podman_network
+      when: mp_driver == 'podman'
+
+    - name: Assert the nested default network uses the pinned subnet
+      ansible.builtin.assert:
+        that:
+          - >-
+            _nested_podman_network.networks[0].subnets | map(attribute='subnet') | list
+            == [molecule_naive_proxy_nested_podman_subnet]
+        quiet: true
+      when: mp_driver == 'podman'
+
     # -- Per-user client configs (auto + manual) -------------------------------
     # Verify the two-file layout from the per-mode server maps
     # (naive_proxy_external_ip_auto / _manual): each option carries its own

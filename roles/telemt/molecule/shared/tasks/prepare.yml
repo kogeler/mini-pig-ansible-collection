@@ -29,3 +29,7 @@
       - python3-httpx
     update_cache: true
     state: present
+
+- name: Pin the nested Podman network clear of the instance network
+  ansible.builtin.include_tasks: nested-podman-subnet.yml
+  when: mp_driver == 'podman'
