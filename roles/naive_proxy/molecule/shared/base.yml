@@ -99,15 +99,15 @@ provisioner:
     #        https://github.com/SagerNet/sing-box/blob/<tag>/.github/CRONET_GO_VERSION
     #        https://github.com/sagernet/cronet-go/tree/<commit>/lib
     #
-    # LAST CHECKED 2026-10-02: SFA main advertises 1.14.2 / go1.26.8; the
-    # v1.14.2 release ships SFA-1.14.2-universal.apk and its Android CI uses
-    # Go 1.26.8. CRONET_GO_VERSION is 0d28acc44093 (Chromium 150.0.7871.63,
+    # LAST CHECKED 2026-11-17: SFA main advertises 1.14.4 / go1.26.10; the
+    # v1.14.4 release ships SFA-1.14.4-universal.apk and its Android CI uses
+    # Go 1.26.10. CRONET_GO_VERSION is 0d28acc44093 (Chromium 150.0.7871.63,
     # libraries built from cronet-go tag v150.0.7871.63-3, which has no GitHub
     # release — the latest release, v150.0.7871.63-2, is an older commit).
     group_vars:
       all:
         # SFA version.properties → VERSION_NAME (with `v`).
-        singbox_build_version: "v1.14.2"
+        singbox_build_version: "v1.14.4"
         # build_libbox `sharedTags` (Android libbox.aar) + our `with_purego`.
         singbox_build_tags:
           - with_gvisor
@@ -137,7 +137,7 @@ provisioner:
         # release/LDFLAGS (= build_shared.LinkerFlags without version/strip).
         singbox_build_ldflags: "-X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0"
         # SFA version.properties → GO_VERSION (strip the `go` prefix).
-        singbox_build_go_version: "1.26.8"
+        singbox_build_go_version: "1.26.10"
         # sing-box .github/CRONET_GO_VERSION at that tag (full commit SHA).
         singbox_cronet_commit: "0d28acc44093df24b2526dea3d6ffefd6b0a54f0"
 
